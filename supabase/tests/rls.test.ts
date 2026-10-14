@@ -296,6 +296,68 @@ describe('service provider visibility & actions', () => {
   })
 })
 
+describe('granular permissions', () => {
+  test('an admin without dispatch or project rights can view jobs and projects but not change them', async () => {
+    await mutate(admin, (d) => {
+      d.users.push({
+        id: 'u-office',
+        name: 'Office',
+        email: 'office@nextphasemaintenance.com.au',
+        role: 'admin',
+        phone: '',
+        permissions: ['canManageInvoices'],
+        createdAt: new Date().toISOString(),
+        status: 'invited',
+        passwordHash: '',
+      })
+    })
+    uid.office = await createAuthUser('office@nextphasemaintenance.com.au')
+    await asUser(uid.office, 'select activate_my_account()')
+    const office = adapter(uid.office)
+    const d = await fetchAll(office)
+    assert.ok(d.requests.length > 0 && d.projects.length > 0)
+    await assert.rejects(
+      mutate(office, (x) => {
+        x.requests.find((r) => r.id === 'r-1')!.notes = 'x'
+      }),
+      /permission/,
+    )
+    await assert.rejects(
+      mutate(office, (x) => {
+        x.projects.find((p) => p.id === 'pr-1')!.budget = 1
+      }),
+      /permission/,
+    )
+  })
+
+  test('a trade needs expense rights and an open project to submit expenses', async () => {
+    const expense = (id: string) => (d: AppData) => {
+      d.projects.find((p) => p.id === 'pr-1')!.expenses.push({ id, providerId: 'u-prov-1', date: '2030-01-01', description: 'x', category: 'Other', amount: 1, status: 'submitted' })
+    }
+    await mutate(admin, (d) => {
+      d.users.find((u) => u.id === 'u-prov-1')!.permissions = []
+    })
+    await assert.rejects(mutate(dan, expense('e-noperm')), /row-level security/)
+    await mutate(admin, (d) => {
+      d.users.find((u) => u.id === 'u-prov-1')!.permissions = ['canSubmitExpenses']
+      d.projects.find((p) => p.id === 'pr-1')!.status = 'completed'
+    })
+    await assert.rejects(mutate(dan, expense('e-closed')), /row-level security/)
+    await mutate(admin, (d) => {
+      d.projects.find((p) => p.id === 'pr-1')!.status = 'in_progress'
+    })
+  })
+
+  test('a quote cannot be issued without a price', async () => {
+    await assert.rejects(
+      mutate(admin, (d) => {
+        d.projects.find((p) => p.id === 'pr-2')!.status = 'quoted'
+      }),
+      /quoted_needs_price/,
+    )
+  })
+})
+
 describe('server functions (service role)', () => {
   test('can record that a request was SMS-alerted despite the column guards', async () => {
     const c = await pool.connect()

@@ -1,11 +1,12 @@
 import type { AppData } from './types'
+import { toISODate } from './utils'
 import { DEFAULT_PERMISSIONS } from './types'
 
 /** ISO date (YYYY-MM-DD) offset from today, so sample data always looks current. */
 function day(offset: number): string {
   const d = new Date()
   d.setDate(d.getDate() + offset)
-  return d.toISOString().slice(0, 10)
+  return toISODate(d)
 }
 
 function stamp(offsetDays: number, hour = 9): string {
@@ -19,7 +20,8 @@ function stamp(offsetDays: number, hour = 9): string {
 const MASTER_HASH = 'b31dccc8048a9bc7b223751eb4243b44466ba5a48ab13c6f269d5a32e9bed78e'
 const DEMO_HASH = '0ead2060b65992dca4769af601a1b3a35ef38cfad2c2c465bb160ea764157c5d'
 
-export const DATA_VERSION = 1
+// Bumped when the stored demo data shape changes; older saved demo data is replaced.
+export const DATA_VERSION = 2
 
 export function createSeed(): AppData {
   return {
@@ -310,10 +312,7 @@ export function createSeed(): AppData {
     ],
     smsSettings: {
       provider: 'none',
-      twilioAccountSid: '',
-      twilioAuthToken: '',
       fromNumber: '',
-      messageBirdKey: '',
       webhookUrl: '',
       recipients: [],
       notifyOnNewRequest: true,

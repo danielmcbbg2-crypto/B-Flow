@@ -124,8 +124,14 @@ function ProjectEditor({ project, onClose, onSave }: { project: Project; onClose
   const lk = useLookup()
   const [p, setP] = useState<Project>(project)
   const [ms, setMs] = useState({ title: '', date: todayISO() })
+  const [error, setError] = useState<string | null>(null)
   const set = (patch: Partial<Project>) => setP({ ...p, ...patch })
   const prop = lk.property(p.propertyId)
+  const trySave = (next: Project) => {
+    if (next.status === 'quoted' && !((next.quoteAmount ?? 0) > 0)) return setError('Enter the quote amount before issuing the quote.')
+    setError(null)
+    onSave(next)
+  }
   return (
     <Modal open onClose={onClose} title={`P-${p.number} · ${p.title}`} width="max-w-3xl">
       <p className="text-sm text-slate-600">
@@ -138,7 +144,7 @@ function ProjectEditor({ project, onClose, onSave }: { project: Project; onClose
         className="mt-5 grid gap-4 sm:grid-cols-2"
         onSubmit={(e) => {
           e.preventDefault()
-          onSave(p)
+          trySave(p)
         }}
       >
         <Field label="Status">
@@ -193,12 +199,13 @@ function ProjectEditor({ project, onClose, onSave }: { project: Project; onClose
         </div>
         <div className="flex flex-wrap justify-end gap-2 sm:col-span-2">
           {p.status === 'quote_requested' && (
-            <button type="button" className="btn-accent" disabled={!p.quoteAmount} onClick={() => onSave({ ...p, status: 'quoted' })}>
+            <button type="button" className="btn-accent" disabled={!p.quoteAmount} onClick={() => trySave({ ...p, status: 'quoted' })}>
               Issue quote to client
             </button>
           )}
           <button className="btn-primary">Save project</button>
         </div>
+        {error && <p className="text-sm text-red-600 sm:col-span-2">{error}</p>}
       </form>
     </Modal>
   )

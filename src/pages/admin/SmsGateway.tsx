@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, Send, Trash2, TriangleAlert } from 'lucide-react'
+import { Plus, Send, Trash2 } from 'lucide-react'
 import { Empty, Field, PageHeader, Status } from '../../components/ui'
 import { useStore } from '../../lib/store'
 import type { SmsSettings } from '../../lib/types'
@@ -46,41 +46,26 @@ export function SmsGateway() {
             <Field label="SMS provider">
               <select className="input" value={s.provider} onChange={(e) => set({ provider: e.target.value as SmsSettings['provider'] })}>
                 <option value="none">Not configured (log only)</option>
-                <option value="webhook">Custom webhook (recommended)</option>
-                <option value="twilio">Twilio</option>
-                <option value="messagebird">MessageBird</option>
+                <option value="webhook">Webhook relay</option>
               </select>
             </Field>
-            {s.provider === 'twilio' && (
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Field label="Account SID"><input className="input num" value={s.twilioAccountSid} onChange={(e) => set({ twilioAccountSid: e.target.value })} placeholder="AC…" /></Field>
-                <Field label="Auth token"><input className="input num" type="password" autoComplete="off" value={s.twilioAuthToken} onChange={(e) => set({ twilioAuthToken: e.target.value })} /></Field>
-              </div>
-            )}
-            {s.provider === 'messagebird' && (
-              <Field label="Access key"><input className="input num" type="password" autoComplete="off" value={s.messageBirdKey} onChange={(e) => set({ messageBirdKey: e.target.value })} /></Field>
-            )}
             {s.provider === 'webhook' && (
-              <Field label="Webhook URL">
-                <input className="input num" type="url" value={s.webhookUrl} onChange={(e) => set({ webhookUrl: e.target.value })} placeholder="https://…" />
-                <span className="mt-1 block text-xs text-slate-500">
-                  Receives a POST with JSON <code className="num">{'{ to, from, message, event }'}</code>.
-                </span>
-              </Field>
+              <>
+                <Field label="Webhook URL">
+                  <input className="input num" type="url" value={s.webhookUrl} onChange={(e) => set({ webhookUrl: e.target.value })} placeholder="https://…" />
+                  <span className="mt-1 block text-xs text-slate-500">
+                    Receives a POST with JSON <code className="num">{'{ to, from, message, event }'}</code>.
+                  </span>
+                </Field>
+                <Field label="From number">
+                  <input className="input num" value={s.fromNumber} onChange={(e) => set({ fromNumber: e.target.value })} placeholder="+61…" />
+                </Field>
+              </>
             )}
-            {s.provider !== 'none' && (
-              <Field label={s.provider === 'messagebird' ? 'Originator' : 'From number'}>
-                <input className="input num" value={s.fromNumber} onChange={(e) => set({ fromNumber: e.target.value })} placeholder="+61…" />
-              </Field>
-            )}
-            {(s.provider === 'twilio' || s.provider === 'messagebird') && (
-              <p className="flex gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-                <TriangleAlert size={16} className="shrink-0" />
-                This app runs in the browser, so these credentials are stored on this device and browsers often block direct calls to SMS APIs.
-                For production, use a webhook relay (a small server function) that keeps the credentials off the device.
-              </p>
-            )}
-
+            <p className="text-xs text-slate-500">
+              Demo mode never stores SMS provider credentials in the browser. Twilio and other providers are set up in live mode, where a server
+              function keeps the credentials secret. See the README.
+            </p>
             </>
           )}
 

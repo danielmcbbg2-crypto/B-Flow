@@ -2,10 +2,10 @@ import { useState } from 'react'
 import { Building2, CalendarDays, FolderKanban, LayoutDashboard, MessageSquareText, Receipt, Truck, Users } from 'lucide-react'
 import { GridTile, PortalShell, type NavItem } from '../../components/PortalShell'
 import { Calendar } from '../../components/Calendar'
-import { Empty, PageHeader, Sep, Stat } from '../../components/ui'
+import { Empty, PageHeader, Stat } from '../../components/ui'
 import { RequestDetail, RequestRow, useLinkedCalendar } from '../../components/works'
 import { useLookup, useStore } from '../../lib/store'
-import { money } from '../../lib/utils'
+import { fmtDateTime, money } from '../../lib/utils'
 import { Dispatch } from './Dispatch'
 import { AdminProjects } from './AdminProjects'
 import { Finance } from './Finance'
@@ -19,10 +19,10 @@ export function AdminPortal({ section }: { section: string }) {
   const quotes = data.projects.filter((p) => p.status === 'quote_requested').length
   const nav: NavItem[] = [
     { key: 'home', label: 'Command centre', icon: LayoutDashboard },
-    { key: 'dispatch', label: 'Triage & dispatch', icon: Truck, badge: pending },
-    { key: 'projects', label: 'Quotes & projects', icon: FolderKanban, badge: quotes },
+    ...(can('canDispatchJobs') ? [{ key: 'dispatch', label: 'Triage & dispatch', icon: Truck, badge: pending }] : []),
+    ...(can('canManageProjects') ? [{ key: 'projects', label: 'Quotes & projects', icon: FolderKanban, badge: quotes }] : []),
     { key: 'calendar', label: 'Calendar', icon: CalendarDays },
-    { key: 'finance', label: 'Finance', icon: Receipt },
+    ...(can('canManageInvoices') ? [{ key: 'finance', label: 'Finance', icon: Receipt }] : []),
     { key: 'properties', label: 'Properties', icon: Building2 },
     { key: 'sms', label: 'SMS gateway', icon: MessageSquareText },
     ...(can('canEditPermissions') ? [{ key: 'accounts', label: 'Accounts', icon: Users }] : []),
@@ -30,9 +30,9 @@ export function AdminPortal({ section }: { section: string }) {
   const body = (() => {
     switch (section) {
       case 'dispatch':
-        return <Dispatch />
+        return can('canDispatchJobs') ? <Dispatch /> : <Empty title="You don't have access to dispatch." />
       case 'projects':
-        return <AdminProjects />
+        return can('canManageProjects') ? <AdminProjects /> : <Empty title="You don't have access to quotes & projects." />
       case 'calendar':
         return <AdminCalendar />
       case 'finance':
@@ -55,8 +55,14 @@ export function AdminPortal({ section }: { section: string }) {
 }
 
 function CommandCentre() {
-  const { data } = useStore()
+  const { data, user, can, cloud, update } = useStore()
   const [openId, setOpenId] = useState<string | null>(null)
+  const messages = data.inbox.filter((m) => m.userId === user?.id && !m.read)
+  const markRead = (id: string) =>
+    update((d) => {
+      const m = d.inbox.find((x) => x.id === id)
+      if (m) m.read = true
+    })
   const lk = useLookup()
   const pending = data.requests.filter((r) => r.status === 'pending')
   const urgentOpen = data.requests.filter((r) => r.urgency === 'urgent' && r.status !== 'completed')
@@ -96,6 +102,32 @@ function CommandCentre() {
           )}
         </section>
         <section>
+          {messages.length > 0 && (
+            <>
+              <h2 className="mb-3 font-bold">
+                Messages <span className="num text-sm font-normal text-slate-400">{messages.length}</span>
+              </h2>
+              <ul className="card mb-6 divide-y divide-slate-100 text-sm">
+                {messages.slice(0, 5).map((m) => (
+                  <li key={m.id} className="px-4 py-3">
+                    <p className="font-medium text-slate-900">{m.title}</p>
+                    <p className="text-slate-600">{m.body}</p>
+                    <div className="mt-1.5 flex items-center gap-3 text-xs">
+                      <span className="num text-slate-400">{fmtDateTime(m.createdAt)}</span>
+                      {m.requestId && lk.request(m.requestId) && (
+                        <button className="font-semibold text-slate-700 hover:text-slate-900" onClick={() => setOpenId(m.requestId!)}>
+                          View job
+                        </button>
+                      )}
+                      <button className="font-semibold text-slate-700 hover:text-slate-900" onClick={() => markRead(m.id)}>
+                        Mark read
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
           <h2 className="mb-3 font-bold">Follow-ups</h2>
           <ul className="card divide-y divide-slate-100 text-sm">
             {[
@@ -116,11 +148,19 @@ function CommandCentre() {
       </div>
 
       <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <GridTile href="#/admin/dispatch" icon={Truck} emphasis={pending.length > 0} title="Triage & dispatch" description="Review photos, assign trades, schedule visits and send SMS alerts." />
-        <GridTile href="#/admin/projects" icon={FolderKanban} title="Quotes & projects" description="Price quote requests, attach scope of works, manage milestones and expenses." />
-        <GridTile href="#/admin/finance" icon={Receipt} title="Finance & QuickBooks" description="Track QuickBooks invoice numbers, amounts and bank transfer settlements." />
-        <GridTile href="#/admin/sms" icon={MessageSquareText} title="SMS gateway" description="Configure Twilio, MessageBird or a webhook relay, set admin numbers and view logs." meta={data.smsSettings.provider === 'none' ? 'Not configured' : <>Provider<Sep />{data.smsSettings.provider}</>} />
-        <GridTile href="#/admin/accounts" icon={Users} title="Accounts & permissions" description="Invite clients and trades, switch roles and set granular permissions." meta={<><span className="num">{data.users.length}</span> accounts</>} />
+        {can('canDispatchJobs') && (
+          <GridTile href="#/admin/dispatch" icon={Truck} emphasis={pending.length > 0} title="Triage & dispatch" description="Review photos, assign trades, schedule visits and send SMS alerts." />
+        )}
+        {can('canManageProjects') && (
+          <GridTile href="#/admin/projects" icon={FolderKanban} title="Quotes & projects" description="Price quote requests, attach scope of works, manage milestones and expenses." />
+        )}
+        {can('canManageInvoices') && (
+          <GridTile href="#/admin/finance" icon={Receipt} title="Finance & QuickBooks" description="Track QuickBooks invoice numbers, amounts and bank transfer settlements." />
+        )}
+        <GridTile href="#/admin/sms" icon={MessageSquareText} title="SMS gateway" description="Set the admin phones that get alerts, view the delivery log and send a test." meta={cloud ? 'Sent by server function' : data.smsSettings.provider === 'none' ? 'Not configured' : 'Webhook relay'} />
+        {can('canEditPermissions') && (
+          <GridTile href="#/admin/accounts" icon={Users} title="Accounts & permissions" description="Invite clients and trades, switch roles and set granular permissions." meta={<><span className="num">{data.users.length}</span> accounts</>} />
+        )}
         <GridTile href="#/admin/calendar" icon={CalendarDays} title="Operations calendar" description="Every scheduled visit and project milestone across all trades." />
       </div>
       <RequestDetail r={lk.request(openId ?? undefined)} open={!!openId} onClose={() => setOpenId(null)} />
@@ -129,14 +169,24 @@ function CommandCentre() {
 }
 
 function AdminCalendar() {
-  const { data } = useStore()
+  const { data, can } = useStore()
   const lk = useLookup()
   const cal = useLinkedCalendar(data.requests, data.projects)
   const [openId, setOpenId] = useState<string | null>(null)
+  const canMove = can('canDispatchJobs') || can('canManageProjects')
   return (
     <>
       <PageHeader title="Operations calendar" subtitle="All maintenance visits and project milestones. Drag to reschedule." />
-      <Calendar events={cal.events} onMove={cal.onMove} onOpen={(ev) => ev.kind === 'request' && setOpenId(ev.id.slice(2))} />
+      <Calendar
+        events={cal.events}
+        onMove={
+          canMove
+            ? (ev, date) => {
+                if (can(ev.kind === 'request' ? 'canDispatchJobs' : 'canManageProjects')) cal.onMove(ev, date)
+              }
+            : undefined
+        }
+        onOpen={(ev) => ev.kind === 'request' && setOpenId(ev.id.slice(2))} />
       <RequestDetail r={lk.request(openId ?? undefined)} open={!!openId} onClose={() => setOpenId(null)} />
     </>
   )

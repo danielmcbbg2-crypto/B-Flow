@@ -74,7 +74,7 @@ function Overview({ unread }: { unread: number }) {
 }
 
 function Inbox() {
-  const { update } = useStore()
+  const { update, user } = useStore()
   const a = useAssigned()
   const lk = useLookup()
   const [openReq, setOpenReq] = useState<string | null>(null)
@@ -103,7 +103,7 @@ function Inbox() {
                   <p className="num mt-1 text-xs text-slate-400">{fmtDateTime(m.createdAt)}</p>
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-2">
-                  {m.requestId && lk.request(m.requestId) && (
+                  {m.requestId && lk.request(m.requestId)?.assignedProviderId === user?.id && (
                     <button className="btn-ghost" onClick={() => { setOpenReq(m.requestId!); mark(m.id, { read: true }) }}>View job</button>
                   )}
                   {pending ? (
@@ -276,15 +276,19 @@ function ProviderCalendar() {
   )
 }
 
+const OPEN_FOR_EXPENSES = ['approved', 'in_progress']
+
 function Budget() {
-  const { user, update } = useStore()
+  const { user, update, can } = useStore()
   const a = useAssigned()
   const [adding, setAdding] = useState<string | null>(null)
   const [form, setForm] = useState({ date: todayISO(), description: '', category: 'Materials' as Expense['category'], amount: '' })
+  const canSubmit = (status: string) => can('canSubmitExpenses') && OPEN_FOR_EXPENSES.includes(status)
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
-    if (!adding || !user) return
+    const project = a.projects.find((p) => p.id === adding)
+    if (!project || !user || !canSubmit(project.status)) return
     update((d) => {
       d.projects.find((p) => p.id === adding)?.expenses.push({
         id: uid('e'),
@@ -318,7 +322,11 @@ function Budget() {
                     <p className="num text-xs text-slate-500">P-{p.number}</p>
                     <h3 className="font-bold">{p.title}</h3>
                   </div>
-                  <button className="btn-primary" onClick={() => setAdding(p.id)}><Plus size={16} /> Submit expense</button>
+                  {canSubmit(p.status) ? (
+                    <button className="btn-primary" onClick={() => setAdding(p.id)}><Plus size={16} /> Submit expense</button>
+                  ) : (
+                    <span className="text-xs text-slate-500">{can('canSubmitExpenses') ? 'Project closed for new expenses' : 'Expense submission not enabled for your account'}</span>
+                  )}
                 </div>
                 <div className="grid grid-cols-3 divide-x divide-slate-100 border-b border-slate-100 text-sm">
                   <div className="px-5 py-3"><p className="text-xs text-slate-500">Budget</p><p className="num">{money(p.budget)}</p></div>

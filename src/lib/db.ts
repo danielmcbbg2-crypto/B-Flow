@@ -19,6 +19,7 @@ import type {
   SmsSettings,
   UserAccount,
 } from './types'
+import { DATA_VERSION } from './seed'
 
 export type Row = Record<string, unknown>
 
@@ -54,10 +55,7 @@ const num = (v: unknown): number => (typeof v === 'number' ? v : Number(v))
 
 export const DEFAULT_SMS: SmsSettings = {
   provider: 'server',
-  twilioAccountSid: '',
-  twilioAuthToken: '',
   fromNumber: '',
-  messageBirdKey: '',
   webhookUrl: '',
   recipients: [],
   notifyOnNewRequest: true,
@@ -387,7 +385,7 @@ export async function fetchAll(db: DbAdapter): Promise<AppData> {
   const ex = byProject(expenses)
   const s = settings[0] as { sms?: Partial<SmsSettings>; bank?: AppData['bank'] } | undefined
   return {
-    version: 1,
+    version: DATA_VERSION,
     users: profiles.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at))).map(userFromRow),
     properties: properties.sort((a, b) => String(a.address).localeCompare(String(b.address))).map(propertyFromRow),
     requests: requests.sort(newestFirst('created_at')).map(requestFromRow),
@@ -402,7 +400,7 @@ export async function fetchAll(db: DbAdapter): Promise<AppData> {
 
 export function emptyData(): AppData {
   return {
-    version: 1,
+    version: DATA_VERSION,
     users: [],
     properties: [],
     requests: [],

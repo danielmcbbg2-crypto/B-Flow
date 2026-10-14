@@ -174,12 +174,12 @@ export interface SmsNotification {
 }
 
 export interface SmsSettings {
-  /** 'server' = the send-sms Supabase function (cloud mode). */
-  provider: 'twilio' | 'messagebird' | 'webhook' | 'none' | 'server'
-  twilioAccountSid: string
-  twilioAuthToken: string
+  /**
+   * 'server' = the send-sms Supabase function (live mode, credentials in Supabase secrets).
+   * Demo mode can only log or post to a webhook: provider credentials never go in the browser.
+   */
+  provider: 'webhook' | 'none' | 'server'
   fromNumber: string
-  messageBirdKey: string
   webhookUrl: string
   recipients: string[]
   notifyOnNewRequest: boolean

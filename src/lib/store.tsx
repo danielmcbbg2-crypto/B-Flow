@@ -648,8 +648,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           return (e as Error).message
         }
       }
+      // Demo mode mirrors the database rules: job and invoice history is kept.
+      const d0 = dataRef.current
+      const hasHistory =
+        d0.requests.some((r) => r.clientId === id) || d0.projects.some((p) => p.clientId === id) || d0.invoices.some((i) => i.clientId === id)
+      if (hasHistory) return 'This account has jobs or invoices on record, so it can’t be deleted. Suspend it instead.'
       update((d) => {
         d.users = d.users.filter((x) => x.id !== id)
+        d.properties = d.properties.filter((p) => p.clientId !== id)
+        d.inbox = d.inbox.filter((m) => m.userId !== id)
+        for (const r of d.requests) if (r.assignedProviderId === id) r.assignedProviderId = undefined
+        for (const p of d.projects) {
+          if (p.assignedProviderId === id) p.assignedProviderId = undefined
+          for (const e of p.expenses) if (e.providerId === id) e.providerId = ''
+        }
       })
       return null
     },

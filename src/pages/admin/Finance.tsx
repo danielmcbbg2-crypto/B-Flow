@@ -4,7 +4,7 @@ import { Empty, Field, Modal, PageHeader, Stat, Tabs } from '../../components/ui
 import { InvoiceStatusText } from '../../components/status'
 import { useLookup, useStore } from '../../lib/store'
 import type { InvoiceStatus, QuickBooksInvoice } from '../../lib/types'
-import { fmtDate, money, todayISO, uid } from '../../lib/utils'
+import { fmtDate, money, toISODate, todayISO, uid } from '../../lib/utils'
 
 export function Finance() {
   const { data, update } = useStore()
@@ -112,10 +112,20 @@ export function Finance() {
 
 function InvoiceForm({ onClose }: { onClose: () => void }) {
   const { data, update } = useStore()
-  const invoiced = new Set(data.invoices.map((i) => i.requestId ?? i.projectId))
+  const invoicedRequests = new Set(data.invoices.map((i) => i.requestId).filter(Boolean))
+  const projectBilled = (id: string) => data.invoices.filter((i) => i.projectId === id).reduce((t, i) => t + i.amount, 0)
+  // A maintenance job is invoiced once; projects can take several progress invoices, so show what's already billed.
   const options = [
-    ...data.requests.filter((r) => r.status === 'completed').map((r) => ({ key: `r:${r.id}`, label: `#${r.number} ${r.title}`, clientId: r.clientId, done: invoiced.has(r.id) })),
-    ...data.projects.filter((p) => ['approved', 'in_progress', 'completed'].includes(p.status)).map((p) => ({ key: `p:${p.id}`, label: `P-${p.number} ${p.title}`, clientId: p.clientId, done: false })),
+    ...data.requests
+      .filter((r) => r.status === 'completed')
+      .map((r) => ({ key: `r:${r.id}`, label: `#${r.number} ${r.title}`, clientId: r.clientId, done: invoicedRequests.has(r.id) })),
+    ...data.projects
+      .filter((p) => ['approved', 'in_progress', 'completed'].includes(p.status))
+      .map((p) => {
+        const billed = projectBilled(p.id)
+        const note = billed ? ` — ${money(billed)} billed${p.quoteAmount ? ` of ${money(p.quoteAmount)}` : ''}` : ''
+        return { key: `p:${p.id}`, label: `P-${p.number} ${p.title}${note}`, clientId: p.clientId, done: false }
+      }),
   ]
   const nextNum = () => {
     const nums = data.invoices.map((i) => parseInt(i.qbInvoiceNumber.replace(/\D/g, ''), 10)).filter((n) => !Number.isNaN(n))
@@ -123,7 +133,7 @@ function InvoiceForm({ onClose }: { onClose: () => void }) {
   }
   const due = new Date()
   due.setDate(due.getDate() + 14)
-  const [f, setF] = useState({ link: options.find((o) => !o.done)?.key ?? '', qb: nextNum(), amount: '', due: due.toISOString().slice(0, 10), status: 'sent' as InvoiceStatus })
+  const [f, setF] = useState({ link: options.find((o) => !o.done)?.key ?? '', qb: nextNum(), amount: '', due: toISODate(due), status: 'sent' as InvoiceStatus })
   const opt = options.find((o) => o.key === f.link)
 
   return (
@@ -132,9 +142,10 @@ function InvoiceForm({ onClose }: { onClose: () => void }) {
         className="grid gap-4 sm:grid-cols-2"
         onSubmit={(e) => {
           e.preventDefault()
-          if (!opt) return
+          if (!opt || opt.done) return
           const [kind, id] = f.link.split(':')
           update((d) => {
+            if (kind === 'r' && d.invoices.some((i) => i.requestId === id)) return
             d.invoices.unshift({
               id: uid('i'),
               requestId: kind === 'r' ? id : undefined,
@@ -154,7 +165,12 @@ function InvoiceForm({ onClose }: { onClose: () => void }) {
         <Field label="Work order or project" className="sm:col-span-2">
           <select className="input" required value={f.link} onChange={(e) => setF({ ...f, link: e.target.value })}>
             <option value="" disabled>Select…</option>
-            {options.map((o) => <option key={o.key} value={o.key}>{o.label}{o.done ? ' (already invoiced)' : ''}</option>)}
+            {options.map((o) => (
+              <option key={o.key} value={o.key} disabled={o.done}>
+                {o.label}
+                {o.done ? ' (already invoiced)' : ''}
+              </option>
+            ))}
           </select>
         </Field>
         <Field label="QuickBooks invoice no.">
@@ -188,6 +204,7 @@ function PaymentForm({ invoice, onClose }: { invoice: QuickBooksInvoice; onClose
         className="space-y-4"
         onSubmit={(e) => {
           e.preventDefault()
+          if (!ref.trim()) return
           update((d) => {
             const i = d.invoices.find((x) => x.id === invoice.id)!
             i.status = 'paid'
@@ -205,7 +222,7 @@ function PaymentForm({ invoice, onClose }: { invoice: QuickBooksInvoice; onClose
         <Field label="Date received">
           <input type="date" className="input num" required value={date} onChange={(e) => setDate(e.target.value)} />
         </Field>
-        <div className="flex justify-end"><button className="btn-primary">Mark paid</button></div>
+        <div className="flex justify-end"><button className="btn-primary" disabled={!ref.trim()}>Mark paid</button></div>
       </form>
     </Modal>
   )

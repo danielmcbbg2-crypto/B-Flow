@@ -368,7 +368,7 @@ function Projects() {
                     </ol>
                   </div>
                 )}
-                {p.status === 'quoted' && (
+                {p.status === 'quoted' && !!p.quoteAmount && (
                   <div className="mt-4 flex gap-2 border-t border-slate-100 pt-4">
                     <button className="btn-primary" onClick={() => respond(p.id, true)}>Accept quote</button>
                     <button className="btn-ghost" onClick={() => respond(p.id, false)}>Decline</button>

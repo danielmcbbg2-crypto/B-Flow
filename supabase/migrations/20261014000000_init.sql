@@ -4,7 +4,9 @@
 -- or with the Supabase CLI: `supabase db push`.
 --
 -- Access model (enforced by row-level security, not by the app):
---   admin    — everything (finance needs canManageInvoices, accounts need canEditPermissions)
+--   admin    — sees everything; changes need the matching permission: canDispatchJobs (jobs),
+--              canManageProjects (quotes, projects, expenses), canManageInvoices (finance),
+--              canEditPermissions (accounts)
 --   client   — own properties, requests, projects, invoices and inbox
 --   provider — jobs and projects assigned to them, plus the related properties and clients
 
@@ -74,7 +76,8 @@ create table public.projects (
   status               text not null default 'quote_requested'
                          check (status in ('quote_requested', 'quoted', 'approved', 'in_progress', 'completed', 'rejected')),
   assigned_provider_id text references public.profiles (id) on delete set null,
-  created_at           timestamptz not null default now()
+  created_at           timestamptz not null default now(),
+  constraint quoted_needs_price check (status <> 'quoted' or coalesce(quote_amount, 0) > 0)
 );
 
 create table public.project_milestones (
@@ -232,7 +235,7 @@ language plpgsql set search_path = public as $$
 declare
   editable text[] := array['status', 'completion_photos', 'notes', 'scheduled_date', 'completed_at'];
 begin
-  if not is_api_user() or is_admin() then return new; end if;
+  if not is_api_user() or has_perm('canDispatchJobs') then return new; end if;
   if (to_jsonb(new) - editable) is distinct from (to_jsonb(old) - editable) then
     raise exception 'Only status, schedule, notes and completion photos can be changed';
   end if;
@@ -248,10 +251,10 @@ create trigger guard_request_update before update on public.requests
 create function public.guard_project_update() returns trigger
 language plpgsql set search_path = public as $$
 begin
-  if not is_api_user() or is_admin() then return new; end if;
-  -- Clients may only accept or decline an issued quote.
+  if not is_api_user() or has_perm('canManageProjects') then return new; end if;
+  -- Clients may only accept or decline an issued, priced quote.
   if (to_jsonb(new) - 'status') is distinct from (to_jsonb(old) - 'status')
-     or old.status <> 'quoted' or new.status not in ('approved', 'rejected') then
+     or old.status <> 'quoted' or old.quote_amount is null or new.status not in ('approved', 'rejected') then
     raise exception 'Clients can only accept or decline an issued quote';
   end if;
   return new;
@@ -263,7 +266,7 @@ create trigger guard_project_update before update on public.projects
 create function public.guard_milestone_update() returns trigger
 language plpgsql set search_path = public as $$
 begin
-  if not is_api_user() or is_admin() then return new; end if;
+  if not is_api_user() or has_perm('canManageProjects') then return new; end if;
   if (to_jsonb(new) - array['done', 'date']) is distinct from (to_jsonb(old) - array['done', 'date']) then
     raise exception 'Only milestone date and completion can be changed';
   end if;
@@ -339,7 +342,7 @@ create policy requests_select on public.requests for select to authenticated usi
   is_admin() or client_id = current_profile_id() or assigned_provider_id = current_profile_id()
 );
 create policy requests_insert on public.requests for insert to authenticated with check (
-  is_admin()
+  has_perm('canDispatchJobs')
   or (
     client_id = current_profile_id()
     and has_perm('canSubmitRequests')
@@ -349,16 +352,16 @@ create policy requests_insert on public.requests for insert to authenticated wit
   )
 );
 create policy requests_update on public.requests for update to authenticated
-  using (is_admin() or assigned_provider_id = current_profile_id())
-  with check (is_admin() or assigned_provider_id = current_profile_id());
-create policy requests_delete on public.requests for delete to authenticated using (is_admin());
+  using (has_perm('canDispatchJobs') or assigned_provider_id = current_profile_id())
+  with check (has_perm('canDispatchJobs') or assigned_provider_id = current_profile_id());
+create policy requests_delete on public.requests for delete to authenticated using (has_perm('canDispatchJobs'));
 
 -- projects
 create policy projects_select on public.projects for select to authenticated using (
   is_admin() or client_id = current_profile_id() or assigned_provider_id = current_profile_id()
 );
 create policy projects_insert on public.projects for insert to authenticated with check (
-  is_admin()
+  has_perm('canManageProjects')
   or (
     client_id = current_profile_id()
     and status = 'quote_requested'
@@ -368,35 +371,39 @@ create policy projects_insert on public.projects for insert to authenticated wit
   )
 );
 create policy projects_update on public.projects for update to authenticated
-  using (is_admin() or client_id = current_profile_id())
-  with check (is_admin() or client_id = current_profile_id());
-create policy projects_delete on public.projects for delete to authenticated using (is_admin());
+  using (has_perm('canManageProjects') or client_id = current_profile_id())
+  with check (has_perm('canManageProjects') or client_id = current_profile_id());
+create policy projects_delete on public.projects for delete to authenticated using (has_perm('canManageProjects'));
 
 -- milestones (visible with their project; assigned trade can tick off / reschedule)
 create policy milestones_select on public.project_milestones for select to authenticated using (
   exists (select 1 from projects p where p.id = project_id)
 );
-create policy milestones_insert on public.project_milestones for insert to authenticated with check (is_admin());
+create policy milestones_insert on public.project_milestones for insert to authenticated with check (has_perm('canManageProjects'));
 create policy milestones_update on public.project_milestones for update to authenticated using (
-  is_admin() or exists (select 1 from projects p where p.id = project_id and p.assigned_provider_id = current_profile_id())
+  has_perm('canManageProjects') or exists (select 1 from projects p where p.id = project_id and p.assigned_provider_id = current_profile_id())
 );
-create policy milestones_delete on public.project_milestones for delete to authenticated using (is_admin());
+create policy milestones_delete on public.project_milestones for delete to authenticated using (has_perm('canManageProjects'));
 
--- expenses (assigned trade submits; admin approves)
+-- expenses (assigned trade submits while the project is open; project managers approve)
 create policy expenses_select on public.project_expenses for select to authenticated using (
   exists (select 1 from projects p where p.id = project_id)
 );
 create policy expenses_insert on public.project_expenses for insert to authenticated with check (
-  is_admin()
+  has_perm('canManageProjects')
   or (
     provider_id = current_profile_id()
+    and has_perm('canSubmitExpenses')
     and status = 'submitted'
-    and exists (select 1 from projects p where p.id = project_id and p.assigned_provider_id = current_profile_id())
+    and exists (
+      select 1 from projects p
+      where p.id = project_id and p.assigned_provider_id = current_profile_id() and p.status in ('approved', 'in_progress')
+    )
   )
 );
-create policy expenses_update on public.project_expenses for update to authenticated using (is_admin());
+create policy expenses_update on public.project_expenses for update to authenticated using (has_perm('canManageProjects'));
 create policy expenses_delete on public.project_expenses for delete to authenticated using (
-  is_admin() or (provider_id = current_profile_id() and status = 'submitted')
+  has_perm('canManageProjects') or (provider_id = current_profile_id() and status = 'submitted')
 );
 
 -- invoices

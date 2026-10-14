@@ -85,8 +85,11 @@ export function Accounts() {
           locked={editing.id === MASTER_ID || editing.id === user?.id}
           onClose={() => setEditing(null)}
           onSave={(a) => {
-            update((d) => { d.users = d.users.map((x) => (x.id === a.id ? a : x)) })
+            const email = a.email.trim().toLowerCase()
+            if (data.users.some((u) => u.id !== a.id && u.email.toLowerCase() === email)) return 'Another account already uses this email.'
+            update((d) => { d.users = d.users.map((x) => (x.id === a.id ? { ...a, email: a.email.trim() } : x)) })
             setEditing(null)
+            return null
           }}
           onDelete={
             editing.id === MASTER_ID || editing.id === user?.id
@@ -208,7 +211,7 @@ function AccountEditor({
   account: UserAccount
   locked: boolean
   onClose: () => void
-  onSave: (a: UserAccount) => void
+  onSave: (a: UserAccount) => string | null
   onDelete?: () => Promise<string | null>
 }) {
   const { sendPasswordEmail } = useStore()
@@ -217,7 +220,11 @@ function AccountEditor({
   const set = (patch: Partial<UserAccount>) => setA({ ...a, ...patch })
   return (
     <Modal open onClose={onClose} title={`Edit ${account.name}`} width="max-w-2xl">
-      <form className="grid gap-4 sm:grid-cols-2" onSubmit={(e) => { e.preventDefault(); onSave(a) }}>
+      <form className="grid gap-4 sm:grid-cols-2" onSubmit={(e) => {
+          e.preventDefault()
+          const err = onSave(a)
+          if (err) setMsg({ ok: false, text: err })
+        }}>
         <AccountFields a={a} set={set} lockRole={locked} lockEmail={CLOUD} />
         <div className="sm:col-span-2">
           <span className="label">Permissions</span>
