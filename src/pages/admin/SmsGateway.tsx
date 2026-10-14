@@ -6,7 +6,7 @@ import type { SmsSettings } from '../../lib/types'
 import { fmtDateTime } from '../../lib/utils'
 
 export function SmsGateway() {
-  const { data, update, sendSms } = useStore()
+  const { data, update, sendSms, cloud } = useStore()
   const [s, setS] = useState<SmsSettings>(data.smsSettings)
   const [newNum, setNewNum] = useState('')
   const [test, setTest] = useState({ to: data.smsSettings.recipients[0] ?? '', message: 'Test message from Next Phase Maintenance ops.' })
@@ -29,42 +29,59 @@ export function SmsGateway() {
       <div className="grid gap-6 lg:grid-cols-5">
         <section className="card space-y-5 p-6 lg:col-span-3">
           <h2 className="font-bold">Provider & credentials</h2>
-          <Field label="SMS provider">
-            <select className="input" value={s.provider} onChange={(e) => set({ provider: e.target.value as SmsSettings['provider'] })}>
-              <option value="none">Not configured (log only)</option>
-              <option value="webhook">Custom webhook (recommended)</option>
-              <option value="twilio">Twilio</option>
-              <option value="messagebird">MessageBird</option>
-            </select>
-          </Field>
-          {s.provider === 'twilio' && (
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Account SID"><input className="input num" value={s.twilioAccountSid} onChange={(e) => set({ twilioAccountSid: e.target.value })} placeholder="AC…" /></Field>
-              <Field label="Auth token"><input className="input num" type="password" autoComplete="off" value={s.twilioAuthToken} onChange={(e) => set({ twilioAuthToken: e.target.value })} /></Field>
+          {cloud ? (
+            <div className="space-y-2 rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+              <p>
+                Messages are sent by the secure <code className="num">send-sms</code> server function. Your SMS credentials are stored as Supabase
+                secrets and are never sent to anyone's browser.
+              </p>
+              <p className="text-xs text-slate-500">
+                Twilio: set <code className="num">TWILIO_ACCOUNT_SID</code>, <code className="num">TWILIO_AUTH_TOKEN</code> and{' '}
+                <code className="num">TWILIO_FROM</code>. Any other provider: set <code className="num">SMS_WEBHOOK_URL</code>. With neither set, messages
+                are logged as “Queued”. See the README for setup steps.
+              </p>
             </div>
-          )}
-          {s.provider === 'messagebird' && (
-            <Field label="Access key"><input className="input num" type="password" autoComplete="off" value={s.messageBirdKey} onChange={(e) => set({ messageBirdKey: e.target.value })} /></Field>
-          )}
-          {s.provider === 'webhook' && (
-            <Field label="Webhook URL">
-              <input className="input num" type="url" value={s.webhookUrl} onChange={(e) => set({ webhookUrl: e.target.value })} placeholder="https://…" />
-              <span className="mt-1 block text-xs text-slate-500">
-                Receives a POST with JSON <code className="num">{'{ to, from, message, event }'}</code>.
-              </span>
+          ) : (
+            <>
+            <Field label="SMS provider">
+              <select className="input" value={s.provider} onChange={(e) => set({ provider: e.target.value as SmsSettings['provider'] })}>
+                <option value="none">Not configured (log only)</option>
+                <option value="webhook">Custom webhook (recommended)</option>
+                <option value="twilio">Twilio</option>
+                <option value="messagebird">MessageBird</option>
+              </select>
             </Field>
-          )}
-          {s.provider !== 'none' && (
-            <Field label={s.provider === 'messagebird' ? 'Originator' : 'From number'}>
-              <input className="input num" value={s.fromNumber} onChange={(e) => set({ fromNumber: e.target.value })} placeholder="+61…" />
-            </Field>
-          )}
-          {(s.provider === 'twilio' || s.provider === 'messagebird') && (
-            <p className="flex gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-              <TriangleAlert size={16} className="shrink-0" />
-              This app runs in the browser, so these credentials are stored on this device and browsers often block direct calls to SMS APIs.
-              For production, use a webhook relay (a small server function) that keeps the credentials off the device.
-            </p>
+            {s.provider === 'twilio' && (
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Account SID"><input className="input num" value={s.twilioAccountSid} onChange={(e) => set({ twilioAccountSid: e.target.value })} placeholder="AC…" /></Field>
+                <Field label="Auth token"><input className="input num" type="password" autoComplete="off" value={s.twilioAuthToken} onChange={(e) => set({ twilioAuthToken: e.target.value })} /></Field>
+              </div>
+            )}
+            {s.provider === 'messagebird' && (
+              <Field label="Access key"><input className="input num" type="password" autoComplete="off" value={s.messageBirdKey} onChange={(e) => set({ messageBirdKey: e.target.value })} /></Field>
+            )}
+            {s.provider === 'webhook' && (
+              <Field label="Webhook URL">
+                <input className="input num" type="url" value={s.webhookUrl} onChange={(e) => set({ webhookUrl: e.target.value })} placeholder="https://…" />
+                <span className="mt-1 block text-xs text-slate-500">
+                  Receives a POST with JSON <code className="num">{'{ to, from, message, event }'}</code>.
+                </span>
+              </Field>
+            )}
+            {s.provider !== 'none' && (
+              <Field label={s.provider === 'messagebird' ? 'Originator' : 'From number'}>
+                <input className="input num" value={s.fromNumber} onChange={(e) => set({ fromNumber: e.target.value })} placeholder="+61…" />
+              </Field>
+            )}
+            {(s.provider === 'twilio' || s.provider === 'messagebird') && (
+              <p className="flex gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                <TriangleAlert size={16} className="shrink-0" />
+                This app runs in the browser, so these credentials are stored on this device and browsers often block direct calls to SMS APIs.
+                For production, use a webhook relay (a small server function) that keeps the credentials off the device.
+              </p>
+            )}
+
+            </>
           )}
 
           <div className="space-y-2 border-t border-slate-100 pt-5">

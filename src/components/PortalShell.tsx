@@ -26,7 +26,7 @@ export function PortalShell({
   active: string
   children: ReactNode
 }) {
-  const { user, logout, storageError } = useStore()
+  const { user, logout, syncError, cloud } = useStore()
   const [pwOpen, setPwOpen] = useState(false)
   return (
     <div className="min-h-screen">
@@ -44,8 +44,8 @@ export function PortalShell({
             <button
               className="btn-ghost"
               aria-label="Sign out"
-              onClick={() => {
-                logout()
+              onClick={async () => {
+                await logout()
                 navigate('/')
               }}
             >
@@ -75,8 +75,13 @@ export function PortalShell({
           })}
         </nav>
       </header>
-      {storageError && (
-        <div className="border-b border-red-200 bg-red-50 px-4 py-2 text-center text-sm text-red-700">{storageError}</div>
+      {!cloud && (
+        <div className="border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-center text-xs text-amber-900">
+          Demo mode — data is saved in this browser only and isn't shared with anyone else.
+        </div>
+      )}
+      {syncError && (
+        <div className="border-b border-red-200 bg-red-50 px-4 py-2 text-center text-sm text-red-700">{syncError}</div>
       )}
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">{children}</main>
       {pwOpen && <ChangePassword onClose={() => setPwOpen(false)} />}

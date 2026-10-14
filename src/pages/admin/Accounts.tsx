@@ -4,23 +4,28 @@ import { Field, Modal, PageHeader, Status, Tabs } from '../../components/ui'
 import { useStore } from '../../lib/store'
 import { ALL_PERMISSIONS, DEFAULT_PERMISSIONS, TRADES, type Permission, type Role, type UserAccount } from '../../lib/types'
 import { fmtDate, generateInviteCode, uid } from '../../lib/utils'
+import { CLOUD } from '../../lib/supabase'
 
 const ROLE_LABEL: Record<Role, string> = { admin: 'Admin', client: 'Client', provider: 'Service provider' }
 const MASTER_ID = 'u-admin'
 
 export function Accounts() {
-  const { data, update, user } = useStore()
+  const { data, update, user, inviteAccount, deleteAccount } = useStore()
   const [tab, setTab] = useState<'all' | Role>('all')
   const [editing, setEditing] = useState<UserAccount | null>(null)
   const [inviting, setInviting] = useState(false)
-  const [issued, setIssued] = useState<UserAccount | null>(null)
+  const [issued, setIssued] = useState<{ account: UserAccount; code?: string } | null>(null)
   const list = data.users.filter((u) => tab === 'all' || u.role === tab)
 
   return (
     <>
       <PageHeader
         title="Accounts & permissions"
-        subtitle="Accounts are invite-only. Share the invite code with the person; they activate it from Sign in."
+        subtitle={
+          CLOUD
+            ? 'Accounts are invite-only. Invited people get an email link to choose their password.'
+            : 'Accounts are invite-only. Share the invite code with the person; they activate it from Sign in.'
+        }
         actions={<button className="btn-primary" onClick={() => setInviting(true)}><UserPlus size={16} /> Invite account</button>}
       />
       <Tabs
@@ -61,7 +66,7 @@ export function Accounts() {
                   <Status tone={u.status === 'active' ? 'green' : u.status === 'invited' ? 'amber' : 'red'}>
                     {u.status === 'active' ? 'Active' : u.status === 'invited' ? 'Invite pending' : 'Suspended'}
                   </Status>
-                  {u.status === 'invited' && u.inviteCode && <p className="num mt-0.5 text-xs text-slate-500">{u.inviteCode}</p>}
+                  {!CLOUD && u.status === 'invited' && u.inviteCode && <p className="num mt-0.5 text-xs text-slate-500">{u.inviteCode}</p>}
                 </td>
                 <td className="td num whitespace-nowrap text-slate-600">{fmtDate(u.createdAt)}</td>
                 <td className="td text-right">
@@ -86,9 +91,11 @@ export function Accounts() {
           onDelete={
             editing.id === MASTER_ID || editing.id === user?.id
               ? undefined
-              : () => {
-                  update((d) => { d.users = d.users.filter((x) => x.id !== editing.id) })
+              : async () => {
+                  const err = await deleteAccount(editing.id)
+                  if (err) return err
                   setEditing(null)
+                  return null
                 }
           }
         />
@@ -97,25 +104,33 @@ export function Accounts() {
         <InviteForm
           onClose={() => setInviting(false)}
           existingEmails={data.users.map((u) => u.email.toLowerCase())}
-          onCreate={(a) => {
-            update((d) => { d.users.push(a) })
+          onCreate={async (a) => {
+            const res = await inviteAccount(a)
+            if (res.error) return res.error
             setInviting(false)
-            setIssued(a)
+            setIssued({ account: a, code: res.code })
+            return null
           }}
         />
       )}
       <Modal open={!!issued} onClose={() => setIssued(null)} title="Invite created">
-        {issued && (
+        {issued && !issued.code && (
+          <p className="text-sm text-slate-600">
+            An invitation email is on its way to <span className="font-semibold text-slate-900">{issued.account.email}</span>. The link lets{' '}
+            {issued.account.name} choose a password and open their portal.
+          </p>
+        )}
+        {issued?.code && (
           <div className="space-y-4">
             <p className="text-sm text-slate-600">
-              Send <span className="font-semibold text-slate-900">{issued.name}</span> this code. They'll choose a password when they sign in with
+              Send <span className="font-semibold text-slate-900">{issued.account.name}</span> this code. They'll choose a password when they sign in with
               “I have an invite code”.
             </p>
             <div className="flex items-center justify-between rounded-md border border-slate-200 bg-slate-50 px-4 py-3">
-              <span className="num text-2xl tracking-widest">{issued.inviteCode}</span>
+              <span className="num text-2xl tracking-widest">{issued.code}</span>
               <button
                 className="btn-ghost px-2.5 py-1.5"
-                onClick={() => navigator.clipboard?.writeText(`Your Next Phase Maintenance portal invite: ${issued.inviteCode} (sign in with ${issued.email})`)}
+                onClick={() => navigator.clipboard?.writeText(`Your Next Phase Maintenance portal invite: ${issued.code} (sign in with ${issued.account.email})`)}
               >
                 <Copy size={15} /> Copy
               </button>
@@ -149,11 +164,13 @@ function PermissionBoxes({ value, onChange, disabled }: { value: Permission[]; o
   )
 }
 
-function AccountFields({ a, set, lockRole }: { a: UserAccount; set: (p: Partial<UserAccount>) => void; lockRole?: boolean }) {
+function AccountFields({ a, set, lockRole, lockEmail }: { a: UserAccount; set: (p: Partial<UserAccount>) => void; lockRole?: boolean; lockEmail?: boolean }) {
   return (
     <>
       <Field label="Full name"><input className="input" required value={a.name} onChange={(e) => set({ name: e.target.value })} /></Field>
-      <Field label="Email"><input className="input" type="email" required value={a.email} onChange={(e) => set({ email: e.target.value })} /></Field>
+      <Field label="Email">
+        <input className="input disabled:bg-slate-50 disabled:text-slate-500" type="email" required disabled={lockEmail} value={a.email} onChange={(e) => set({ email: e.target.value })} />
+      </Field>
       <Field label="Mobile"><input className="input num" type="tel" value={a.phone} onChange={(e) => set({ phone: e.target.value })} /></Field>
       <Field label="Role">
         <select
@@ -192,14 +209,16 @@ function AccountEditor({
   locked: boolean
   onClose: () => void
   onSave: (a: UserAccount) => void
-  onDelete?: () => void
+  onDelete?: () => Promise<string | null>
 }) {
+  const { sendPasswordEmail } = useStore()
   const [a, setA] = useState(account)
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const set = (patch: Partial<UserAccount>) => setA({ ...a, ...patch })
   return (
     <Modal open onClose={onClose} title={`Edit ${account.name}`} width="max-w-2xl">
       <form className="grid gap-4 sm:grid-cols-2" onSubmit={(e) => { e.preventDefault(); onSave(a) }}>
-        <AccountFields a={a} set={set} lockRole={locked} />
+        <AccountFields a={a} set={set} lockRole={locked} lockEmail={CLOUD} />
         <div className="sm:col-span-2">
           <span className="label">Permissions</span>
           <PermissionBoxes value={a.permissions} onChange={(permissions) => set({ permissions })} disabled={locked} />
@@ -212,25 +231,56 @@ function AccountEditor({
                 {a.status === 'active' ? 'Suspend' : 'Reactivate'}
               </button>
             )}
-            {!locked && (
-              <button type="button" className="btn-ghost" onClick={() => set({ status: 'invited', passwordHash: '', inviteCode: generateInviteCode() })}>
-                Reset & re-invite
-              </button>
-            )}
+            {!locked &&
+              (CLOUD ? (
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={async () => {
+                    const err = await sendPasswordEmail(a.email)
+                    setMsg(err ? { ok: false, text: err } : { ok: true, text: `Password link emailed to ${a.email}.` })
+                  }}
+                >
+                  Email password link
+                </button>
+              ) : (
+                <button type="button" className="btn-ghost" onClick={() => set({ status: 'invited', passwordHash: '', inviteCode: generateInviteCode() })}>
+                  Reset & re-invite
+                </button>
+              ))}
             {onDelete && (
-              <button type="button" className="btn-ghost text-red-600" onClick={() => confirm(`Delete ${account.name}? This can't be undone.`) && onDelete()}>
+              <button
+                type="button"
+                className="btn-ghost text-red-600"
+                onClick={async () => {
+                  if (!confirm(`Delete ${account.name}? This removes their login and everything linked to them, and can't be undone.`)) return
+                  const err = await onDelete()
+                  if (err) setMsg({ ok: false, text: err })
+                }}
+              >
                 Delete
               </button>
             )}
           </div>
           <button className="btn-primary">Save account</button>
         </div>
+        {msg && <p className={`text-sm sm:col-span-2 ${msg.ok ? 'text-emerald-700' : 'text-red-600'}`}>{msg.text}</p>}
       </form>
     </Modal>
   )
 }
 
-function InviteForm({ onClose, onCreate, existingEmails }: { onClose: () => void; onCreate: (a: UserAccount) => void; existingEmails: string[] }) {
+function InviteForm({
+  onClose,
+  onCreate,
+  existingEmails,
+}: {
+  onClose: () => void
+  onCreate: (a: UserAccount) => Promise<string | null>
+  existingEmails: string[]
+}) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [a, setA] = useState<UserAccount>({
     id: uid('u'),
     name: '',
@@ -247,14 +297,26 @@ function InviteForm({ onClose, onCreate, existingEmails }: { onClose: () => void
   const dupe = existingEmails.includes(a.email.trim().toLowerCase())
   return (
     <Modal open onClose={onClose} title="Invite a new account" width="max-w-2xl">
-      <form className="grid gap-4 sm:grid-cols-2" onSubmit={(e) => { e.preventDefault(); if (!dupe) onCreate({ ...a, email: a.email.trim() }) }}>
+      <form
+        className="grid gap-4 sm:grid-cols-2"
+        onSubmit={async (e) => {
+          e.preventDefault()
+          if (dupe) return
+          setBusy(true)
+          setError(await onCreate({ ...a, email: a.email.trim() }))
+          setBusy(false)
+        }}
+      >
         <AccountFields a={a} set={set} />
         {dupe && <p className="text-sm text-red-600 sm:col-span-2">An account with this email already exists.</p>}
         <div className="sm:col-span-2">
           <span className="label">Permissions</span>
           <PermissionBoxes value={a.permissions} onChange={(permissions) => set({ permissions })} />
         </div>
-        <div className="flex justify-end sm:col-span-2"><button className="btn-primary" disabled={dupe}>Create invite</button></div>
+        {error && <p className="text-sm text-red-600 sm:col-span-2">{error}</p>}
+        <div className="flex justify-end sm:col-span-2">
+          <button className="btn-primary" disabled={dupe || busy}>{busy ? 'Sending…' : CLOUD ? 'Send invitation' : 'Create invite'}</button>
+        </div>
       </form>
     </Modal>
   )

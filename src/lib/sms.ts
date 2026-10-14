@@ -20,6 +20,7 @@ export async function dispatchSms(
   try {
     switch (settings.provider) {
       case 'none':
+      case 'server':
         return { ...base, status: 'queued', detail: 'No SMS gateway configured — logged only.' }
 
       case 'webhook': {

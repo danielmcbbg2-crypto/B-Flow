@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { ImagePlus, X } from 'lucide-react'
 import { cx, imageToDataUrl } from '../lib/utils'
+import { useStore } from '../lib/store'
 
 export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: ReactNode; actions?: ReactNode }) {
   return (
@@ -116,14 +117,23 @@ export function Field({ label, children, className }: { label: string; children:
 }
 
 export function PhotoInput({ value, onChange, max = 6 }: { value: string[]; onChange: (v: string[]) => void; max?: number }) {
+  const { uploadImage } = useStore()
   const ref = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const add = async (files: FileList | null) => {
     if (!files) return
     setBusy(true)
+    setError(null)
     try {
-      const urls = await Promise.all(Array.from(files).slice(0, max - value.length).map((f) => imageToDataUrl(f)))
+      const urls = await Promise.all(
+        Array.from(files)
+          .slice(0, max - value.length)
+          .map(async (f) => uploadImage(await imageToDataUrl(f))),
+      )
       onChange([...value, ...urls])
+    } catch (e) {
+      setError((e as Error).message)
     } finally {
       setBusy(false)
       if (ref.current) ref.current.value = ''
@@ -153,10 +163,11 @@ export function PhotoInput({ value, onChange, max = 6 }: { value: string[]; onCh
             className="flex aspect-square flex-col items-center justify-center gap-1 rounded-md border border-dashed border-slate-300 text-xs text-slate-500 hover:border-slate-400 hover:bg-slate-50"
           >
             <ImagePlus size={20} />
-            {busy ? 'Processing…' : 'Add photo'}
+            {busy ? 'Uploading…' : 'Add photo'}
           </button>
         )}
       </div>
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
       <input ref={ref} type="file" accept="image/*" multiple hidden onChange={(e) => add(e.target.files)} />
     </div>
   )

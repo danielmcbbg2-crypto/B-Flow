@@ -127,7 +127,7 @@ function Inbox() {
 }
 
 function Hub() {
-  const { update, pushInbox, user, data } = useStore()
+  const { update, pushAdminInbox, user } = useStore()
   const lk = useLookup()
   const a = useAssigned()
   const [tab, setTab] = useState<'live' | 'completed'>('live')
@@ -147,9 +147,7 @@ function Hub() {
       if (status === 'completed') x.completedAt = new Date().toISOString()
     })
     if (status === 'completed' && r) {
-      for (const admin of data.users.filter((u) => u.role === 'admin')) {
-        pushInbox({ userId: admin.id, title: `Work order #${r.number} completed`, body: `${user?.name} marked “${r.title}” complete. Ready to invoice.`, requiresAck: false, requestId: r.id })
-      }
+      void pushAdminInbox(`Work order #${r.number} completed`, `${user?.name} marked “${r.title}” complete. Ready to invoice.`, { requestId: r.id })
     }
   }
 

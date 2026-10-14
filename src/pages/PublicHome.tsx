@@ -75,7 +75,7 @@ function jump(id: string) {
 }
 
 export function PublicHome() {
-  const { user } = useStore()
+  const { user, authNotice } = useStore()
   const [signIn, setSignIn] = useState(false)
 
   return (
@@ -100,6 +100,10 @@ export function PublicHome() {
           )}
         </div>
       </header>
+
+      {authNotice && !user && (
+        <div className="border-b border-red-200 bg-red-50 px-4 py-2 text-center text-sm text-red-700">{authNotice}</div>
+      )}
 
       <section className="border-b border-slate-200">
         <div className="mx-auto grid max-w-6xl items-center gap-10 px-4 py-14 sm:px-6 md:grid-cols-2 md:py-20">

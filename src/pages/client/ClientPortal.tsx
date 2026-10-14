@@ -129,6 +129,7 @@ function RequestForm() {
   const [photos, setPhotos] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const [done, setDone] = useState<number | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   if (!can('canSubmitRequests')) return <Empty title="Request submission is disabled for your account">Contact Next Phase Maintenance.</Empty>
   if (mine.properties.length === 0)
@@ -142,8 +143,16 @@ function RequestForm() {
     e.preventDefault()
     if (!user) return
     setBusy(true)
-    const r = await submitRequest({ clientId: user.id, propertyId, title, description, category, urgency, photos })
-    setBusy(false)
+    setError(null)
+    let r
+    try {
+      r = await submitRequest({ clientId: user.id, propertyId: propertyId || mine.properties[0].id, title, description, category, urgency, photos })
+    } catch (err) {
+      setError((err as Error).message)
+      return
+    } finally {
+      setBusy(false)
+    }
     setDone(r.number)
     setTitle('')
     setDescription('')
@@ -222,6 +231,7 @@ function RequestForm() {
           <span className="label">Photos (up to 6)</span>
           <PhotoInput value={photos} onChange={setPhotos} />
         </div>
+        {error && <p className="text-sm text-red-600 md:col-span-2">{error}</p>}
         <div className="flex justify-end md:col-span-2">
           <button className={urgency === 'urgent' ? 'btn-accent' : 'btn-primary'} disabled={busy}>
             {busy ? 'Submitting…' : 'Submit request'}
@@ -273,39 +283,28 @@ function Hub() {
 }
 
 function Projects() {
-  const { user, update, pushInbox, notifyAdmins, data } = useStore()
+  const { user, update, requestQuote } = useStore()
   const lk = useLookup()
   const mine = useMine()
   const [quoteOpen, setQuoteOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [form, setForm] = useState({ propertyId: mine.properties[0]?.id ?? '', title: '', description: '', budget: '' })
 
-  const requestQuote = (e: FormEvent) => {
+  const submitQuote = async (e: FormEvent) => {
     e.preventDefault()
     if (!user) return
-    const number = Math.max(200, ...data.projects.map((p) => p.number)) + 1
-    update((d) => {
-      d.projects.unshift({
-        id: uid('pr'),
-        number,
-        clientId: user.id,
-        propertyId: form.propertyId,
-        title: form.title,
-        description: form.description,
-        type: 'renovation',
-        budget: Number(form.budget) || 0,
-        scopeOfWorks: '',
-        status: 'quote_requested',
-        milestones: [],
-        expenses: [],
-        createdAt: new Date().toISOString(),
-      })
-    })
-    for (const a of data.users.filter((u) => u.role === 'admin' && u.status === 'active')) {
-      pushInbox({ userId: a.id, title: `Quote request P-${number}`, body: `${user.name}: ${form.title}`, requiresAck: false })
+    setBusy(true)
+    setError(null)
+    try {
+      await requestQuote({ clientId: user.id, propertyId: form.propertyId || mine.properties[0]?.id, title: form.title, description: form.description, budget: Number(form.budget) || 0 })
+      setQuoteOpen(false)
+      setForm({ ...form, title: '', description: '', budget: '' })
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setBusy(false)
     }
-    void notifyAdmins(`NPM quote request P-${number} — ${form.title} (${user.name})`, 'Renovation quote request')
-    setQuoteOpen(false)
-    setForm({ ...form, title: '', description: '', budget: '' })
   }
 
   const respond = (id: string, approve: boolean) =>
@@ -381,7 +380,7 @@ function Projects() {
         </div>
       )}
       <Modal open={quoteOpen} onClose={() => setQuoteOpen(false)} title="Request a renovation quote">
-        <form onSubmit={requestQuote} className="space-y-4">
+        <form onSubmit={submitQuote} className="space-y-4">
           <Field label="Property">
             <select className="input" value={form.propertyId} onChange={(e) => setForm({ ...form, propertyId: e.target.value })}>
               {mine.properties.map((p) => (
@@ -400,8 +399,9 @@ function Projects() {
           <Field label="Indicative budget (AUD, optional)">
             <input className="input num" type="number" min="0" step="100" value={form.budget} onChange={(e) => setForm({ ...form, budget: e.target.value })} />
           </Field>
+          {error && <p className="text-sm text-red-600">{error}</p>}
           <div className="flex justify-end">
-            <button className="btn-primary">Send quote request</button>
+            <button className="btn-primary" disabled={busy}>{busy ? 'Sending…' : 'Send quote request'}</button>
           </div>
         </form>
       </Modal>

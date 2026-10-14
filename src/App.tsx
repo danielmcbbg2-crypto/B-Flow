@@ -5,19 +5,30 @@ import { PublicHome } from './pages/PublicHome'
 import { ClientPortal } from './pages/client/ClientPortal'
 import { ProviderPortal } from './pages/provider/ProviderPortal'
 import { AdminPortal } from './pages/admin/AdminPortal'
+import { SetPasswordScreen } from './components/SignInModal'
+import { LogoMark } from './components/Logo'
 
 export function App() {
-  const { user } = useStore()
+  const { user, phase } = useStore()
   const [area, section = 'home'] = useHashRoute()
   const isPortal = area === 'client' || area === 'provider' || area === 'admin'
 
   // Portals are role-locked: signed-out users go home, others to their own portal.
   useEffect(() => {
-    if (!isPortal) return
+    if (!isPortal || phase !== 'ready') return
     if (!user) navigate('/')
     else if (user.role !== area) navigate(`/${user.role}`)
-  }, [isPortal, user, area])
+  }, [isPortal, user, area, phase])
 
+  if (phase === 'set-password') return <SetPasswordScreen />
+  if (isPortal && phase === 'loading') {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-3 text-sm text-slate-500">
+        <LogoMark size={36} />
+        Loading your portal…
+      </div>
+    )
+  }
   if (!isPortal || !user || user.role !== area) return <PublicHome />
   if (area === 'client') return <ClientPortal section={section} />
   if (area === 'provider') return <ProviderPortal section={section} />

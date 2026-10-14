@@ -174,7 +174,8 @@ export interface SmsNotification {
 }
 
 export interface SmsSettings {
-  provider: 'twilio' | 'messagebird' | 'webhook' | 'none'
+  /** 'server' = the send-sms Supabase function (cloud mode). */
+  provider: 'twilio' | 'messagebird' | 'webhook' | 'none' | 'server'
   twilioAccountSid: string
   twilioAuthToken: string
   fromNumber: string
