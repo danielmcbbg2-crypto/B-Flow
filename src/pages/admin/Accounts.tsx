@@ -133,7 +133,10 @@ export function Accounts() {
               <span className="num text-2xl tracking-widest">{issued.code}</span>
               <button
                 className="btn-ghost px-2.5 py-1.5"
-                onClick={() => navigator.clipboard?.writeText(`Your Next Phase Maintenance portal invite: ${issued.code} (sign in with ${issued.account.email})`)}
+                onClick={() => {
+                  // Some browsers and embedded views refuse clipboard access; the code stays visible to copy by hand.
+                  navigator.clipboard?.writeText(`Your Next Phase Maintenance portal invite: ${issued.code} (sign in with ${issued.account.email})`).catch(() => {})
+                }}
               >
                 <Copy size={15} /> Copy
               </button>
@@ -217,6 +220,7 @@ function AccountEditor({
   const { sendPasswordEmail } = useStore()
   const [a, setA] = useState(account)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
   const set = (patch: Partial<UserAccount>) => setA({ ...a, ...patch })
   return (
     <Modal open onClose={onClose} title={`Edit ${account.name}`} width="max-w-2xl">
@@ -255,22 +259,38 @@ function AccountEditor({
                   Reset & re-invite
                 </button>
               ))}
-            {onDelete && (
-              <button
-                type="button"
-                className="btn-ghost text-red-600"
-                onClick={async () => {
-                  if (!confirm(`Delete ${account.name}? This removes their login and everything linked to them, and can't be undone.`)) return
-                  const err = await onDelete()
-                  if (err) setMsg({ ok: false, text: err })
-                }}
-              >
-                Delete
-              </button>
-            )}
+            {onDelete &&
+              (confirmingDelete ? (
+                <>
+                  <button
+                    type="button"
+                    className="btn bg-red-600 text-white hover:bg-red-700"
+                    onClick={async () => {
+                      setConfirmingDelete(false)
+                      const err = await onDelete()
+                      if (err) setMsg({ ok: false, text: err })
+                    }}
+                  >
+                    Confirm delete
+                  </button>
+                  <button type="button" className="btn-ghost" onClick={() => setConfirmingDelete(false)}>
+                    Keep account
+                  </button>
+                </>
+              ) : (
+                <button type="button" className="btn-ghost text-red-600" onClick={() => setConfirmingDelete(true)}>
+                  Delete
+                </button>
+              ))}
           </div>
           <button className="btn-primary">Save account</button>
         </div>
+        {confirmingDelete && (
+          <p className="text-sm text-red-700 sm:col-span-2">
+            Delete {account.name}'s account and login? This can't be undone. Accounts with jobs or invoices on record can't be deleted; suspend
+            them instead.
+          </p>
+        )}
         {msg && <p className={`text-sm sm:col-span-2 ${msg.ok ? 'text-emerald-700' : 'text-red-600'}`}>{msg.text}</p>}
       </form>
     </Modal>
