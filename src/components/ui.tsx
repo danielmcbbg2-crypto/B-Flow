@@ -7,7 +7,7 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
   return (
     <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900">{title}</h1>
+        <h1 className="rule-above text-3xl font-bold tracking-tight text-slate-900">{title}</h1>
         {subtitle && <p className="mt-1 text-sm text-slate-500">{subtitle}</p>}
       </div>
       {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
@@ -19,7 +19,7 @@ const TONES = {
   slate: 'bg-slate-400',
   amber: 'bg-accent-amber',
   orange: 'bg-accent',
-  blue: 'bg-sky-500',
+  dark: 'bg-slate-900',
   green: 'bg-emerald-500',
   red: 'bg-red-500',
 } as const
@@ -52,7 +52,7 @@ export function Tabs<T extends string>({
           onClick={() => onChange(t.value)}
           className={cx(
             '-mb-px whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-semibold transition-colors',
-            value === t.value ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-800',
+            value === t.value ? 'border-accent text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900',
           )}
         >
           {t.label}

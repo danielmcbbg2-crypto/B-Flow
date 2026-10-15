@@ -139,7 +139,7 @@ function CommandCentre() {
               <li key={label as string}>
                 <a href={href as string} className="flex items-center justify-between px-4 py-3 hover:bg-slate-50">
                   <span className={n ? 'font-medium text-slate-900' : 'text-slate-500'}>{label}</span>
-                  <span className={`num ${n ? 'text-accent' : 'text-slate-400'}`}>{n}</span>
+                  <span className={`num ${n ? 'font-semibold text-accent-ink' : 'text-slate-400'}`}>{n}</span>
                 </a>
               </li>
             ))}

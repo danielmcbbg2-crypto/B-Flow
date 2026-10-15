@@ -93,7 +93,7 @@ function Inbox() {
           {a.inbox.map((m) => {
             const pending = m.requiresAck && !m.acknowledged
             return (
-              <div key={m.id} className={cx('flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-start', !m.read && 'bg-orange-50/40')}>
+              <div key={m.id} className={cx('flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-start', !m.read && 'bg-accent-soft')}>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     {!m.read && <span className="h-2 w-2 rounded-full bg-accent" aria-label="Unread" />}

@@ -112,13 +112,13 @@ export function Calendar({
                   className={cx(
                     'min-h-[104px] border-b border-r border-slate-100 p-1.5',
                     !inMonth && 'bg-slate-50/70',
-                    dragOver === iso && 'bg-orange-50 ring-2 ring-inset ring-accent/40',
+                    dragOver === iso && 'bg-accent-soft ring-2 ring-inset ring-accent',
                   )}
                 >
                   <div
                     className={cx(
                       'num mb-1 inline-flex h-6 min-w-6 items-center justify-center rounded px-1 text-xs',
-                      iso === today ? 'bg-slate-900 text-white' : inMonth ? 'text-slate-700' : 'text-slate-400',
+                      iso === today ? 'bg-accent text-slate-900 font-semibold' : inMonth ? 'text-slate-700' : 'text-slate-400',
                     )}
                   >
                     {d.getDate()}
@@ -135,9 +135,9 @@ export function Calendar({
                           'block w-full truncate rounded border-l-[3px] px-1.5 py-1 text-left text-[11px] font-medium leading-tight',
                           ev.kind === 'request'
                             ? ev.urgent
-                              ? 'border-accent bg-orange-50 text-orange-900'
-                              : 'border-sky-500 bg-sky-50 text-sky-900'
-                            : 'border-slate-700 bg-slate-100 text-slate-800',
+                              ? 'border-accent bg-accent-soft text-slate-900'
+                              : 'border-slate-900 bg-slate-100 text-slate-900'
+                            : 'border-slate-400 bg-white text-slate-700 ring-1 ring-inset ring-slate-200',
                           ev.done && 'opacity-50 line-through',
                           onMove && 'cursor-grab active:cursor-grabbing',
                         )}
@@ -153,9 +153,9 @@ export function Calendar({
         </div>
       </div>
       <div className="flex flex-wrap gap-4 border-t border-slate-200 px-4 py-2.5 text-xs text-slate-500">
-        <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-sky-500" />Maintenance visit</span>
-        <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-accent" />Urgent visit</span>
-        <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-slate-700" />Project milestone</span>
+        <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 bg-slate-900" />Maintenance visit</span>
+        <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 bg-accent" />Urgent visit</span>
+        <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 bg-slate-400" />Project milestone</span>
         {onMove && <span className="ml-auto">Drag an item to reschedule. The linked work order or milestone updates too.</span>}
       </div>
     </div>

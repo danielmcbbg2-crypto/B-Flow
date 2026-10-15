@@ -69,14 +69,14 @@ export function PortalShell({
               >
                 <Icon size={16} />
                 {n.label}
-                {!!n.badge && <span className="num rounded bg-accent px-1.5 text-[11px] leading-5 text-white">{n.badge}</span>}
+                {!!n.badge && <span className="num bg-accent px-1.5 text-[11px] leading-5 text-slate-900">{n.badge}</span>}
               </a>
             )
           })}
         </nav>
       </header>
       {!cloud && (
-        <div className="border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-center text-xs text-amber-900">
+        <div className="bg-slate-900 px-4 py-1.5 text-center text-xs text-white">
           Demo mode — data is saved in this browser only and isn't shared with anyone else.
         </div>
       )}
@@ -145,12 +145,12 @@ export function GridTile({
   return (
     <a href={href} className="group card flex flex-col p-6 transition-colors hover:border-slate-400">
       <div className="flex items-start justify-between">
-        <span className={cx('flex h-10 w-10 items-center justify-center rounded-md', emphasis ? 'bg-accent text-white' : 'bg-slate-100 text-slate-800')}>
-          <Icon size={20} />
+        <span className={cx('flex h-11 w-11 items-center justify-center', emphasis ? 'bg-accent text-slate-900' : 'bg-slate-50 text-accent')}>
+          <Icon size={22} strokeWidth={1.5} />
         </span>
         <ArrowUpRight size={18} className="text-slate-300 transition-colors group-hover:text-slate-900" />
       </div>
-      <h3 className="mt-5 text-lg font-bold">{title}</h3>
+      <h3 className="mt-5 text-xl font-bold">{title}</h3>
       <p className="mt-1 flex-1 text-sm leading-relaxed text-slate-600">{description}</p>
       {meta && <div className="mt-4 border-t border-slate-100 pt-3 text-sm text-slate-600">{meta}</div>}
     </a>
