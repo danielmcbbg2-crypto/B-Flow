@@ -12,7 +12,7 @@ export function LogoMark({ size = 28 }: { size?: number }) {
   )
 }
 
-/** Wordmark in the website's heading face. */
+/** Wordmark in the website's heading face; `sub` adds the portal name underneath. */
 export function Logo({ sub, inverted }: { sub?: string; inverted?: boolean }) {
   return (
     <a href="#/" className="flex flex-col leading-none" aria-label={`${BRAND.name} home`}>
@@ -21,8 +21,9 @@ export function Logo({ sub, inverted }: { sub?: string; inverted?: boolean }) {
         <span className="text-accent">.</span>
       </span>
       <span className={`mt-1 text-[10.5px] font-semibold uppercase tracking-[0.28em] ${inverted ? 'text-white/80' : 'text-slate-500'}`}>
-        {sub ?? 'Maintenance'}
+        Maintenance
       </span>
+      {sub && <span className="mt-1.5 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-accent-ink">{sub}</span>}
     </a>
   )
 }

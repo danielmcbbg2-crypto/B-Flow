@@ -175,7 +175,7 @@ function ProjectEditor({ project, onClose, onSave }: { project: Project; onClose
                 <input type="checkbox" className="h-4 w-4 accent-slate-900" checked={m.done} onChange={() => set({ milestones: p.milestones.map((x) => (x.id === m.id ? { ...x, done: !x.done } : x)) })} />
                 <span className="flex-1">{m.title}</span>
                 <input type="date" className="input num w-auto py-1" value={m.date} onChange={(e) => set({ milestones: p.milestones.map((x) => (x.id === m.id ? { ...x, date: e.target.value } : x)) })} />
-                <button type="button" className="text-slate-400 hover:text-red-600" onClick={() => set({ milestones: p.milestones.filter((x) => x.id !== m.id) })} aria-label="Remove milestone">
+                <button type="button" className="text-slate-500 hover:text-red-600" onClick={() => set({ milestones: p.milestones.filter((x) => x.id !== m.id) })} aria-label="Remove milestone">
                   <Trash2 size={15} />
                 </button>
               </li>

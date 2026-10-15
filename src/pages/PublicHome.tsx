@@ -1,21 +1,20 @@
-import { useState, type MouseEvent } from 'react'
+import { useEffect, useState, type ComponentType, type MouseEvent, type SVGProps } from 'react'
 import {
   ArrowRight,
-  BrickWall,
   CalendarCheck,
-  Cog,
   Hammer,
-  HardHat,
   Mail,
   MapPin,
+  Menu,
   Paintbrush,
   Phone,
   Wrench,
+  X,
   Zap,
-  type LucideIcon,
 } from 'lucide-react'
 import { Logo } from '../components/Logo'
 import { SignInModal } from '../components/SignInModal'
+import { Trowel, TwinGears, Worker } from '../components/ServiceIcons'
 import { BRAND, SITE_COPY, SITE_SERVICES } from '../lib/brand'
 import { useStore } from '../lib/store'
 import { navigate } from '../lib/router'
@@ -24,16 +23,20 @@ import residentialPhoto from '../assets/photos/residential.webp'
 import commercialPhoto from '../assets/photos/commercial.webp'
 import conciergePhoto from '../assets/photos/concierge.webp'
 
-const SERVICE_ICONS: Record<(typeof SITE_SERVICES)[number], LucideIcon> = {
+type ServiceIcon = ComponentType<Pick<SVGProps<SVGSVGElement>, 'className' | 'strokeWidth' | 'aria-hidden'>>
+
+const SERVICE_ICONS: Record<(typeof SITE_SERVICES)[number], ServiceIcon> = {
   'Plumbing Services': Wrench,
   'Electrical Services': Zap,
   'Painting and Decorating': Paintbrush,
-  'Handyman Services': HardHat,
+  'Handyman Services': Worker,
   'Carpentry Services': Hammer,
-  'Plastering Services': BrickWall,
-  'Emergency Repairs': Cog,
+  'Plastering Services': Trowel,
+  'Emergency Repairs': TwinGears,
   'Subscription Packages': CalendarCheck,
 }
+
+const [EMAIL_LOCAL, EMAIL_DOMAIN] = BRAND.email.split('@')
 
 function jump(id: string) {
   return (e: MouseEvent) => {
@@ -50,15 +53,15 @@ const NAV = [
   ['contact', 'Contact'],
 ] as const
 
-/** Text-and-photo block in the website's alternating layout. */
+/** Text-and-photo block in the website's alternating, uneven layout. */
 function Feature({ title, body, photo, alt, flip }: { title: string; body: string; photo: string; alt: string; flip?: boolean }) {
   return (
-    <div className="grid items-center gap-10 md:grid-cols-2 md:gap-16">
-      <div className={flip ? 'md:order-2' : undefined}>
-        <h2 className="rule-above text-3xl font-bold tracking-tight sm:text-4xl">{title}</h2>
-        <p className="mt-6 max-w-md text-lg font-light leading-loose text-slate-900">{body}</p>
+    <div className={`grid items-start gap-10 md:gap-16 ${flip ? 'md:grid-cols-[7fr_5fr]' : 'md:grid-cols-[5fr_7fr]'}`}>
+      <div className={`md:pt-12 ${flip ? 'md:order-2' : ''}`}>
+        <h2 className="rule-above text-2xl font-bold sm:text-[28px]">{title}</h2>
+        <p className="mt-6 max-w-md text-base font-light leading-[1.8] text-slate-900">{body}</p>
       </div>
-      <img src={photo} alt={alt} className={`aspect-[16/13] w-full object-cover ${flip ? 'md:order-1' : ''}`} loading="lazy" />
+      <img src={photo} alt={alt} className={`aspect-[16/13] w-full object-cover md:aspect-[17/16] ${flip ? 'md:order-1' : ''}`} loading="lazy" />
     </div>
   )
 }
@@ -66,29 +69,67 @@ function Feature({ title, body, photo, alt, flip }: { title: string; body: strin
 export function PublicHome() {
   const { user, authNotice } = useStore()
   const [signIn, setSignIn] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
   const openPortal = () => (user ? navigate(`/${user.role}`) : setSignIn(true))
+
+  useEffect(() => {
+    if (!menuOpen) return
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setMenuOpen(false)
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [menuOpen])
 
   return (
     <div className="min-h-screen bg-slate-50">
       <header className="sticky top-0 z-40 border-b border-slate-200 bg-white">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6">
           <Logo />
-          <nav className="hidden items-center gap-7 text-[15px] text-slate-900 lg:flex">
+          <nav className="hidden items-center gap-5 text-[15px] text-slate-900 md:flex lg:gap-7">
             {NAV.map(([id, label]) => (
               <a key={id} href={`#${id}`} onClick={jump(id)} className="hover:text-accent-ink">
                 {label}
               </a>
             ))}
           </nav>
-          {user ? (
-            <button className="btn-accent" onClick={() => navigate(`/${user.role}`)}>
-              Open portal <ArrowRight size={16} />
+          <div className="flex items-center gap-2">
+            {user ? (
+              <button className="btn-accent text-[15px] font-normal" onClick={() => navigate(`/${user.role}`)}>
+                Open portal <ArrowRight size={16} />
+              </button>
+            ) : (
+              <button className="btn-accent text-[15px] font-normal" onClick={() => setSignIn(true)}>
+                Sign in
+              </button>
+            )}
+            <button
+              type="button"
+              className="-mr-2 inline-flex h-10 w-10 items-center justify-center text-slate-900 hover:text-accent-ink md:hidden"
+              aria-label="Menu"
+              aria-expanded={menuOpen}
+              aria-controls="site-menu"
+              onClick={() => setMenuOpen((open) => !open)}
+            >
+              {menuOpen ? <X size={22} strokeWidth={1.75} /> : <Menu size={22} strokeWidth={1.75} />}
             </button>
-          ) : (
-            <button className="btn-accent" onClick={() => setSignIn(true)}>
-              Sign in
-            </button>
-          )}
+          </div>
+        </div>
+        {/* Overlays the page instead of pushing it down, so the scroll target doesn't move when it closes. */}
+        <div id="site-menu" hidden={!menuOpen} className="absolute inset-x-0 top-full border-b border-slate-200 bg-white md:hidden">
+          <nav className="mx-auto max-w-7xl px-4 py-2 sm:px-6">
+            {NAV.map(([id, label]) => (
+              <a
+                key={id}
+                href={`#${id}`}
+                onClick={(e) => {
+                  jump(id)(e)
+                  setMenuOpen(false)
+                }}
+                className="block border-b border-slate-100 py-3.5 text-base text-slate-900 last:border-b-0 hover:text-accent-ink"
+              >
+                {label}
+              </a>
+            ))}
+          </nav>
         </div>
       </header>
 
@@ -99,36 +140,45 @@ export function PublicHome() {
       {/* Hero: full-bleed interior photo with the website's headline */}
       <section className="relative isolate overflow-hidden bg-[#3d342d]">
         <img src={interiorPhoto} alt="" className="absolute inset-0 -z-10 h-full w-full object-cover object-[70%_50%]" />
-        <div className="absolute inset-0 -z-10 bg-gradient-to-r from-black/60 via-black/35 to-black/10" />
+        <div className="absolute inset-0 -z-10 bg-gradient-to-r from-black/45 via-black/20 to-transparent" />
+        {/* Below lg the text sits over the bright sofa, so darken the whole photo a little more. */}
+        <div className="absolute inset-0 -z-10 bg-black/25 lg:hidden" />
         <div className="mx-auto max-w-7xl px-4 py-24 sm:px-6 sm:py-32 lg:py-40">
-          <h1 className="max-w-4xl text-[2.75rem] font-bold leading-[1.02] tracking-tight text-white sm:text-6xl lg:text-[5.5rem]">
+          <h1 className="max-w-[40rem] text-[2.75rem] font-bold leading-[1.12] text-white [text-shadow:0_2px_16px_rgba(0,0,0,0.35)] sm:text-6xl sm:leading-[1.12] lg:text-[5.5rem] lg:leading-[1.15]">
             {SITE_COPY.heroTitle}
           </h1>
-          <p className="mt-6 text-xl font-light text-white sm:text-2xl">{SITE_COPY.heroSubtitle}</p>
-          <div className="mt-10 flex flex-wrap gap-4">
-            <a href="#about" onClick={jump('about')} className="btn-accent px-7 py-3.5 text-base font-normal">
+          <p className="mt-6 text-xl font-light text-white [text-shadow:0_2px_16px_rgba(0,0,0,0.35)] sm:text-2xl lg:text-[30px]">
+            {SITE_COPY.heroSubtitle}
+          </p>
+          <div className="mt-10 flex flex-col gap-3 sm:flex-row">
+            <a href="#about" onClick={jump('about')} className="btn-accent w-full border border-transparent px-6 py-3.5 text-base font-normal sm:w-52">
               Learn More About Us
             </a>
             <a
               href="#contact"
               onClick={jump('contact')}
-              className="btn border border-white px-7 py-3.5 text-base font-light text-white hover:bg-white hover:text-slate-900"
+              className="btn w-full border border-white px-6 py-3.5 text-base font-normal text-white hover:bg-white hover:text-slate-900 sm:w-52"
             >
               Get in Touch
             </a>
           </div>
           <p className="mt-10 text-sm text-white/80">
-            Melbourne, VIC <span className="mx-2 text-white/40">/</span> ABN <span className="num">{BRAND.abn}</span>
+            Melbourne, VIC <span className="mx-2 text-white/40">/</span> ABN {BRAND.abn}
           </p>
         </div>
       </section>
 
       {/* Residential, commercial and specialised services, as on the website */}
       <section id="about" className="scroll-mt-16">
-        <div className="mx-auto grid max-w-7xl gap-20 px-4 py-20 sm:px-6 sm:py-28">
+        <div className="mx-auto grid max-w-[88rem] gap-20 px-4 py-20 sm:px-6 sm:py-28">
           <Feature title={SITE_COPY.residential.title} body={SITE_COPY.residential.body} photo={residentialPhoto} alt="Open-plan home with timber stairs and dining area" />
           <Feature title={SITE_COPY.commercial.title} body={SITE_COPY.commercial.body} photo={commercialPhoto} alt="Team meeting in a glass-walled office" flip />
-          <Feature title={SITE_COPY.specialized.title} body={SITE_COPY.specialized.body} photo={conciergePhoto} alt="Hotel concierge at a reception desk" />
+          {/* The website pairs this with a Sydney skyline photo, left out on purpose; only its inset photo is kept. */}
+          <div>
+            <h2 className="rule-above text-2xl font-bold sm:text-[28px]">{SITE_COPY.specialized.title}</h2>
+            <img src={conciergePhoto} alt="Hotel concierge at a reception desk" className="mt-8 w-full max-w-[460px]" loading="lazy" />
+            <p className="mt-8 max-w-md text-base font-light leading-[1.8] text-slate-900">{SITE_COPY.specialized.body}</p>
+          </div>
         </div>
       </section>
 
@@ -137,20 +187,20 @@ export function PublicHome() {
           <div className="flex flex-col gap-8 lg:flex-row lg:items-start lg:justify-between">
             <div className="max-w-3xl">
               <p className="text-lg text-slate-900">{SITE_COPY.servicesEyebrow}</p>
-              <h2 className="mt-2 text-4xl font-bold leading-tight tracking-tight text-accent sm:text-5xl">{SITE_COPY.servicesTitle}</h2>
-              <p className="mt-6 max-w-lg text-lg font-light leading-loose">{SITE_COPY.servicesIntro}</p>
+              <h2 className="mt-2 text-4xl font-bold leading-[1.15] text-accent-heading sm:text-[42px] sm:leading-[1.2]">{SITE_COPY.servicesTitle}</h2>
+              <p className="mt-6 max-w-lg text-base font-light leading-[1.8]">{SITE_COPY.servicesIntro}</p>
             </div>
             <button className="btn-accent shrink-0 self-start px-7 py-3.5 text-base font-normal" onClick={openPortal}>
               Request a Service
             </button>
           </div>
-          <ul className="mt-12 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <ul className="mt-12 grid grid-cols-2 gap-3 lg:grid-cols-4">
             {SITE_SERVICES.map((name) => {
               const Icon = SERVICE_ICONS[name]
               return (
-                <li key={name} className="flex min-h-[220px] flex-col bg-white p-8 sm:p-10">
-                  <Icon size={52} strokeWidth={1.25} className="text-accent" aria-hidden="true" />
-                  <span className="mt-6 text-[22px] leading-snug text-slate-900">{name}</span>
+                <li key={name} className="flex min-h-[150px] flex-col bg-white p-5 sm:min-h-[220px] sm:p-10">
+                  <Icon strokeWidth={1.25} className="h-10 w-10 text-accent sm:h-[52px] sm:w-[52px]" aria-hidden="true" />
+                  <span className="mt-4 text-base leading-snug text-slate-900 sm:mt-6 sm:text-[22px]">{name}</span>
                 </li>
               )
             })}
@@ -161,11 +211,11 @@ export function PublicHome() {
       <section id="portal" className="scroll-mt-16 bg-white">
         <div className="mx-auto grid max-w-7xl gap-12 px-4 py-20 sm:px-6 sm:py-24 lg:grid-cols-3">
           <div>
-            <h2 className="rule-above text-3xl font-bold tracking-tight sm:text-4xl">One portal for every job</h2>
-            <p className="mt-6 text-lg font-light leading-loose">
+            <h2 className="rule-above text-2xl font-bold sm:text-[28px]">One portal for every job</h2>
+            <p className="mt-6 text-base font-light leading-[1.8]">
               Clients, trades and our office work from the same live record, from the first photo to the final invoice.
             </p>
-            <button className="btn-primary mt-8 px-6 py-3" onClick={openPortal}>
+            <button className="btn-accent mt-8 px-7 py-3.5 text-base font-normal" onClick={openPortal}>
               {user ? 'Open your portal' : 'Client & trade sign in'}
             </button>
           </div>
@@ -177,7 +227,7 @@ export function PublicHome() {
               ['Invoiced & recorded', 'Invoices are issued through QuickBooks, and paint colours and finishes are kept on your property record.'],
             ].map(([title, body], i) => (
               <li key={title} className="border-t-2 border-slate-900 pt-5">
-                <span className="num text-sm text-accent-ink">Step {i + 1}</span>
+                <span className="text-sm text-accent-ink">Step {i + 1}</span>
                 <h3 className="mt-1 text-xl font-bold">{title}</h3>
                 <p className="mt-2 font-light leading-relaxed">{body}</p>
               </li>
@@ -188,8 +238,8 @@ export function PublicHome() {
 
       <section id="coverage" className="scroll-mt-16">
         <div className="mx-auto max-w-7xl px-4 py-20 sm:px-6 sm:py-24">
-          <h2 className="rule-above text-3xl font-bold tracking-tight sm:text-4xl">Melbourne coverage</h2>
-          <p className="mt-6 max-w-xl text-lg font-light leading-loose">Metropolitan Melbourne. Ask us about properties outside these areas.</p>
+          <h2 className="rule-above text-2xl font-bold sm:text-[28px]">Melbourne coverage</h2>
+          <p className="mt-6 max-w-xl text-base font-light leading-[1.8]">Metropolitan Melbourne. Ask us about properties outside these areas.</p>
           <div className="mt-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {BRAND.coverage.map((c) => (
               <div key={c.region} className="bg-white p-7">
@@ -205,21 +255,27 @@ export function PublicHome() {
       <section id="contact" className="scroll-mt-16 bg-white">
         <div className="mx-auto grid max-w-7xl gap-12 px-4 py-20 sm:px-6 sm:py-24 md:grid-cols-2">
           <div>
-            <h2 className="rule-above text-3xl font-bold tracking-tight sm:text-4xl">Get in Touch</h2>
-            <p className="mt-6 text-lg font-light leading-loose">Quotes, subscription maintenance plans and urgent repairs.</p>
-            <ul className="mt-6 space-y-4 text-lg">
+            <h2 className="rule-above text-2xl font-bold sm:text-[28px]">Get in Touch</h2>
+            <p className="mt-6 text-base font-light leading-[1.8]">Quotes, subscription maintenance plans and urgent repairs.</p>
+            <ul className="mt-6 space-y-4 text-base sm:text-lg">
               {BRAND.phone && (
                 <li className="flex items-center gap-3">
-                  <Phone size={20} strokeWidth={1.5} className="text-accent" />
-                  <span className="num select-all">{BRAND.phone}</span>
+                  <Phone size={20} strokeWidth={1.5} className="shrink-0 text-accent" aria-hidden="true" />
+                  <a href={`tel:${BRAND.phone.replace(/\s/g, '')}`} className="hover:text-accent-ink">
+                    {BRAND.phone}
+                  </a>
                 </li>
               )}
               <li className="flex items-center gap-3">
-                <Mail size={20} strokeWidth={1.5} className="text-accent" />
-                <span className="select-all break-all">{BRAND.email}</span>
+                <Mail size={20} strokeWidth={1.5} className="shrink-0 text-accent" aria-hidden="true" />
+                {/* <wbr> lets a narrow screen wrap the address only after the @. */}
+                <a href={`mailto:${BRAND.email}`} className="min-w-0 hover:text-accent-ink">
+                  {EMAIL_LOCAL}@<wbr />
+                  {EMAIL_DOMAIN}
+                </a>
               </li>
               <li className="flex items-center gap-3">
-                <MapPin size={20} strokeWidth={1.5} className="text-accent" />
+                <MapPin size={20} strokeWidth={1.5} className="shrink-0 text-accent" aria-hidden="true" />
                 <span>{BRAND.city}</span>
               </li>
             </ul>
@@ -244,7 +300,7 @@ export function PublicHome() {
               © {new Date().getFullYear()} {BRAND.name} · {BRAND.city}
             </p>
             <p className="mt-1">
-              ABN <span className="num text-white">{BRAND.abn}</span>
+              ABN <span className="text-white">{BRAND.abn}</span>
             </p>
           </div>
         </div>

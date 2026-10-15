@@ -93,14 +93,18 @@ function Inbox() {
           {a.inbox.map((m) => {
             const pending = m.requiresAck && !m.acknowledged
             return (
-              <div key={m.id} className={cx('flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-start', !m.read && 'bg-accent-soft')}>
+              // `!` is needed: the parent's divide-slate-100 colours every side of rows 2+ with a more specific selector.
+              <div
+                key={m.id}
+                className={cx('flex flex-col gap-3 border-l-[3px] px-5 py-4 sm:flex-row sm:items-start', m.read ? '!border-l-transparent' : '!border-l-accent')}
+              >
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     {!m.read && <span className="h-2 w-2 rounded-full bg-accent" aria-label="Unread" />}
                     <p className="font-semibold">{m.title}</p>
                   </div>
                   <p className="mt-0.5 text-sm text-slate-600">{m.body}</p>
-                  <p className="num mt-1 text-xs text-slate-400">{fmtDateTime(m.createdAt)}</p>
+                  <p className="num mt-1 text-xs text-slate-500">{fmtDateTime(m.createdAt)}</p>
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-2">
                   {m.requestId && lk.request(m.requestId)?.assignedProviderId === user?.id && (
@@ -235,7 +239,7 @@ function Projects() {
                   <span className="num text-xs text-slate-500">P-{p.number}</span>
                   <ProjectStatusText s={p.status} />
                 </div>
-                <h3 className="mt-1 text-lg font-bold">{p.title}</h3>
+                <h2 className="mt-1 text-lg font-bold">{p.title}</h2>
                 <p className="text-sm text-slate-500">
                   {prop?.address}, {prop?.suburb}
                   {prop?.accessCode && (<><Sep />{prop.accessCode}</>)}
@@ -247,7 +251,7 @@ function Projects() {
                     <li key={m.id}>
                       <label className="flex cursor-pointer items-center gap-3 py-2 text-sm">
                         <input type="checkbox" className="h-4 w-4 accent-slate-900" checked={m.done} onChange={() => toggle(p.id, m.id)} />
-                        <span className={cx('flex-1', m.done && 'text-slate-400 line-through')}>{m.title}</span>
+                        <span className={cx('flex-1', m.done && 'text-slate-500 line-through')}>{m.title}</span>
                         <span className="num text-xs text-slate-500">{fmtDate(m.date)}</span>
                       </label>
                     </li>
@@ -320,7 +324,7 @@ function Budget() {
                 <div className="flex flex-col gap-3 border-b border-slate-200 p-5 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <p className="num text-xs text-slate-500">P-{p.number}</p>
-                    <h3 className="font-bold">{p.title}</h3>
+                    <h2 className="font-bold">{p.title}</h2>
                   </div>
                   {canSubmit(p.status) ? (
                     <button className="btn-primary" onClick={() => setAdding(p.id)}><Plus size={16} /> Submit expense</button>
@@ -389,7 +393,7 @@ export function ExpenseTable({ expenses, actions }: { expenses: Expense[]; actio
               <td className="td text-slate-600">{e.category}</td>
               <td className="td num text-right">{money(e.amount)}</td>
               <td className="td">
-                <Status tone={e.status === 'approved' ? 'green' : e.status === 'rejected' ? 'red' : 'amber'}>
+                <Status tone={e.status === 'approved' ? 'green' : e.status === 'rejected' ? 'red' : 'orange'}>
                   {e.status === 'submitted' ? 'Awaiting approval' : e.status === 'approved' ? 'Approved' : 'Rejected'}
                 </Status>
               </td>

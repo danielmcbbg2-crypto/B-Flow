@@ -14,7 +14,9 @@ It combines the public website with three role-based portals:
 ## Two modes
 
 - **Live mode (Supabase)** — used when `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` are set. Everyone shares one database, logins are real Supabase accounts, photos are stored in Supabase Storage, and SMS goes out through a server function that keeps your credentials secret. **Use this for the real business.**
-- **Demo mode** — used when those settings are missing. Everything stays in the current browser and comes with Melbourne sample data. A yellow banner in the portals marks demo mode. Sample logins (password `demo1234`): `sarah@whitfieldproperty.com.au` (client), `dan@kowalskicarpentry.com.au` (trade). The admin login is the master account from the implementation plan.
+- **Demo mode** — only in local development (`npm run dev`) or a build made with `npm run build:demo`. Everything stays in the current browser and comes with Melbourne sample data, marked by a black "Demo mode" bar in the portals. Sample logins (password `demo1234`): `sarah@whitfieldproperty.com.au` (client), `dan@kowalskicarpentry.com.au` (trade). The admin login is the master account from the implementation plan.
+
+A normal production build (`npm run build`) never contains sample data: if the Supabase settings are missing it shows a "Client portal coming soon" page instead.
 
 ## Going live: one-time setup (about 30 minutes)
 
@@ -52,12 +54,14 @@ Until one of these is set, messages are recorded in the SMS log as "Queued" rath
 
 ### 5. Put the website online
 
-Host the app on Netlify, Vercel or Cloudflare Pages (all have free plans) by connecting this GitHub repository:
+Merge the pull request into `main` first. Then host the app on Netlify, Vercel or Cloudflare Pages (all have free plans) by connecting this GitHub repository:
 
-- Build command: `npm run build` · Output folder: `dist`
+- Build command: `npm run build` · Output folder: `dist` (Netlify reads these from `netlify.toml`; Vercel detects Vite automatically)
 - Environment variables, both from Supabase **Project Settings → API**:
   - `VITE_SUPABASE_URL`: the Project URL
   - `VITE_SUPABASE_ANON_KEY`: the `anon` `public` key (safe to publish; the database access rules protect the data)
+
+To use your own address such as `portal.nextphasemaintenance.com.au`, add it as a custom domain in the host's settings and create the DNS record it asks for (usually a `CNAME` for `portal`) wherever your domain's DNS is managed. Your existing website at `www.nextphasemaintenance.com.au` is not affected.
 
 Then, in Supabase **Authentication → URL Configuration**, set **Site URL** to your live address (for example `https://portal.nextphasemaintenance.com.au`) and add it under **Redirect URLs**. Invite and password-reset emails link back there.
 
@@ -87,7 +91,8 @@ Photo links use long random names that can't be guessed, but anyone who has a li
 ```bash
 npm install
 npm run dev        # http://localhost:5173 (demo mode unless .env.local is set; see .env.example)
-npm run build
+npm run build      # production build (needs the Supabase settings at build time)
+npm run build:demo # demo build with sample data
 npm run lint
 npm run test:db    # database access-rule tests; needs a local Postgres, e.g. PGHOST=/tmp PGPORT=5432 PGUSER=postgres
 ```

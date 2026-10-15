@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { ArrowUpRight, KeyRound, LogOut, type LucideIcon } from 'lucide-react'
 import { Field, Modal } from './ui'
 import { Logo } from './Logo'
@@ -28,6 +28,11 @@ export function PortalShell({
 }) {
   const { user, logout, syncError, cloud } = useStore()
   const [pwOpen, setPwOpen] = useState(false)
+  const navRef = useRef<HTMLElement>(null)
+  // On phones the tab bar scrolls sideways; keep the current section's tab in view.
+  useEffect(() => {
+    navRef.current?.querySelector('[aria-current="page"]')?.scrollIntoView({ inline: 'center', block: 'nearest' })
+  }, [active])
   return (
     <div className="min-h-screen">
       <header className="sticky top-0 z-40 border-b border-slate-200 bg-white">
@@ -54,26 +59,31 @@ export function PortalShell({
             </button>
           </div>
         </div>
-        <nav className="mx-auto flex max-w-7xl gap-1 overflow-x-auto px-2 sm:px-4">
-          {nav.map((n) => {
-            const Icon = n.icon
-            const isActive = active === n.key
-            return (
-              <a
-                key={n.key}
-                href={`#/${role}${n.key === 'home' ? '' : `/${n.key}`}`}
-                className={cx(
-                  '-mb-px flex items-center gap-2 whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-semibold',
-                  isActive ? 'border-accent text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900',
-                )}
-              >
-                <Icon size={16} />
-                {n.label}
-                {!!n.badge && <span className="num bg-accent px-1.5 text-[11px] leading-5 text-slate-900">{n.badge}</span>}
-              </a>
-            )
-          })}
-        </nav>
+        <div className="relative mx-auto max-w-7xl">
+          <nav ref={navRef} className="flex gap-1 overflow-x-auto px-2 sm:px-4">
+            {nav.map((n) => {
+              const Icon = n.icon
+              const isActive = active === n.key
+              return (
+                <a
+                  key={n.key}
+                  href={`#/${role}${n.key === 'home' ? '' : `/${n.key}`}`}
+                  aria-current={isActive ? 'page' : undefined}
+                  className={cx(
+                    '-mb-px flex items-center gap-2 whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-semibold focus-visible:outline-offset-[-2px]',
+                    isActive ? 'border-accent text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900',
+                  )}
+                >
+                  <Icon size={16} />
+                  {n.label}
+                  {!!n.badge && <span className="num bg-accent px-1.5 text-[11px] leading-5 text-slate-900">{n.badge}</span>}
+                </a>
+              )
+            })}
+          </nav>
+          {/* Fade on the right edge hints that the tab bar scrolls on narrow screens. */}
+          <div className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-white to-transparent lg:hidden" aria-hidden="true" />
+        </div>
       </header>
       {!cloud && (
         <div className="bg-slate-900 px-4 py-1.5 text-center text-xs text-white">
@@ -150,7 +160,7 @@ export function GridTile({
         </span>
         <ArrowUpRight size={18} className="text-slate-300 transition-colors group-hover:text-slate-900" />
       </div>
-      <h3 className="mt-5 text-xl font-bold">{title}</h3>
+      <h2 className="mt-5 text-xl font-bold">{title}</h2>
       <p className="mt-1 flex-1 text-sm leading-relaxed text-slate-600">{description}</p>
       {meta && <div className="mt-4 border-t border-slate-100 pt-3 text-sm text-slate-600">{meta}</div>}
     </a>

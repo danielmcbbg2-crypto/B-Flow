@@ -173,11 +173,11 @@ function AssignForm({ r, onClose }: { r: MaintenanceRequest; onClose: () => void
         </Field>
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" className="h-4 w-4 accent-slate-900" checked={sms} onChange={(e) => setSms(e.target.checked)} />
-          SMS the provider{chosen?.phone ? <span className="num text-slate-500"> ({chosen.phone})</span> : <span className="text-slate-400"> (no phone on file)</span>}
+          SMS the provider{chosen?.phone ? <span className="num text-slate-500"> ({chosen.phone})</span> : <span className="text-slate-500"> (no phone on file)</span>}
         </label>
         <p className="text-xs text-slate-500">The provider also gets a work order in their Inbox to acknowledge.</p>
         <div className="flex justify-end">
-          <button className="btn-primary" disabled={busy || !providerId}><Send size={16} /> {busy ? 'Dispatching…' : 'Dispatch'}</button>
+          <button className="btn-accent" disabled={busy || !providerId}><Send size={16} /> {busy ? 'Dispatching…' : 'Dispatch'}</button>
         </div>
       </form>
     </Modal>

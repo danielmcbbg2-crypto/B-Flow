@@ -336,7 +336,7 @@ function Projects() {
                   <span className="num text-xs text-slate-500">P-{p.number}</span>
                   <ProjectStatusText s={p.status} />
                 </div>
-                <h3 className="mt-1 text-lg font-bold">{p.title}</h3>
+                <h2 className="mt-1 text-lg font-bold">{p.title}</h2>
                 <p className="text-sm text-slate-500">{prop ? `${prop.address}, ${prop.suburb}` : ''}</p>
                 <p className="mt-2 text-sm text-slate-600">{p.description}</p>
                 <dl className="mt-4 grid grid-cols-2 gap-3 border-t border-slate-100 pt-3 text-sm">
@@ -361,7 +361,7 @@ function Projects() {
                     <ol className="mt-3 space-y-1.5">
                       {p.milestones.map((m) => (
                         <li key={m.id} className="flex items-center justify-between text-sm">
-                          <span className={m.done ? 'text-slate-400 line-through' : 'text-slate-800'}>{m.title}</span>
+                          <span className={m.done ? 'text-slate-500 line-through' : 'text-slate-800'}>{m.title}</span>
                           <span className="num text-xs text-slate-500">{fmtDate(m.date)}</span>
                         </li>
                       ))}
@@ -497,7 +497,7 @@ export function PropertyCard({ p, onEdit, owner }: { p: Property; onEdit?: () =>
     <div className="card flex flex-col">
       <div className="flex items-start justify-between gap-3 border-b border-slate-100 p-5">
         <div>
-          <h3 className="font-bold">{p.address}</h3>
+          <h2 className="font-bold">{p.address}</h2>
           <p className="text-sm text-slate-500">
             {p.suburb} <span className="num">{p.postcode}</span>
             {owner && (

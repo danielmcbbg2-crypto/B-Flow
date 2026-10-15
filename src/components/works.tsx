@@ -25,14 +25,14 @@ export function RequestRow({ r, onOpen, right }: { r: MaintenanceRequest; onOpen
           )}
         </div>
         <p className="mt-1 truncate font-semibold text-slate-900">{r.title}</p>
-        <p className="mt-0.5 truncate text-sm text-slate-500">
+        <p className="mt-0.5 text-sm text-slate-500 sm:truncate">
           {prop ? `${prop.address}, ${prop.suburb}` : 'Unknown property'}
           <Sep />
           {r.category}
           {r.scheduledDate && (
             <>
               <Sep />
-              <span className="num">{fmtDate(r.scheduledDate)}</span>
+              <span className="num whitespace-nowrap">{fmtDate(r.scheduledDate)}</span>
             </>
           )}
         </p>
@@ -153,7 +153,7 @@ export function useLinkedCalendar(requests: MaintenanceRequest[], projects: Proj
 export function ProjectProgress({ p }: { p: Project }) {
   const done = p.milestones.filter((m) => m.done).length
   const total = p.milestones.length
-  if (total === 0) return <span className="text-xs text-slate-400">No milestones yet</span>
+  if (total === 0) return <span className="text-xs text-slate-500">No milestones yet</span>
   return (
     <div className="flex items-center gap-2">
       <div className="h-1.5 w-28 overflow-hidden rounded-full bg-slate-100">

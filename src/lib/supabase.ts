@@ -7,6 +7,12 @@ const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
 /** Null when the app runs in local demo mode (no Supabase project configured). */
 export const supabase: SupabaseClient | null = url && anonKey ? createClient(url, anonKey) : null
 export const CLOUD = supabase !== null
+/**
+ * Demo mode (sample data kept in the browser) only runs in local development or in a build made
+ * with VITE_DEMO=true (`npm run build:demo`). A normal production build without Supabase settings
+ * shows a setup notice instead, so a live site can never fall back to sample data.
+ */
+export const DEMO = !CLOUD && (import.meta.env.DEV || import.meta.env.VITE_DEMO === 'true')
 
 export function supabaseAdapter(client: SupabaseClient): DbAdapter {
   return {

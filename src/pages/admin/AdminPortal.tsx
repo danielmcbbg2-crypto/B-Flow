@@ -96,7 +96,7 @@ function CommandCentre() {
               {[...pending]
                 .sort((a, b) => (a.urgency === b.urgency ? b.createdAt.localeCompare(a.createdAt) : a.urgency === 'urgent' ? -1 : 1))
                 .map((r) => (
-                  <RequestRow key={r.id} r={r} onOpen={() => setOpenId(r.id)} right={<a className="btn-primary" href="#/admin/dispatch">Dispatch</a>} />
+                  <RequestRow key={r.id} r={r} onOpen={() => setOpenId(r.id)} right={<a className="btn-accent" href="#/admin/dispatch">Dispatch</a>} />
                 ))}
             </div>
           )}
@@ -105,7 +105,7 @@ function CommandCentre() {
           {messages.length > 0 && (
             <>
               <h2 className="mb-3 font-bold">
-                Messages <span className="num text-sm font-normal text-slate-400">{messages.length}</span>
+                Messages <span className="num text-sm font-normal text-slate-500">{messages.length}</span>
               </h2>
               <ul className="card mb-6 divide-y divide-slate-100 text-sm">
                 {messages.slice(0, 5).map((m) => (
@@ -113,7 +113,7 @@ function CommandCentre() {
                     <p className="font-medium text-slate-900">{m.title}</p>
                     <p className="text-slate-600">{m.body}</p>
                     <div className="mt-1.5 flex items-center gap-3 text-xs">
-                      <span className="num text-slate-400">{fmtDateTime(m.createdAt)}</span>
+                      <span className="num text-slate-500">{fmtDateTime(m.createdAt)}</span>
                       {m.requestId && lk.request(m.requestId) && (
                         <button className="font-semibold text-slate-700 hover:text-slate-900" onClick={() => setOpenId(m.requestId!)}>
                           View job
@@ -139,7 +139,7 @@ function CommandCentre() {
               <li key={label as string}>
                 <a href={href as string} className="flex items-center justify-between px-4 py-3 hover:bg-slate-50">
                   <span className={n ? 'font-medium text-slate-900' : 'text-slate-500'}>{label}</span>
-                  <span className={`num ${n ? 'font-semibold text-accent-ink' : 'text-slate-400'}`}>{n}</span>
+                  <span className={`num ${n ? 'font-semibold text-accent-ink' : 'text-slate-500'}`}>{n}</span>
                 </a>
               </li>
             ))}

@@ -63,7 +63,7 @@ export function Accounts() {
                 <td className="td num whitespace-nowrap">{u.phone || '—'}</td>
                 <td className="td num text-slate-600">{u.permissions.length}/{ALL_PERMISSIONS.length}</td>
                 <td className="td">
-                  <Status tone={u.status === 'active' ? 'green' : u.status === 'invited' ? 'amber' : 'red'}>
+                  <Status tone={u.status === 'active' ? 'green' : u.status === 'invited' ? 'outline' : 'red'}>
                     {u.status === 'active' ? 'Active' : u.status === 'invited' ? 'Invite pending' : 'Suspended'}
                   </Status>
                   {!CLOUD && u.status === 'invited' && u.inviteCode && <p className="num mt-0.5 text-xs text-slate-500">{u.inviteCode}</p>}
@@ -162,7 +162,7 @@ function PermissionBoxes({ value, onChange, disabled }: { value: Permission[]; o
           />
           <span>
             <span className="block font-medium">{p.label}</span>
-            <code className="num text-[11px] text-slate-400">{p.key}</code>
+            <code className="font-mono text-[11px] text-slate-500">{p.key}</code>
           </span>
         </label>
       ))}
@@ -236,7 +236,7 @@ function AccountEditor({
           {locked && <p className="mt-2 text-xs text-slate-500">You can't change your own role, permissions or status.</p>}
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-4 sm:col-span-2">
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             {!locked && a.status !== 'invited' && (
               <button type="button" className="btn-ghost" onClick={() => set({ status: a.status === 'active' ? 'suspended' : 'active' })}>
                 {a.status === 'active' ? 'Suspend' : 'Reactivate'}

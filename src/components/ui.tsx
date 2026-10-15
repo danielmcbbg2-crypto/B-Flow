@@ -10,26 +10,31 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
         <h1 className="rule-above text-3xl font-bold tracking-tight text-slate-900">{title}</h1>
         {subtitle && <p className="mt-1 text-sm text-slate-500">{subtitle}</p>}
       </div>
-      {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
+      {actions && <div className="flex flex-wrap gap-2 sm:shrink-0">{actions}</div>}
     </div>
   )
 }
 
+/**
+ * Status markers differ by shape as well as colour, so they stay distinct for colour-blind users:
+ * orange square = needs action, hollow square = booked/issued, black square = under way,
+ * grey square = waiting, green circle = done, red diamond = rejected/failed.
+ */
 const TONES = {
-  slate: 'bg-slate-400',
-  amber: 'bg-accent-amber',
   orange: 'bg-accent',
+  outline: 'bg-white ring-1 ring-inset ring-slate-900',
   dark: 'bg-slate-900',
-  green: 'bg-emerald-500',
-  red: 'bg-red-500',
+  slate: 'bg-slate-400',
+  green: 'rounded-full bg-emerald-600',
+  red: 'rotate-45 scale-90 bg-red-600',
 } as const
 export type Tone = keyof typeof TONES
 
-/** Quiet status label: a small square marker and text, no pill. */
+/** Quiet status label: a small marker and text, no pill. */
 export function Status({ tone, children }: { tone: Tone; children: ReactNode }) {
   return (
     <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-700 whitespace-nowrap">
-      <span className={cx('h-2 w-2 rounded-[2px]', TONES[tone])} />
+      <span className={cx('h-2 w-2 shrink-0', TONES[tone])} aria-hidden="true" />
       {children}
     </span>
   )
@@ -51,12 +56,12 @@ export function Tabs<T extends string>({
           key={t.value}
           onClick={() => onChange(t.value)}
           className={cx(
-            '-mb-px whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-semibold transition-colors',
+            '-mb-px whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-semibold transition-colors focus-visible:outline-offset-[-2px]',
             value === t.value ? 'border-accent text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900',
           )}
         >
           {t.label}
-          {t.count !== undefined && <span className="num ml-1.5 text-xs text-slate-400">{t.count}</span>}
+          {t.count !== undefined && <span className="num ml-1.5 text-xs text-slate-500">{t.count}</span>}
         </button>
       ))}
     </div>
@@ -97,7 +102,7 @@ export function Modal({
       <div className={cx('card w-full shadow-xl', width)} onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={title}>
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3.5">
           <h2 className="text-base font-bold">{title}</h2>
-          <button onClick={onClose} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Close">
+          <button onClick={onClose} className="rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700" aria-label="Close">
             <X size={18} />
           </button>
         </div>
@@ -198,7 +203,7 @@ export function Stat({ label, value, hint }: { label: string; value: ReactNode; 
   return (
     <div className="px-5 py-4">
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
-      <p className="num mt-1 text-2xl font-medium text-slate-900">{value}</p>
+      <p className="num mt-1 font-display text-xl font-bold text-slate-900 sm:text-2xl">{value}</p>
       {hint && <p className="mt-0.5 text-xs text-slate-500">{hint}</p>}
     </div>
   )

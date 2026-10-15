@@ -18,7 +18,7 @@ export default {
       fontFamily: {
         sans: ['"Nunito Sans"', 'Avenir', '"Avenir Next"', 'system-ui', 'sans-serif'],
         display: ['Roboto', '"Helvetica Neue"', 'Arial', 'sans-serif'],
-        mono: ['"Roboto Mono"', 'ui-monospace', 'monospace'],
+        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
       },
       colors: {
         // Neutral greys instead of Tailwind's blue-tinted slate, so every existing `slate-*` class follows the brand.
@@ -40,6 +40,8 @@ export default {
           // Darker orange for small text on white/grey (meets 4.5:1 contrast).
           ink: '#C93D10',
           soft: '#FFF1EB',
+          // Visually the same orange, nudged to clear 3:1 for large headings on the #F7F7F7 background.
+          heading: '#FC5420',
           amber: '#D97706',
         },
       },

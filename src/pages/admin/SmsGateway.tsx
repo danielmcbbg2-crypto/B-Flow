@@ -32,12 +32,12 @@ export function SmsGateway() {
           {cloud ? (
             <div className="space-y-2 rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
               <p>
-                Messages are sent by the secure <code className="num">send-sms</code> server function. Your SMS credentials are stored as Supabase
+                Messages are sent by the secure <code className="font-mono">send-sms</code> server function. Your SMS credentials are stored as Supabase
                 secrets and are never sent to anyone's browser.
               </p>
               <p className="text-xs text-slate-500">
-                Twilio: set <code className="num">TWILIO_ACCOUNT_SID</code>, <code className="num">TWILIO_AUTH_TOKEN</code> and{' '}
-                <code className="num">TWILIO_FROM</code>. Any other provider: set <code className="num">SMS_WEBHOOK_URL</code>. With neither set, messages
+                Twilio: set <code className="font-mono">TWILIO_ACCOUNT_SID</code>, <code className="font-mono">TWILIO_AUTH_TOKEN</code> and{' '}
+                <code className="font-mono">TWILIO_FROM</code>. Any other provider: set <code className="font-mono">SMS_WEBHOOK_URL</code>. With neither set, messages
                 are logged as “Queued”. See the README for setup steps.
               </p>
             </div>
@@ -54,7 +54,7 @@ export function SmsGateway() {
                 <Field label="Webhook URL">
                   <input className="input num" type="url" value={s.webhookUrl} onChange={(e) => set({ webhookUrl: e.target.value })} placeholder="https://…" />
                   <span className="mt-1 block text-xs text-slate-500">
-                    Receives a POST with JSON <code className="num">{'{ to, from, message, event }'}</code>.
+                    Receives a POST with JSON <code className="font-mono">{'{ to, from, message, event }'}</code>.
                   </span>
                 </Field>
                 <Field label="From number">
@@ -92,7 +92,7 @@ export function SmsGateway() {
               {s.recipients.map((n) => (
                 <li key={n} className="flex items-center justify-between px-3 py-2 text-sm">
                   <span className="num">{n}</span>
-                  <button className="text-slate-400 hover:text-red-600" onClick={() => set({ recipients: s.recipients.filter((x) => x !== n) })} aria-label={`Remove ${n}`}>
+                  <button className="text-slate-500 hover:text-red-600" onClick={() => set({ recipients: s.recipients.filter((x) => x !== n) })} aria-label={`Remove ${n}`}>
                     <Trash2 size={15} />
                   </button>
                 </li>
@@ -124,10 +124,10 @@ export function SmsGateway() {
           <Field label="To"><input className="input num" type="tel" value={test.to} onChange={(e) => setTest({ ...test, to: e.target.value })} /></Field>
           <Field label="Message">
             <textarea className="input" maxLength={320} value={test.message} onChange={(e) => setTest({ ...test, message: e.target.value })} />
-            <span className="num mt-1 block text-right text-xs text-slate-400">{test.message.length}/160</span>
+            <span className="num mt-1 block text-right text-xs text-slate-500">{test.message.length}/160</span>
           </Field>
           <button
-            className="btn-accent w-full"
+            className="btn-ghost w-full"
             disabled={sending || !test.to || !test.message}
             onClick={async () => {
               setSending(true)

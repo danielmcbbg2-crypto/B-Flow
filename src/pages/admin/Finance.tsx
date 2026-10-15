@@ -79,15 +79,15 @@ export function Finance() {
             <tbody className="divide-y divide-slate-100">
               {list.map((i) => (
                 <tr key={i.id} className="hover:bg-slate-50">
-                  <td className="td num font-medium">{i.qbInvoiceNumber}</td>
-                  <td className="td">{lk.user(i.clientId)?.name ?? '—'}</td>
+                  <td className="td num whitespace-nowrap font-medium">{i.qbInvoiceNumber}</td>
+                  <td className="td whitespace-nowrap">{lk.user(i.clientId)?.name ?? '—'}</td>
                   <td className="td max-w-[220px] truncate text-slate-600">{linked(i)}</td>
                   <td className="td num text-right">{money(i.amount)}</td>
                   <td className={`td num whitespace-nowrap ${i.status === 'sent' && i.dueDate < today ? 'font-semibold text-accent-ink' : 'text-slate-600'}`}>{fmtDate(i.dueDate)}</td>
                   <td className="td"><InvoiceStatusText s={i.status} /></td>
                   <td className="td num text-xs text-slate-600">
                     {i.bankTransferRef || '—'}
-                    {i.paidDate && <span className="block text-slate-400">{fmtDate(i.paidDate)}</span>}
+                    {i.paidDate && <span className="block text-slate-500">{fmtDate(i.paidDate)}</span>}
                   </td>
                   <td className="td text-right">
                     {i.status === 'draft' && (
