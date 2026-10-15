@@ -54,9 +54,21 @@ function adapter(uid: string): DbAdapter {
   }
 }
 
+/** Creates a login the way Supabase Auth does: as the non-superuser supabase_auth_admin role. */
 async function createAuthUser(email: string): Promise<string> {
-  const r = await pool.query<{ id: string }>('insert into auth.users (email) values ($1) returning id', [email])
-  return r.rows[0].id
+  const c = await pool.connect()
+  try {
+    await c.query('begin')
+    await c.query('set local role supabase_auth_admin')
+    const r = await c.query<{ id: string }>('insert into auth.users (email) values ($1) returning id', [email])
+    await c.query('commit')
+    return r.rows[0].id
+  } catch (e) {
+    await c.query('rollback')
+    throw e
+  } finally {
+    c.release()
+  }
 }
 
 async function mutate(db: DbAdapter, fn: (d: AppData) => void) {
@@ -102,6 +114,20 @@ after(() => pool.end())
 describe('accounts', () => {
   test('sign-ups without an invitation are rejected', async () => {
     await assert.rejects(createAuthUser('stranger@example.com'), /No Next Phase Maintenance invitation/)
+  })
+
+  test('signed-out visitors cannot call the helper functions; signed-in users can', async () => {
+    const c = await pool.connect()
+    try {
+      await c.query('begin')
+      await c.query('set local role anon')
+      await assert.rejects(c.query('select public.is_admin()'), /permission denied/)
+    } finally {
+      await c.query('rollback')
+      c.release()
+    }
+    const r = await asUser<{ ok: boolean }>(uid.admin, 'select public.is_admin() as ok')
+    assert.equal(r.rows[0].ok, true)
   })
 
   test('master admin is linked and active', async () => {
