@@ -9,10 +9,12 @@ export const supabase: SupabaseClient | null = url && anonKey ? createClient(url
 export const CLOUD = supabase !== null
 /**
  * Demo mode (sample data kept in the browser) only runs in local development or in a build made
- * with VITE_DEMO=true (`npm run build:demo`). A normal production build without Supabase settings
+ * with VITE_DEMO=true (`npm run build:demo`). DEMO_BUILD is fixed when the app is built, so a normal
+ * production build leaves the sample data out of the bundle entirely; without Supabase settings it
  * shows a setup notice instead, so a live site can never fall back to sample data.
  */
-export const DEMO = !CLOUD && (import.meta.env.DEV || import.meta.env.VITE_DEMO === 'true')
+export const DEMO_BUILD = import.meta.env.DEV || import.meta.env.VITE_DEMO === 'true'
+export const DEMO = !CLOUD && DEMO_BUILD
 
 export function supabaseAdapter(client: SupabaseClient): DbAdapter {
   return {

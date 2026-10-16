@@ -5,12 +5,13 @@ import { createSeed, DATA_VERSION } from './seed'
 import { dispatchSms } from './sms'
 import { generateInviteCode, sha256, uid } from './utils'
 import { applyOps, diff, emptyData, fetchAll, projectFromRow, requestFromRow, userFromRow } from './db'
-import { CLOUD, supabase, supabaseAdapter, uploadPhoto } from './supabase'
+import { CLOUD, DEMO, DEMO_BUILD, supabase, supabaseAdapter, uploadPhoto } from './supabase'
 
 const DATA_KEY = 'npm.data.v1'
 const SESSION_KEY = 'npm.session.v1'
 
 function loadDemoData(): AppData {
+  if (!DEMO_BUILD) return emptyData()
   try {
     const raw = localStorage.getItem(DATA_KEY)
     if (raw) {
@@ -669,7 +670,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   )
 
   const resetDemoData = useCallback(() => {
-    if (!CLOUD) setData(createSeed())
+    if (DEMO) setData(createSeed())
   }, [setData])
 
   const value: StoreValue = {

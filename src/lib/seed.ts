@@ -16,12 +16,12 @@ function stamp(offsetDays: number, hour = 9): string {
   return d.toISOString()
 }
 
-// SHA-256 of the master password. Sample client/provider accounts use "demo1234".
-const MASTER_HASH = 'b31dccc8048a9bc7b223751eb4243b44466ba5a48ab13c6f269d5a32e9bed78e'
+// SHA-256 of "demo1234", the password of every sample account, admin included. The real master
+// password never goes in the app: in live mode it lives only in Supabase Auth.
 const DEMO_HASH = '0ead2060b65992dca4769af601a1b3a35ef38cfad2c2c465bb160ea764157c5d'
 
-// Bumped when the stored demo data shape changes; older saved demo data is replaced.
-export const DATA_VERSION = 2
+// Bumped when the stored demo data changes; older saved demo data is replaced.
+export const DATA_VERSION = 3
 
 export function createSeed(): AppData {
   return {
@@ -36,7 +36,7 @@ export function createSeed(): AppData {
         permissions: DEFAULT_PERMISSIONS.admin,
         createdAt: stamp(-120),
         status: 'active',
-        passwordHash: MASTER_HASH,
+        passwordHash: DEMO_HASH,
       },
       {
         id: 'u-client-1',

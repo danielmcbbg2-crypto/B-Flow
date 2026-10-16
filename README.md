@@ -14,7 +14,7 @@ It combines the public website with three role-based portals:
 ## Two modes
 
 - **Live mode (Supabase)** — used when `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` are set. Everyone shares one database, logins are real Supabase accounts, photos are stored in Supabase Storage, and SMS goes out through a server function that keeps your credentials secret. **Use this for the real business.**
-- **Demo mode** — only in local development (`npm run dev`) or a build made with `npm run build:demo`. Everything stays in the current browser and comes with Melbourne sample data, marked by a black "Demo mode" bar in the portals. Sample logins (password `demo1234`): `sarah@whitfieldproperty.com.au` (client), `dan@kowalskicarpentry.com.au` (trade). The admin login is the master account from the implementation plan.
+- **Demo mode** — only in local development (`npm run dev`) or a build made with `npm run build:demo`. Everything stays in the current browser and comes with Melbourne sample data, marked by a black "Demo mode" bar in the portals. Sample logins, all with the password `demo1234`: `admin@nextphasemaintenance.com.au` (admin), `sarah@whitfieldproperty.com.au` (client), `dan@kowalskicarpentry.com.au` (trade). Demo builds never contain your real password.
 
 A normal production build (`npm run build`) never contains sample data: if the Supabase settings are missing it shows a "Client portal coming soon" page instead.
 
