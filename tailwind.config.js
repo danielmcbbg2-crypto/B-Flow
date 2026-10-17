@@ -18,6 +18,8 @@ export default {
       fontFamily: {
         sans: ['"Nunito Sans"', 'Avenir', '"Avenir Next"', 'system-ui', 'sans-serif'],
         display: ['Roboto', '"Helvetica Neue"', 'Arial', 'sans-serif'],
+        // The logo's wordmark face.
+        logo: ['Montserrat', '"Arial Black"', 'Arial', 'sans-serif'],
         mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
       },
       colors: {
@@ -34,6 +36,8 @@ export default {
           800: '#1F1F1F',
           900: '#000000',
         },
+        // Lime from the Next Phase logo; used only in the logo itself.
+        brand: { green: '#A3B842' },
         accent: {
           DEFAULT: '#FE5520',
           dark: '#E2460F',
