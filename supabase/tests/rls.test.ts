@@ -510,27 +510,55 @@ describe('admins acting in a client or trade dashboard', () => {
     assert.equal(other.rowCount, 0)
   })
 
-  test('records who accepted or declined a quote', async () => {
-    const quoted = `insert into projects (client_id, property_id, title, status, quote_amount, quote_decided_by)
-      values ('u-client-1', 'p-1', $1, 'quoted', 5000, 'u-client-1') returning id, quote_decided_by`
-    const a = await asUser<{ id: string; quote_decided_by: string | null }>(uid.admin, quoted, ['Fence'])
-    assert.equal(a.rows[0].quote_decided_by, null)
-    // The client answers their own quote.
-    await assert.rejects(asUser(uid.sarah, `update projects set quote_decided_by = 'u-admin' where id = $1`, [a.rows[0].id]), /accept or decline/)
-    const mine = await asUser<{ quote_decided_by: string }>(uid.sarah, `update projects set status = 'approved' where id = $1 returning quote_decided_by`, [a.rows[0].id])
-    assert.equal(mine.rows[0].quote_decided_by, 'u-client-1')
+  test('records who last accepted or declined a quote, and clears it when the quote is issued again', async () => {
+    type Q = { id: string; status: string; quote_decided_by: string | null; quote_decision: string | null }
+    const quoted = `insert into projects (client_id, property_id, title, status, quote_amount, quote_decided_by, quote_decision)
+      values ('u-client-1', 'p-1', $1, 'quoted', 5000, 'u-client-1', 'approved') returning id, status, quote_decided_by, quote_decision`
+    const set = (who: string, id: string, sql: string) =>
+      asUser<Q>(who, `update projects set ${sql} where id = $1 returning id, status, quote_decided_by, quote_decision`, [id]).then((r) => r.rows[0])
+    const a = (await asUser<Q>(uid.admin, quoted, ['Fence'])).rows[0]
+    assert.deepEqual([a.quote_decided_by, a.quote_decision], [null, null])
+    // The client answers their own quote, and can't write the record themselves.
+    await assert.rejects(set(uid.sarah, a.id, `quote_decided_by = 'u-admin'`), /accept or decline/)
+    await assert.rejects(set(uid.sarah, a.id, `quote_decision = 'rejected'`), /accept or decline/)
+    const mine = await set(uid.sarah, a.id, `status = 'approved'`)
+    assert.deepEqual([mine.quote_decided_by, mine.quote_decision], ['u-client-1', 'approved'])
+    // Carrying on with the project keeps it.
+    const started = await set(uid.admin, a.id, `status = 'in_progress', quote_decided_by = null, quote_decision = null`)
+    assert.deepEqual([started.quote_decided_by, started.quote_decision], ['u-client-1', 'approved'])
     // An admin answers one from the client's dashboard.
-    const b = await asUser<{ id: string }>(uid.admin, quoted, ['Pergola'])
-    const theirs = await asUser<{ quote_decided_by: string }>(uid.admin, `update projects set status = 'rejected' where id = $1 returning quote_decided_by`, [b.rows[0].id])
-    assert.equal(theirs.rows[0].quote_decided_by, 'u-admin')
-    // Later edits keep it.
-    const later = await asUser<{ quote_decided_by: string }>(
-      uid.admin,
-      `update projects set title = 'Pergola (cancelled)', quote_decided_by = null where id = $1 returning quote_decided_by`,
-      [b.rows[0].id],
-    )
-    assert.equal(later.rows[0].quote_decided_by, 'u-admin')
+    const b = (await asUser<Q>(uid.admin, quoted, ['Pergola'])).rows[0]
+    const declined = await set(uid.admin, b.id, `status = 'rejected'`)
+    assert.deepEqual([declined.quote_decided_by, declined.quote_decision], ['u-admin', 'rejected'])
+    // The office re-issues a revised quote: nobody has answered that one yet.
+    const reissued = await set(uid.admin, b.id, `status = 'quoted', quote_amount = 4500`)
+    assert.deepEqual([reissued.quote_decided_by, reissued.quote_decision], [null, null])
+    // The client accepts it, then the office cancels the job: the record follows whoever did each.
+    assert.equal((await set(uid.sarah, b.id, `status = 'approved'`)).quote_decided_by, 'u-client-1')
+    const cancelled = await set(uid.admin, b.id, `status = 'rejected'`)
+    assert.deepEqual([cancelled.quote_decided_by, cancelled.quote_decision], ['u-admin', 'rejected'])
     const d = await fetchAll(admin)
-    assert.equal(d.projects.find((p) => p.id === b.rows[0].id)?.quoteDecidedBy, 'u-admin')
+    const p = d.projects.find((x) => x.id === b.id)
+    assert.deepEqual([p?.quoteDecidedBy, p?.quoteDecision], ['u-admin', 'rejected'])
+  })
+
+  test("an admin who did work for other people can't be deleted; other accounts delete as before", async () => {
+    // The office admin acknowledges a trade's work order from the trade's dashboard.
+    const msg = await asUser<{ id: string }>(uid.admin, `insert into inbox (user_id, title, body, requires_ack) values ('u-prov-3', 'WO', 'x', true) returning id`)
+    await asUser(uid.office, `update inbox set acknowledged = true where id = $1`, [msg.rows[0].id])
+    await assert.rejects(asUser(uid.admin, `delete from profiles where id = 'u-office'`), (e: Error & { code?: string }) => {
+      assert.equal(e.code, '23503')
+      assert.match(e.message, /done work for other people on record/)
+      return true
+    })
+    // Nor through the server (service role).
+    await assert.rejects(pool.query(`delete from profiles where id = 'u-office'`), /done work for other people/)
+    assert.equal((await pool.query(`select acknowledged_by from inbox where id = $1`, [msg.rows[0].id])).rows[0].acknowledged_by, 'u-office')
+    // Accounts with only their own records still delete (like the trade deleted earlier), and so does a new admin.
+    await mutate(admin, (d) => {
+      d.users.push({ id: 'u-temp', name: 'Temp', email: 'temp@example.com', role: 'admin', phone: '', permissions: [], createdAt: new Date().toISOString(), status: 'invited', passwordHash: '' })
+    })
+    const del = await asUser(uid.admin, `delete from profiles where id = 'u-temp'`)
+    assert.equal(del.rowCount, 1)
   })
 })

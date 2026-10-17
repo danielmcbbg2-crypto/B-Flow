@@ -98,7 +98,8 @@ export function PortalShell({
       {actingAs && (
         <div className="bg-accent px-4 py-2 text-center text-sm text-slate-900" role="status">
           You're in <strong>{actingAs.name}</strong>'s {actingAs.role === 'client' ? 'client' : 'service provider'} dashboard, signed in as{' '}
-          <strong>{actor?.name}</strong>. Anything you do here is recorded as you.
+          <strong>{actor?.name}</strong>. Nothing you do here is recorded as them: what you add, answer, acknowledge or update is
+          recorded as you.
         </div>
       )}
       {!cloud && (

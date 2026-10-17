@@ -151,8 +151,9 @@ export interface Project {
   createdAt: string
   /** Who really requested it (set by the database); differs from the client when an admin did it for them. */
   createdBy?: string
-  /** Who accepted or declined the quote (set by the database): the client, or an admin from their dashboard. */
+  /** Who last accepted or declined the quote, and which (set by the database; cleared when it's issued again). */
   quoteDecidedBy?: string
+  quoteDecision?: 'approved' | 'rejected'
 }
 
 export type InvoiceStatus = 'draft' | 'sent' | 'paid'

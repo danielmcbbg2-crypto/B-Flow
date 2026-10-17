@@ -5,7 +5,7 @@ import { Calendar } from '../../components/Calendar'
 import { Empty, Field, Modal, PageHeader, PhotoInput, Sep, Tabs } from '../../components/ui'
 import { ProjectStatusText } from '../../components/status'
 import { ProjectBy, ProjectProgress, RequestDetail, RequestRow, useLinkedCalendar } from '../../components/works'
-import { useLookup, useStore } from '../../lib/store'
+import { stampQuoteDecision, useLookup, useStore } from '../../lib/store'
 import { navigate } from '../../lib/router'
 import { TRADES, type Property, type Trade } from '../../lib/types'
 import { fmtDate, money, uid } from '../../lib/utils'
@@ -119,7 +119,7 @@ function Overview() {
 }
 
 function RequestForm() {
-  const { user, submitRequest, can } = useStore()
+  const { user, actor, submitRequest, can } = useStore()
   const mine = useMine()
   const [propertyId, setPropertyId] = useState(mine.properties[0]?.id ?? '')
   const [title, setTitle] = useState('')
@@ -131,7 +131,12 @@ function RequestForm() {
   const [done, setDone] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  if (!can('canSubmitRequests')) return <Empty title="Request submission is disabled for your account">Contact Next Phase Maintenance.</Empty>
+  if (!can('canSubmitRequests'))
+    return actor?.id !== user?.id ? (
+      <Empty title="Your admin account needs “Dispatch & assign jobs” to lodge requests here" />
+    ) : (
+      <Empty title="Request submission is disabled for your account">Contact Next Phase Maintenance.</Empty>
+    )
   if (mine.properties.length === 0)
     return (
       <Empty title="Add a property first">
@@ -283,7 +288,7 @@ function Hub() {
 }
 
 function Projects() {
-  const { user, actor, update, requestQuote, can } = useStore()
+  const { user, actor, update, requestQuote, canAct } = useStore()
   const lk = useLookup()
   const mine = useMine()
   const [quoteOpen, setQuoteOpen] = useState(false)
@@ -311,11 +316,12 @@ function Projects() {
     update((d) => {
       const p = d.projects.find((x) => x.id === id)
       if (!p) return
+      const before = p.status
       p.status = approve ? 'approved' : 'rejected'
-      p.quoteDecidedBy = actor?.id
+      stampQuoteDecision(p, before, actor?.id)
     })
-  // An admin in this client's dashboard answers quotes with their own project permission.
-  const canRespond = actor?.id === user?.id || can('canManageProjects')
+  // An admin in this client's dashboard asks for and answers quotes with their own project permission.
+  const canQuote = canAct('canManageProjects')
 
   return (
     <>
@@ -323,7 +329,12 @@ function Projects() {
         title="Projects & quotes"
         subtitle="Renovation quotes and active project progress."
         actions={
-          <button className="btn-primary" onClick={() => setQuoteOpen(true)} disabled={mine.properties.length === 0}>
+          <button
+            className="btn-primary"
+            onClick={() => setQuoteOpen(true)}
+            disabled={mine.properties.length === 0 || !canQuote}
+            title={canQuote ? undefined : 'Your admin account needs “Manage projects & quotes” to do this here'}
+          >
             <Plus size={16} /> Request a quote
           </button>
         }
@@ -373,7 +384,7 @@ function Projects() {
                     </ol>
                   </div>
                 )}
-                {p.status === 'quoted' && !!p.quoteAmount && canRespond && (
+                {p.status === 'quoted' && !!p.quoteAmount && canQuote && (
                   <div className="mt-4 flex gap-2 border-t border-slate-100 pt-4">
                     <button className="btn-primary" onClick={() => respond(p.id, true)}>Accept quote</button>
                     <button className="btn-ghost" onClick={() => respond(p.id, false)}>Decline</button>

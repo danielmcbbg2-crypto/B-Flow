@@ -72,7 +72,7 @@ export function Accounts() {
             {CLOUD
               ? 'Accounts are invite-only. Send each person an invite link by text or email; they choose their own password.'
               : 'Accounts are invite-only. Share the invite code with the person; they activate it from Sign in.'}{' '}
-            Open a client's or service provider's dashboard to see and work in it as they would; what you do there is recorded as you.
+            Open a client's or service provider's dashboard to see and work in it as they would; nothing you do there is recorded as them.
           </>
         }
         actions={<button className="btn-primary" onClick={() => setInviting(true)}><UserPlus size={16} /> Invite account</button>}

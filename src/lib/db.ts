@@ -129,6 +129,7 @@ const projectRow = (p: Project): Row => ({
   created_at: p.createdAt,
   created_by: nul(p.createdBy),
   quote_decided_by: nul(p.quoteDecidedBy),
+  quote_decision: nul(p.quoteDecision),
 })
 
 const milestoneRow = (projectId: string, m: Milestone): Row => ({ id: m.id, project_id: projectId, title: m.title, date: m.date, done: m.done })
@@ -205,9 +206,9 @@ interface Spec {
 const SPECS: Spec[] = [
   { table: 'profiles', rows: (d) => d.users.map(profileRow) },
   { table: 'properties', rows: (d) => d.properties.map(propertyRow) },
-  // created_by, quote_decided_by and acknowledged_by are stamped by the database from whoever is
-  // signed in, so the app never sends them.
-  { table: 'projects', rows: (d) => d.projects.map(projectRow), readonly: ['number', 'created_by', 'quote_decided_by'] },
+  // created_by, quote_decided_by/quote_decision and acknowledged_by are stamped by the database from
+  // whoever is signed in, so the app never sends them.
+  { table: 'projects', rows: (d) => d.projects.map(projectRow), readonly: ['number', 'created_by', 'quote_decided_by', 'quote_decision'] },
   { table: 'requests', rows: (d) => d.requests.map(requestRow), readonly: ['number', 'created_by'] },
   { table: 'project_milestones', rows: (d) => d.projects.flatMap((p) => p.milestones.map((m) => milestoneRow(p.id, m))) },
   { table: 'project_expenses', rows: (d) => d.projects.flatMap((p) => p.expenses.map((e) => expenseRow(p.id, e))), readonly: ['created_by'] },
@@ -326,6 +327,7 @@ export const projectFromRow = (r: Row, milestones: Row[] = [], expenses: Row[] =
   createdAt: r.created_at as string,
   createdBy: opt(r.created_by as string | null),
   quoteDecidedBy: opt(r.quote_decided_by as string | null),
+  quoteDecision: opt(r.quote_decision as Project['quoteDecision'] | null),
   milestones: milestones
     .map((m) => ({ id: m.id as string, title: m.title as string, date: m.date as string, done: m.done as boolean }))
     .sort((a, b) => a.date.localeCompare(b.date)),

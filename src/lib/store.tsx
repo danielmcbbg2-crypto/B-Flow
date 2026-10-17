@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { RealtimeChannel, Session } from '@supabase/supabase-js'
-import type { AppData, InboxMessage, MaintenanceRequest, Permission, Project, Role, UserAccount } from './types'
+import type { AppData, InboxMessage, MaintenanceRequest, Permission, Project, ProjectStatus, Role, UserAccount } from './types'
 import { BRAND } from './brand'
 import { createSeed, DATA_VERSION } from './seed'
 import { dispatchSms } from './sms'
@@ -20,6 +20,7 @@ const ACTING_PERMISSION: Partial<Record<Permission, Permission>> = {
   canSubmitRequests: 'canDispatchJobs',
   canSubmitExpenses: 'canManageProjects',
 }
+const alwaysAllowed = () => true
 
 function loadDemoData(): AppData {
   if (!DEMO_BUILD) return emptyData()
@@ -94,6 +95,12 @@ interface StoreValue {
   /** Admins: open a client's or trade's dashboard, or leave it. */
   startActingAs: (id: string) => void
   stopActingAs: () => void
+  /**
+   * For actions in a client or trade portal that their owner may always take: true for the owner, and
+   * in a dashboard an admin has opened, whether the admin holds the permission the database requires
+   * of admins for it.
+   */
+  canAct: (adminPermission: Permission) => boolean
   /** Apply a mutation to a copy of the data and save it. Keep side effects out of `fn`. */
   update: (fn: (draft: AppData) => void) => void
   can: (p: Permission) => boolean
@@ -740,11 +747,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           return (e as Error).message
         }
       }
-      // Demo mode mirrors the database rules: job and invoice history is kept.
+      // Demo mode mirrors the database rules: job and invoice history is kept, and so is the record
+      // of work done for other people (by admins).
       const d0 = dataRef.current
       const hasHistory =
         d0.requests.some((r) => r.clientId === id) || d0.projects.some((p) => p.clientId === id) || d0.invoices.some((i) => i.clientId === id)
       if (hasHistory) return 'This account has jobs or invoices on record, so it can’t be deleted. Suspend it instead.'
+      const actedForOthers =
+        d0.requests.some((r) => r.createdBy === id && r.clientId !== id) ||
+        d0.projects.some((p) => p.clientId !== id && (p.createdBy === id || p.quoteDecidedBy === id)) ||
+        d0.projects.some((p) => p.expenses.some((e) => e.createdBy === id && e.providerId !== id)) ||
+        d0.inbox.some((m) => m.acknowledgedBy === id && m.userId !== id)
+      if (actedForOthers) return 'This account has done work for other people on record, so it can’t be deleted. Suspend it instead.'
       update((d) => {
         d.users = d.users.filter((x) => x.id !== id)
         d.properties = d.properties.filter((p) => p.clientId !== id)
@@ -752,7 +766,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         for (const r of d.requests) if (r.assignedProviderId === id) r.assignedProviderId = undefined
         for (const p of d.projects) {
           if (p.assignedProviderId === id) p.assignedProviderId = undefined
-          for (const e of p.expenses) if (e.providerId === id) e.providerId = ''
+          for (const e of p.expenses) {
+            if (e.providerId === id) e.providerId = ''
+            if (e.createdBy === id) e.createdBy = undefined
+          }
         }
       })
       return null
@@ -773,6 +790,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     actingAs,
     startActingAs,
     stopActingAs,
+    canAct: alwaysAllowed,
     syncError,
     authNotice,
     update,
@@ -810,7 +828,10 @@ export function ActingAsProvider({ children }: { children: ReactNode }) {
   const outer = useStore()
   const { actingAs, user: admin, can: adminCan } = outer
   const value = useMemo<StoreValue>(
-    () => (actingAs ? { ...outer, user: actingAs, actor: admin, can: (p: Permission) => adminCan(ACTING_PERMISSION[p] ?? p) } : outer),
+    () =>
+      actingAs
+        ? { ...outer, user: actingAs, actor: admin, can: (p: Permission) => adminCan(ACTING_PERMISSION[p] ?? p), canAct: adminCan }
+        : outer,
     [outer, actingAs, admin, adminCan],
   )
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>
@@ -820,6 +841,20 @@ export function ActingAsProvider({ children }: { children: ReactNode }) {
 export function doneBy(actor: UserAccount | null, user: UserAccount | null): string {
   if (!actor || !user || actor.id === user.id) return user?.name ?? actor?.name ?? ''
   return `${actor.name} for ${user.name}`
+}
+
+/**
+ * Records who accepted or declined a quote, as the database does in live mode: whoever moves the
+ * project to approved or rejected; cleared when the quote is issued again. Changes `p` in place.
+ */
+export function stampQuoteDecision(p: Project, before: ProjectStatus, by: string | undefined) {
+  if (p.status === 'quote_requested' || p.status === 'quoted') {
+    p.quoteDecidedBy = undefined
+    p.quoteDecision = undefined
+  } else if ((p.status === 'approved' || p.status === 'rejected') && p.status !== before) {
+    p.quoteDecidedBy = by
+    p.quoteDecision = p.status
+  }
 }
 
 export function useStore(): StoreValue {

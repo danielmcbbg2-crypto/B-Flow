@@ -109,10 +109,11 @@ export function RequestDetail({
 /** Says who added a project or answered its quote when that wasn't the client (an admin from their dashboard). */
 export function ProjectBy({ p, className }: { p: Project; className?: string }) {
   const lk = useLookup()
+  const answered = p.quoteDecision && p.status !== 'quote_requested' && p.status !== 'quoted'
   const parts = [
     p.createdBy && p.createdBy !== p.clientId ? `Added by ${lk.byName(p.createdBy)}` : '',
-    p.quoteDecidedBy && p.quoteDecidedBy !== p.clientId
-      ? `Quote ${p.status === 'rejected' ? 'declined' : 'accepted'} by ${lk.byName(p.quoteDecidedBy)}`
+    answered && p.quoteDecidedBy && p.quoteDecidedBy !== p.clientId
+      ? `Quote ${p.quoteDecision === 'rejected' ? 'declined' : 'accepted'} by ${lk.byName(p.quoteDecidedBy)}`
       : '',
   ].filter(Boolean)
   if (!parts.length) return null

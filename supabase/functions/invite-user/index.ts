@@ -120,13 +120,14 @@ Deno.serve(async (req) => {
     if (body.profileId === me.id) return json({ error: "You can't delete your own account" }, 400)
     const { data: target } = await db.from('profiles').select('id, auth_id').eq('id', body.profileId).maybeSingle()
     if (!target) return json({ error: 'Account not found' }, 404)
-    // Profile first: the database refuses if jobs or invoices still reference this client.
+    // Profile first: the database refuses if jobs or invoices still reference this client, or if the
+    // account did work for other people (admins), which it explains in its own message.
     const { error: profileError } = await db.from('profiles').delete().eq('id', target.id)
     if (profileError) {
-      return json(
-        { error: profileError.code === '23503' ? 'This account has jobs or invoices on record, so it can’t be deleted. Suspend it instead.' : profileError.message },
-        400,
-      )
+      const kept = profileError.message.startsWith('This account')
+        ? profileError.message
+        : 'This account has jobs or invoices on record, so it can’t be deleted. Suspend it instead.'
+      return json({ error: profileError.code === '23503' ? kept : profileError.message }, 400)
     }
     if (target.auth_id) {
       const { error } = await db.auth.admin.deleteUser(target.auth_id)

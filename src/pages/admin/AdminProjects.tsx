@@ -4,12 +4,12 @@ import { Empty, Field, Modal, PageHeader, Sep, Tabs } from '../../components/ui'
 import { ProjectBy, ProjectProgress } from '../../components/works'
 import { ProjectStatusText } from '../../components/status'
 import { ExpenseTable } from '../provider/ProviderPortal'
-import { useLookup, useStore } from '../../lib/store'
+import { stampQuoteDecision, useLookup, useStore } from '../../lib/store'
 import { PROJECT_STATUS_LABEL, type Project, type ProjectStatus } from '../../lib/types'
 import { money, todayISO, uid } from '../../lib/utils'
 
 export function AdminProjects() {
-  const { data, update, pushInbox } = useStore()
+  const { data, user, update, pushInbox } = useStore()
   const lk = useLookup()
   const [tab, setTab] = useState<'quotes' | 'active' | 'closed'>('quotes')
   const [editing, setEditing] = useState<Project | null>(null)
@@ -29,7 +29,9 @@ export function AdminProjects() {
   const save = (p: Project) => {
     const before = data.projects.find((x) => x.id === p.id)
     update((d) => {
-      d.projects = d.projects.map((x) => (x.id === p.id ? p : x))
+      const next = structuredClone(p)
+      if (before) stampQuoteDecision(next, before.status, user?.id)
+      d.projects = d.projects.map((x) => (x.id === p.id ? next : x))
     })
     if (before && p.assignedProviderId && p.assignedProviderId !== before.assignedProviderId) {
       pushInbox({ userId: p.assignedProviderId, title: `Assigned to project P-${p.number}`, body: p.title, requiresAck: true, projectId: p.id })
