@@ -98,8 +98,10 @@ export function PortalShell({
       {actingAs && (
         <div className="bg-accent px-4 py-2 text-center text-sm text-slate-900" role="status">
           You're in <strong>{actingAs.name}</strong>'s {actingAs.role === 'client' ? 'client' : 'service provider'} dashboard, signed in as{' '}
-          <strong>{actor?.name}</strong>. Nothing you do here is recorded as them: what you add, answer, acknowledge or update is
-          recorded as you.
+          <strong>{actor?.name}</strong>. Nothing you do here is recorded as them.{' '}
+          {actingAs.role === 'client'
+            ? 'Requests you lodge and quotes you ask for, accept or reject are recorded as you; property changes aren’t recorded against anyone.'
+            : 'Expenses you add, work orders you acknowledge, and job notes, status changes and photos are recorded as you; milestone ticks and calendar moves aren’t recorded against anyone.'}
         </div>
       )}
       {!cloud && (

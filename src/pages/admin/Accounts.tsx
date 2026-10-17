@@ -380,8 +380,8 @@ function AccountEditor({
         </div>
         {confirmingDelete && (
           <p className="text-sm text-red-700 sm:col-span-2">
-            Delete {account.name}'s account and login? This can't be undone. Accounts with jobs or invoices on record can't be deleted; suspend
-            them instead.
+            Delete {account.name}'s account and login? This can't be undone. Clients with jobs or invoices, and admins who have done work
+            for other people, can't be deleted; suspend them instead. A service provider's jobs are kept, unassigned.
           </p>
         )}
         {msg && <p className={`text-sm sm:col-span-2 ${msg.ok ? 'text-emerald-700' : 'text-red-600'}`}>{msg.text}</p>}

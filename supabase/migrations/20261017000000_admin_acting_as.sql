@@ -63,8 +63,11 @@ create trigger stamp_acknowledged_by before insert or update on public.inbox
 
 update public.inbox set acknowledged_by = user_id where acknowledged and acknowledged_by is null;
 
--- Who last accepted or declined a quote, and which it was, so one an admin answered from the client's
--- dashboard (or changed later in Projects) says so. Cleared when the quote is issued again.
+-- Who last accepted or rejected a quote, and which it was, so one an admin answered from the client's
+-- dashboard (or in Projects) says so. Accepting is moving an unanswered or rejected quote on (to
+-- approved, in progress or completed); rejecting is moving anything to rejected (declining, or
+-- cancelling later). Other moves, like in progress back to approved, keep the record. Cleared when
+-- the quote is issued again.
 alter table public.projects add column quote_decided_by text references public.profiles (id) on delete set null;
 alter table public.projects add column quote_decision text check (quote_decision in ('approved', 'rejected'));
 
@@ -75,9 +78,10 @@ begin
   if tg_op = 'INSERT' or new.status in ('quote_requested', 'quoted') then
     new.quote_decided_by := null;
     new.quote_decision := null;
-  elsif new.status in ('approved', 'rejected') and new.status is distinct from old.status then
+  elsif new.status is distinct from old.status
+        and (new.status = 'rejected' or old.status in ('quote_requested', 'quoted', 'rejected')) then
     new.quote_decided_by := public.current_profile_id();
-    new.quote_decision := new.status;
+    new.quote_decision := case when new.status = 'rejected' then 'rejected' else 'approved' end;
   else
     new.quote_decided_by := old.quote_decided_by;
     new.quote_decision := old.quote_decision;
@@ -89,13 +93,21 @@ $$;
 create trigger stamp_quote_decided_by before insert or update on public.projects
   for each row execute function public.stamp_quote_decided_by();
 
--- Deleting an account would blank these records and make what it did for other people look like
--- their own work. So an account recorded as acting for someone else can't be deleted (suspend it
--- instead). People's own records don't count, so clients and trades delete as before. The error
--- code is the one the delete function already reports as "suspend it instead".
-create function public.keep_actor_history() returns trigger
+-- Accounts whose history would be lost can't be deleted (suspend them instead):
+-- - a client with jobs or projects, which deleting would otherwise erase along with the account
+--   (demo mode and the app already said so; only invoices actually stopped it);
+-- - an account recorded as doing something for someone else, since deleting it would blank those
+--   records and make its work look like the client's or trade's own. People's own records don't
+--   count, so trades still delete as before (their jobs stay, unassigned).
+-- The error code is the one the delete function already reports as "suspend it instead".
+create function public.keep_account_history() returns trigger
 language plpgsql set search_path = '' as $$
 begin
+  if exists (select 1 from public.requests where client_id = old.id)
+     or exists (select 1 from public.projects where client_id = old.id) then
+    raise exception 'This account has jobs or invoices on record, so it can’t be deleted. Suspend it instead.'
+      using errcode = '23503';
+  end if;
   if exists (select 1 from public.requests where created_by = old.id and client_id <> old.id)
      or exists (select 1 from public.projects where client_id <> old.id and (created_by = old.id or quote_decided_by = old.id))
      or exists (select 1 from public.project_expenses where created_by = old.id and provider_id is distinct from old.id)
@@ -107,5 +119,5 @@ begin
 end;
 $$;
 
-create trigger keep_actor_history before delete on public.profiles
-  for each row execute function public.keep_actor_history();
+create trigger keep_account_history before delete on public.profiles
+  for each row execute function public.keep_account_history();

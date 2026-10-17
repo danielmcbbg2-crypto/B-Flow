@@ -844,16 +844,17 @@ export function doneBy(actor: UserAccount | null, user: UserAccount | null): str
 }
 
 /**
- * Records who accepted or declined a quote, as the database does in live mode: whoever moves the
- * project to approved or rejected; cleared when the quote is issued again. Changes `p` in place.
+ * Records who accepted or rejected a quote, as the database does in live mode: accepting is moving an
+ * unanswered or rejected quote on, rejecting is moving anything to rejected; other moves keep the
+ * record, and it's cleared when the quote is issued again. Changes `p` in place.
  */
 export function stampQuoteDecision(p: Project, before: ProjectStatus, by: string | undefined) {
   if (p.status === 'quote_requested' || p.status === 'quoted') {
     p.quoteDecidedBy = undefined
     p.quoteDecision = undefined
-  } else if ((p.status === 'approved' || p.status === 'rejected') && p.status !== before) {
+  } else if (p.status !== before && (p.status === 'rejected' || before === 'quote_requested' || before === 'quoted' || before === 'rejected')) {
     p.quoteDecidedBy = by
-    p.quoteDecision = p.status
+    p.quoteDecision = p.status === 'rejected' ? 'rejected' : 'approved'
   }
 }
 

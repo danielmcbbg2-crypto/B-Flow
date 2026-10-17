@@ -427,7 +427,11 @@ describe('admin', () => {
   })
 
   test("clients with job history can't be deleted; a deleted trade's jobs and expenses are kept", async () => {
-    await assert.rejects(pool.query(`delete from profiles where id = 'u-client-1'`), /foreign key/)
+    await assert.rejects(pool.query(`delete from profiles where id = 'u-client-1'`), /jobs or invoices on record/)
+    // Jobs alone are enough: deleting would otherwise erase them along with the client.
+    assert.equal((await pool.query(`select count(*)::int n from invoices where client_id = 'u-client-2'`)).rows[0].n, 0)
+    await assert.rejects(asUser(uid.admin, `delete from profiles where id = 'u-client-2'`), /jobs or invoices on record/)
+    assert.equal((await pool.query(`select count(*)::int n from projects where client_id = 'u-client-2'`)).rows[0].n > 0, true)
     await pool.query(`delete from profiles where id = 'u-prov-1'`)
     const e = (await fetchAll(admin)).projects.find((p) => p.id === 'pr-1')!.expenses
     assert.equal(e.length, 4)
@@ -510,7 +514,7 @@ describe('admins acting in a client or trade dashboard', () => {
     assert.equal(other.rowCount, 0)
   })
 
-  test('records who last accepted or declined a quote, and clears it when the quote is issued again', async () => {
+  test('records who last accepted or rejected a quote, and clears it when the quote is issued again', async () => {
     type Q = { id: string; status: string; quote_decided_by: string | null; quote_decision: string | null }
     const quoted = `insert into projects (client_id, property_id, title, status, quote_amount, quote_decided_by, quote_decision)
       values ('u-client-1', 'p-1', $1, 'quoted', 5000, 'u-client-1', 'approved') returning id, status, quote_decided_by, quote_decision`
@@ -523,9 +527,11 @@ describe('admins acting in a client or trade dashboard', () => {
     await assert.rejects(set(uid.sarah, a.id, `quote_decision = 'rejected'`), /accept or decline/)
     const mine = await set(uid.sarah, a.id, `status = 'approved'`)
     assert.deepEqual([mine.quote_decided_by, mine.quote_decision], ['u-client-1', 'approved'])
-    // Carrying on with the project keeps it.
+    // Carrying on with the project keeps it, and so does moving it back to approved.
     const started = await set(uid.admin, a.id, `status = 'in_progress', quote_decided_by = null, quote_decision = null`)
     assert.deepEqual([started.quote_decided_by, started.quote_decision], ['u-client-1', 'approved'])
+    const back = await set(uid.admin, a.id, `status = 'approved'`)
+    assert.deepEqual([back.quote_decided_by, back.quote_decision], ['u-client-1', 'approved'])
     // An admin answers one from the client's dashboard.
     const b = (await asUser<Q>(uid.admin, quoted, ['Pergola'])).rows[0]
     const declined = await set(uid.admin, b.id, `status = 'rejected'`)
@@ -537,9 +543,16 @@ describe('admins acting in a client or trade dashboard', () => {
     assert.equal((await set(uid.sarah, b.id, `status = 'approved'`)).quote_decided_by, 'u-client-1')
     const cancelled = await set(uid.admin, b.id, `status = 'rejected'`)
     assert.deepEqual([cancelled.quote_decided_by, cancelled.quote_decision], ['u-admin', 'rejected'])
+    // Reopening a rejected job, or moving a quote straight into work after a phone call, counts as
+    // accepting it, by whoever did it.
+    const c = (await asUser<Q>(uid.admin, quoted, ['Shed'])).rows[0]
+    const phoned = await set(uid.admin, c.id, `status = 'in_progress'`)
+    assert.deepEqual([phoned.quote_decided_by, phoned.quote_decision], ['u-admin', 'approved'])
     const d = await fetchAll(admin)
     const p = d.projects.find((x) => x.id === b.id)
     assert.deepEqual([p?.quoteDecidedBy, p?.quoteDecision], ['u-admin', 'rejected'])
+    const reopened = await set(uid.admin, b.id, `status = 'in_progress'`)
+    assert.deepEqual([reopened.quote_decided_by, reopened.quote_decision], ['u-admin', 'approved'])
   })
 
   test("an admin who did work for other people can't be deleted; other accounts delete as before", async () => {

@@ -298,10 +298,14 @@ function ProviderCalendar() {
       <PageHeader title="Project calendar" subtitle="Maintenance visits and renovation milestones, synced with your work orders." />
       <Calendar
         events={cal.events}
-        onMove={(ev, date) => {
+        onMove={
           // In an opened dashboard the admin's own permissions apply, as on the admin calendar.
-          if (canAct(ev.kind === 'request' ? 'canDispatchJobs' : 'canManageProjects')) cal.onMove(ev, date)
-        }}
+          canAct('canDispatchJobs') || canAct('canManageProjects')
+            ? (ev, date) => {
+                if (canAct(ev.kind === 'request' ? 'canDispatchJobs' : 'canManageProjects')) cal.onMove(ev, date)
+              }
+            : undefined
+        }
         onOpen={(ev) => ev.kind === 'request' && setOpenId(ev.id.slice(2))}
       />
       <RequestDetail r={lk.request(openId ?? undefined)} open={!!openId} onClose={() => setOpenId(null)} />

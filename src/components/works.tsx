@@ -112,8 +112,9 @@ export function ProjectBy({ p, className }: { p: Project; className?: string }) 
   const answered = p.quoteDecision && p.status !== 'quote_requested' && p.status !== 'quoted'
   const parts = [
     p.createdBy && p.createdBy !== p.clientId ? `Added by ${lk.byName(p.createdBy)}` : '',
+    // "Rejected" (the status's own name) covers both a declined quote and a job cancelled later.
     answered && p.quoteDecidedBy && p.quoteDecidedBy !== p.clientId
-      ? `Quote ${p.quoteDecision === 'rejected' ? 'declined' : 'accepted'} by ${lk.byName(p.quoteDecidedBy)}`
+      ? `${p.quoteDecision === 'rejected' ? 'Rejected' : 'Quote accepted'} by ${lk.byName(p.quoteDecidedBy)}`
       : '',
   ].filter(Boolean)
   if (!parts.length) return null
