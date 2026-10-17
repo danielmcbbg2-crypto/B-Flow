@@ -25,7 +25,7 @@ You need a free [Supabase](https://supabase.com) account. Everything below happe
 ### 1. Create the project and database
 
 1. In Supabase, click **New project**. Choose the **Sydney** region and save the database password somewhere safe.
-2. Open **SQL Editor → New query**. Paste in the whole of [`supabase/migrations/20261014000000_init.sql`](supabase/migrations/20261014000000_init.sql) and click **Run**. This creates the tables, the access rules, the photo storage and your master admin profile.
+2. Open **SQL Editor → New query**. Paste in each file from [`supabase/migrations`](supabase/migrations), oldest first, and click **Run** after each. This creates the tables, the access rules, the photo storage and your master admin profile.
 
 ### 2. Lock down sign-ups and create your admin login
 
@@ -67,12 +67,22 @@ Then, in Supabase **Authentication → URL Configuration**, set **Site URL** to 
 
 ### 6. Email delivery
 
-Supabase's built-in email sender only allows a few emails per hour, which is fine for testing but not for business use. Before inviting many people, set up your own email sender under **Authentication → Emails → SMTP Settings**. Any provider works, for example Resend, Postmark or your Microsoft 365 / Google Workspace mailbox.
+Supabase's built-in email sender only delivers to members of your Supabase team, a few emails an hour. Until you set up your own sender, invite people with **Create invite link** (see Day-to-day) instead of **Email the invite**.
+
+To send invites and password emails automatically, set up a sender, for example [Resend](https://resend.com) (free for up to 3,000 emails a month):
+
+1. In Resend, add the domain `nextphasemaintenance.com.au`. It shows a few DNS records (on `send` and `resend._domainkey`); add them where your domain's DNS is managed, the same way as the `portal` record. They don't touch your website or your existing email.
+2. Once Resend shows the domain as verified, create an API key.
+3. In Supabase, open **Authentication → Emails → SMTP Settings**, turn on custom SMTP and enter: host `smtp.resend.com`, port `465`, username `resend`, password your API key, sender email e.g. `portal@nextphasemaintenance.com.au`, sender name `Next Phase Maintenance`.
+
+Microsoft 365, Google Workspace or Postmark work the same way with their own SMTP details.
+
+Sign-in links (emailed or copied) last one hour by default. To give people a full day, set **Email OTP Expiration** to `86400` under **Authentication → Sign In / Providers → Email**.
 
 ### Day-to-day
 
-- **Invite people:** Admin → Accounts → Invite account. They receive an email, choose a password and land in their portal.
-- **Forgotten passwords:** Sign in → "Forgot password?", or Admin → Accounts → Edit → "Email password link".
+- **Invite people:** Admin → Accounts → Invite account → **Create invite link**, then **Text it**, **Email it** or **Copy message** to send it yourself. Or use **Email the invite** once email delivery is set up (step 6). They open the link, press Continue, choose a password and land in their portal. Each link works once; if one expires, open the account and choose **Copy new invite link**.
+- **Forgotten passwords:** Admin → Accounts → Edit → **Copy password link** and send it to them. Once email delivery is set up, they can also use Sign in → "Forgot password?", or you can use "Email password link".
 - **Change your own password:** the key icon in the portal header.
 
 ## How the data is protected

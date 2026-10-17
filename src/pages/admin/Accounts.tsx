@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Copy, UserPlus } from 'lucide-react'
+import { useRef, useState } from 'react'
+import { Copy, Mail, MessageSquare, UserPlus } from 'lucide-react'
 import { Field, Modal, PageHeader, Status, Tabs } from '../../components/ui'
 import { useStore } from '../../lib/store'
 import { ALL_PERMISSIONS, DEFAULT_PERMISSIONS, TRADES, type Permission, type Role, type UserAccount } from '../../lib/types'
@@ -9,12 +9,51 @@ import { CLOUD } from '../../lib/supabase'
 const ROLE_LABEL: Record<Role, string> = { admin: 'Admin', client: 'Client', provider: 'Service provider' }
 const MASTER_ID = 'u-admin'
 
+type Delivery = 'email' | 'link'
+
+/** A one-time sign-in link the admin sends themselves, with copy, text and email shortcuts. */
+function ShareLink({ account, link, invite }: { account: UserAccount; link: string; invite: boolean }) {
+  const [copied, setCopied] = useState<'message' | 'link' | null>(null)
+  const first = account.name.trim().split(/\s+/)[0] || account.name
+  const message = invite
+    ? `Hi ${first}, here's your invite to the Next Phase Maintenance portal. Open this link to choose your password (you'll sign in with ${account.email}): ${link}`
+    : `Hi ${first}, here's a link to choose a new password for the Next Phase Maintenance portal: ${link}`
+  const subject = invite ? 'Your Next Phase Maintenance portal invite' : 'Reset your Next Phase Maintenance portal password'
+  // Some browsers and embedded views refuse clipboard access; the link stays visible to copy by hand.
+  const copy = (text: string, what: 'message' | 'link') =>
+    navigator.clipboard?.writeText(text).then(() => setCopied(what)).catch(() => {})
+  return (
+    <div className="space-y-3">
+      <input className="input text-xs" readOnly value={link} aria-label="Sign-in link" onFocus={(e) => e.currentTarget.select()} />
+      <div className="flex flex-wrap gap-2">
+        <button type="button" className="btn-primary" onClick={() => copy(message, 'message')}>
+          <Copy size={15} /> {copied === 'message' ? 'Message copied' : 'Copy message'}
+        </button>
+        <button type="button" className="btn-ghost" onClick={() => copy(link, 'link')}>
+          {copied === 'link' ? 'Link copied' : 'Copy link only'}
+        </button>
+        {account.phone && (
+          <a className="btn-ghost" href={`sms:${account.phone.replace(/[\s()-]/g, '')}?&body=${encodeURIComponent(message)}`}>
+            <MessageSquare size={15} /> Text it
+          </a>
+        )}
+        <a className="btn-ghost" href={`mailto:${account.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(message)}`}>
+          <Mail size={15} /> Email it
+        </a>
+      </div>
+      <p className="text-xs text-slate-500">
+        The link works once. If it expires before {first} uses it, open their account and choose “{invite ? 'Copy new invite link' : 'Copy password link'}”.
+      </p>
+    </div>
+  )
+}
+
 export function Accounts() {
-  const { data, update, user, inviteAccount, deleteAccount } = useStore()
+  const { data, update, user, inviteAccount, getSignInLink, deleteAccount } = useStore()
   const [tab, setTab] = useState<'all' | Role>('all')
   const [editing, setEditing] = useState<UserAccount | null>(null)
   const [inviting, setInviting] = useState(false)
-  const [issued, setIssued] = useState<{ account: UserAccount; code?: string } | null>(null)
+  const [issued, setIssued] = useState<{ account: UserAccount; code?: string; link?: string } | null>(null)
   const list = data.users.filter((u) => tab === 'all' || u.role === tab)
 
   return (
@@ -23,7 +62,7 @@ export function Accounts() {
         title="Accounts & permissions"
         subtitle={
           CLOUD
-            ? 'Accounts are invite-only. Invited people get an email link to choose their password.'
+            ? 'Accounts are invite-only. Send each person an invite link by text or email; they choose their own password.'
             : 'Accounts are invite-only. Share the invite code with the person; they activate it from Sign in.'
         }
         actions={<button className="btn-primary" onClick={() => setInviting(true)}><UserPlus size={16} /> Invite account</button>}
@@ -84,6 +123,7 @@ export function Accounts() {
           account={editing}
           locked={editing.id === MASTER_ID || editing.id === user?.id}
           onClose={() => setEditing(null)}
+          onGetLink={CLOUD && !(editing.id === MASTER_ID || editing.id === user?.id) ? () => getSignInLink(editing.id) : undefined}
           onSave={(a) => {
             const email = a.email.trim().toLowerCase()
             if (data.users.some((u) => u.id !== a.id && u.email.toLowerCase() === email)) return 'Another account already uses this email.'
@@ -107,17 +147,26 @@ export function Accounts() {
         <InviteForm
           onClose={() => setInviting(false)}
           existingEmails={data.users.map((u) => u.email.toLowerCase())}
-          onCreate={async (a) => {
-            const res = await inviteAccount(a)
+          onCreate={async (a, delivery) => {
+            const res = await inviteAccount(a, delivery)
             if (res.error) return res.error
             setInviting(false)
-            setIssued({ account: a, code: res.code })
+            setIssued({ account: a, code: res.code, link: res.link })
             return null
           }}
         />
       )}
-      <Modal open={!!issued} onClose={() => setIssued(null)} title="Invite created">
-        {issued && !issued.code && (
+      <Modal open={!!issued} onClose={() => setIssued(null)} title={issued?.link ? 'Invite link ready' : 'Invite created'} width={issued?.link ? 'max-w-xl' : undefined}>
+        {issued?.link && (
+          <div className="space-y-4">
+            <p className="text-sm text-slate-600">
+              Send <span className="font-semibold text-slate-900">{issued.account.name}</span> this link by text or email. They'll choose a password
+              and land in their portal.
+            </p>
+            <ShareLink account={issued.account} link={issued.link} invite />
+          </div>
+        )}
+        {issued && !issued.code && !issued.link && (
           <p className="text-sm text-slate-600">
             An invitation email is on its way to <span className="font-semibold text-slate-900">{issued.account.email}</span>. The link lets{' '}
             {issued.account.name} choose a password and open their portal.
@@ -210,16 +259,22 @@ function AccountEditor({
   onClose,
   onSave,
   onDelete,
+  onGetLink,
 }: {
   account: UserAccount
   locked: boolean
   onClose: () => void
   onSave: (a: UserAccount) => string | null
   onDelete?: () => Promise<string | null>
+  onGetLink?: () => Promise<{ error?: string; link?: string }>
 }) {
   const { sendPasswordEmail } = useStore()
   const [a, setA] = useState(account)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [shared, setShared] = useState<string | null>(null)
+  const [linkBusy, setLinkBusy] = useState(false)
+  // Based on the saved account, not unsaved edits in this form.
+  const invitePending = account.status === 'invited'
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const set = (patch: Partial<UserAccount>) => setA({ ...a, ...patch })
   return (
@@ -259,6 +314,23 @@ function AccountEditor({
                   Reset & re-invite
                 </button>
               ))}
+            {onGetLink && account.status !== 'suspended' && (
+              <button
+                type="button"
+                className="btn-ghost"
+                disabled={linkBusy}
+                onClick={async () => {
+                  setLinkBusy(true)
+                  setMsg(null)
+                  const res = await onGetLink()
+                  setLinkBusy(false)
+                  if (res.link) setShared(res.link)
+                  else setMsg({ ok: false, text: res.error ?? 'Could not create the link.' })
+                }}
+              >
+                <Copy size={15} /> {linkBusy ? 'Creating link…' : invitePending ? 'Copy new invite link' : 'Copy password link'}
+              </button>
+            )}
             {onDelete &&
               (confirmingDelete ? (
                 <>
@@ -283,7 +355,7 @@ function AccountEditor({
                 </button>
               ))}
           </div>
-          <button className="btn-primary">Save account</button>
+          <button className="btn-primary ml-auto">Save account</button>
         </div>
         {confirmingDelete && (
           <p className="text-sm text-red-700 sm:col-span-2">
@@ -292,6 +364,11 @@ function AccountEditor({
           </p>
         )}
         {msg && <p className={`text-sm sm:col-span-2 ${msg.ok ? 'text-emerald-700' : 'text-red-600'}`}>{msg.text}</p>}
+        {shared && (
+          <div className="border-t border-slate-100 pt-4 sm:col-span-2">
+            <ShareLink account={account} link={shared} invite={invitePending} />
+          </div>
+        )}
       </form>
     </Modal>
   )
@@ -303,10 +380,12 @@ function InviteForm({
   existingEmails,
 }: {
   onClose: () => void
-  onCreate: (a: UserAccount) => Promise<string | null>
+  onCreate: (a: UserAccount, delivery: Delivery) => Promise<string | null>
   existingEmails: string[]
 }) {
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusy] = useState<Delivery | null>(null)
+  // Which submit button was pressed; a ref so the submit handler sees it straight away.
+  const delivery = useRef<Delivery>('link')
   const [error, setError] = useState<string | null>(null)
   const [a, setA] = useState<UserAccount>({
     id: uid('u'),
@@ -329,9 +408,9 @@ function InviteForm({
         onSubmit={async (e) => {
           e.preventDefault()
           if (dupe) return
-          setBusy(true)
-          setError(await onCreate({ ...a, email: a.email.trim() }))
-          setBusy(false)
+          setBusy(delivery.current)
+          setError(await onCreate({ ...a, email: a.email.trim() }, delivery.current))
+          setBusy(null)
         }}
       >
         <AccountFields a={a} set={set} />
@@ -341,8 +420,20 @@ function InviteForm({
           <PermissionBoxes value={a.permissions} onChange={(permissions) => set({ permissions })} />
         </div>
         {error && <p className="text-sm text-red-600 sm:col-span-2">{error}</p>}
-        <div className="flex justify-end sm:col-span-2">
-          <button className="btn-primary" disabled={dupe || busy}>{busy ? 'Sending…' : CLOUD ? 'Send invitation' : 'Create invite'}</button>
+        {/* Reversed so "Create invite link" comes first in the form and is what Enter submits. */}
+        <div className="flex flex-row-reverse flex-wrap items-center justify-start gap-2 sm:col-span-2">
+          {CLOUD ? (
+            <>
+              <button className="btn-primary" disabled={dupe || !!busy} onClick={() => (delivery.current = 'link')}>
+                <Copy size={15} /> {busy === 'link' ? 'Creating…' : 'Create invite link'}
+              </button>
+              <button className="btn-ghost" disabled={dupe || !!busy} onClick={() => (delivery.current = 'email')}>
+                <Mail size={15} /> {busy === 'email' ? 'Sending…' : 'Email the invite'}
+              </button>
+            </>
+          ) : (
+            <button className="btn-primary" disabled={dupe || !!busy}>{busy ? 'Creating…' : 'Create invite'}</button>
+          )}
         </div>
       </form>
     </Modal>

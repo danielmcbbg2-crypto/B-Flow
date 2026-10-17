@@ -1,7 +1,10 @@
 // Supabase Edge Function: invite-only account management (admins with canEditPermissions).
 //
-//   { action: 'invite', profile: {...}, redirectTo }  creates the profile and emails a
-//       Supabase invite link; the person chooses a password when they open it.
+//   { action: 'invite', profile: {...}, redirectTo, delivery? }  creates the profile and emails a
+//       Supabase invite link; the person chooses a password when they open it. With
+//       delivery: 'link' nothing is emailed and the link comes back for the admin to send.
+//   { action: 'link', profileId, redirectTo }  a fresh link for an existing account: a new invite
+//       link while the invite is pending, otherwise a link to choose a new password.
 //   { action: 'delete', profileId }  removes the login and the profile.
 import { createClient } from 'npm:@supabase/supabase-js@2.49.4'
 
@@ -15,8 +18,25 @@ const json = (body: unknown, status = 200) =>
 
 const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 
+const MASTER_ID = 'u-admin'
 const ROLES = ['admin', 'client', 'provider']
 const PERMISSIONS = ['canSubmitRequests', 'canDispatchJobs', 'canManageInvoices', 'canEditPermissions', 'canManageProjects', 'canSubmitExpenses']
+
+/**
+ * A one-time link to the app's accept page, which only uses the token when the person presses
+ * Continue, so link previews in SMS and email apps can't use it up first. Someone without a login
+ * gets an invite token (which creates the login); anyone else a password token. `purpose` only
+ * sets the page's wording, since a pending invite can already have a login.
+ */
+async function signInLink(email: string, hasLogin: boolean, purpose: 'invite' | 'password', redirectTo: string): Promise<string> {
+  const { data, error } = await db.auth.admin.generateLink({ type: hasLogin ? 'recovery' : 'invite', email, options: { redirectTo } })
+  if (error) throw error
+  const { hashed_token, verification_type } = data.properties
+  const query = new URLSearchParams({ token_hash: hashed_token, type: verification_type, for: purpose })
+  return `${redirectTo.split('#')[0]}#/accept?${query}`
+}
+
+const isAppUrl = (u: unknown): u is string => typeof u === 'string' && /^https?:\/\/[^\s]+$/.test(u)
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
@@ -32,6 +52,8 @@ Deno.serve(async (req) => {
   const body = await req.json().catch(() => ({}))
 
   if (body.action === 'invite') {
+    const byLink = body.delivery === 'link'
+    if (byLink && !isAppUrl(body.redirectTo)) return json({ error: 'Missing app address' }, 400)
     const p = body.profile ?? {}
     const email = String(p.email ?? '').trim()
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return json({ error: 'Enter a valid email address' }, 400)
@@ -53,12 +75,34 @@ Deno.serve(async (req) => {
     if (insertError) {
       return json({ error: insertError.code === '23505' ? 'An account with this email already exists' : insertError.message }, 400)
     }
+    if (byLink) {
+      try {
+        return json({ id: created.id, link: await signInLink(email, false, 'invite', body.redirectTo) })
+      } catch (e) {
+        await db.from('profiles').delete().eq('id', created.id)
+        return json({ error: `Couldn't create the invite link: ${(e as Error).message}` }, 400)
+      }
+    }
     const { error: inviteError } = await db.auth.admin.inviteUserByEmail(email, { redirectTo: body.redirectTo })
     if (inviteError) {
       await db.from('profiles').delete().eq('id', created.id)
-      return json({ error: `Invite email failed: ${inviteError.message}` }, 400)
+      return json({ error: `Invite email failed: ${inviteError.message}. Try “Create invite link” instead.` }, 400)
     }
     return json({ id: created.id })
+  }
+
+  if (body.action === 'link') {
+    if (!isAppUrl(body.redirectTo)) return json({ error: 'Missing app address' }, 400)
+    const { data: target } = await db.from('profiles').select('id, email, auth_id, status').eq('id', body.profileId).maybeSingle()
+    if (!target) return json({ error: 'Account not found' }, 404)
+    if (target.status === 'suspended') return json({ error: 'This account is suspended. Reactivate it first.' }, 400)
+    if (target.id === MASTER_ID && me.id !== MASTER_ID) return json({ error: 'Only the master admin can do this for the master admin account' }, 403)
+    try {
+      const purpose = target.status === 'invited' ? 'invite' : 'password'
+      return json({ link: await signInLink(target.email, !!target.auth_id, purpose, body.redirectTo) })
+    } catch (e) {
+      return json({ error: `Couldn't create the link: ${(e as Error).message}` }, 400)
+    }
   }
 
   if (body.action === 'delete') {

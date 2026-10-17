@@ -82,6 +82,8 @@ interface StoreValue {
   sendPasswordEmail: (email: string) => Promise<string | null>
   /** Cloud mode: finish an invite or reset by choosing a password. */
   setNewPassword: (password: string) => Promise<AuthResult>
+  /** Cloud mode: sign in with a link made by "Create invite link" / "Copy password link"; returns an error or null. */
+  acceptLink: (tokenHash: string, type: string) => Promise<string | null>
   logout: () => Promise<void>
   changePassword: (current: string, next: string) => Promise<string | null>
   /** SMS every admin recipient (admin only in cloud mode). */
@@ -97,8 +99,13 @@ interface StoreValue {
   pushAdminInbox: (title: string, body: string, refs?: { requestId?: string; projectId?: string }) => Promise<void>
   /** Stores a photo and returns the URL (cloud) or the data URL itself (demo). */
   uploadImage: (dataUrl: string) => Promise<string>
-  /** Creates an invited account. Demo mode returns the invite code; cloud mode emails an invite link. */
-  inviteAccount: (account: UserAccount) => Promise<{ error?: string; code?: string }>
+  /**
+   * Creates an invited account. Demo mode returns the invite code; cloud mode emails an invite
+   * link, or with delivery 'link' returns it for the admin to send.
+   */
+  inviteAccount: (account: UserAccount, delivery?: 'email' | 'link') => Promise<{ error?: string; code?: string; link?: string }>
+  /** Cloud mode: a fresh sign-in link for an existing account (new invite link, or password link). */
+  getSignInLink: (profileId: string) => Promise<{ error?: string; link?: string }>
   deleteAccount: (id: string) => Promise<string | null>
   resetDemoData: () => void
 }
@@ -351,6 +358,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (!supabase) return 'Not available in demo mode.'
     const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: appUrl() })
     return error ? error.message : null
+  }, [])
+
+  const acceptLink = useCallback(async (tokenHash: string, type: string) => {
+    if (!supabase) return 'Not available in demo mode.'
+    if (!tokenHash || (type !== 'invite' && type !== 'recovery')) return 'This link is not valid.'
+    setAuthNotice(null)
+    // A recovery link fires PASSWORD_RECOVERY, which sends the person to "Choose your password".
+    const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type })
+    return error ? 'This link has expired or has already been used. Ask Next Phase Maintenance for a new one.' : null
   }, [])
 
   const setNewPassword = useCallback(
@@ -607,11 +623,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const uploadImage = useCallback(async (dataUrl: string) => (supabase ? uploadPhoto(supabase, dataUrl) : dataUrl), [])
 
   const inviteAccount = useCallback(
-    async (account: UserAccount): Promise<{ error?: string; code?: string }> => {
+    async (account: UserAccount, delivery: 'email' | 'link' = 'email'): Promise<{ error?: string; code?: string; link?: string }> => {
       if (supabase) {
         try {
-          await invokeFunction('invite-user', {
+          const res = await invokeFunction<{ link?: string }>('invite-user', {
             action: 'invite',
+            delivery,
             redirectTo: appUrl(),
             profile: {
               name: account.name,
@@ -624,7 +641,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             },
           })
           await refresh()
-          return {}
+          return { link: res?.link }
         } catch (e) {
           return { error: (e as Error).message }
         }
@@ -637,6 +654,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
     [update, refresh],
   )
+
+  const getSignInLink = useCallback(async (profileId: string): Promise<{ error?: string; link?: string }> => {
+    if (!supabase) return { error: 'Not available in demo mode.' }
+    try {
+      const res = await invokeFunction<{ link: string }>('invite-user', { action: 'link', profileId, redirectTo: appUrl() })
+      return { link: res.link }
+    } catch (e) {
+      return { error: (e as Error).message }
+    }
+  }, [])
 
   const deleteAccount = useCallback(
     async (id: string) => {
@@ -686,6 +713,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     acceptInvite,
     sendPasswordEmail,
     setNewPassword,
+    acceptLink,
     logout,
     changePassword,
     notifyAdmins,
@@ -697,6 +725,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     pushAdminInbox,
     uploadImage,
     inviteAccount,
+    getSignInLink,
     deleteAccount,
     resetDemoData,
   }
