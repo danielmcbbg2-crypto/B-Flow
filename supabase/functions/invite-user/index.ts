@@ -4,7 +4,8 @@
 //       Supabase invite link; the person chooses a password when they open it. With
 //       delivery: 'link' nothing is emailed and the link comes back for the admin to send.
 //   { action: 'link', profileId, redirectTo }  a fresh link for an existing account: a new invite
-//       link while the invite is pending, otherwise a link to choose a new password.
+//       link while the invite is pending (cancelling the earlier one), otherwise a link to choose
+//       a new password.
 //   { action: 'delete', profileId }  removes the login and the profile.
 import { createClient } from 'npm:@supabase/supabase-js@2.49.4'
 
@@ -24,14 +25,24 @@ const PERMISSIONS = ['canSubmitRequests', 'canDispatchJobs', 'canManageInvoices'
 
 /**
  * A one-time link to the app's accept page, which only uses the token when the person presses
- * Continue, so link previews in SMS and email apps can't use it up first. Someone without a login
- * gets an invite token (which creates the login); anyone else a password token. `purpose` only
- * sets the page's wording, since a pending invite can already have a login.
+ * Continue, so link previews in SMS and email apps can't use it up first.
+ *
+ * Someone without a login, or with a pending invite, gets an invite token: for an existing login
+ * that replaces the earlier invite token, so a link sent to the wrong person stops working. Once
+ * the login is confirmed, GoTrue refuses invites (the old token was used), so it falls back to a
+ * password token, as it does for everyone else. `purpose` sets the accept page's wording.
  */
 async function signInLink(email: string, hasLogin: boolean, purpose: 'invite' | 'password', redirectTo: string): Promise<string> {
-  const { data, error } = await db.auth.admin.generateLink({ type: hasLogin ? 'recovery' : 'invite', email, options: { redirectTo } })
-  if (error) throw error
-  const { hashed_token, verification_type } = data.properties
+  const generate = (type: 'invite' | 'recovery') =>
+    type === 'invite'
+      ? db.auth.admin.generateLink({ type: 'invite', email, options: { redirectTo } })
+      : db.auth.admin.generateLink({ type: 'recovery', email, options: { redirectTo } })
+  let res = await generate(!hasLogin || purpose === 'invite' ? 'invite' : 'recovery')
+  if (res.error && hasLogin && purpose === 'invite' && (res.error.code === 'email_exists' || res.error.status === 422)) {
+    res = await generate('recovery')
+  }
+  if (res.error) throw res.error
+  const { hashed_token, verification_type } = res.data.properties
   const query = new URLSearchParams({ token_hash: hashed_token, type: verification_type, for: purpose })
   return `${redirectTo.split('#')[0]}#/accept?${query}`
 }

@@ -20,11 +20,12 @@ export function App() {
     else if (user.role !== area) navigate(`/${user.role}`)
   }, [isPortal, user, area, phase])
 
-  if (phase === 'set-password') return <SetPasswordScreen />
+  // Before the set-password check, so a half-finished setup on this browser can't take over a new link.
   if (cloud && area.startsWith('accept')) {
     const q = new URLSearchParams(window.location.hash.split('?')[1] ?? '')
     return <AcceptLinkScreen tokenHash={q.get('token_hash') ?? ''} type={q.get('type') ?? ''} purpose={q.get('for') ?? ''} />
   }
+  if (phase === 'set-password') return <SetPasswordScreen />
   if (isPortal && phase === 'loading') {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-3 text-sm text-slate-500">

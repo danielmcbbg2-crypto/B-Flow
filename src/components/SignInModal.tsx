@@ -108,24 +108,27 @@ export function SignInModal({ open, onClose }: { open: boolean; onClose: () => v
 }
 
 /**
- * Landing page for links from "Create invite link" and "Copy password link". The one-time token is
- * only used when the person presses Continue, so link previews can't use it up first. Once signed
- * in, the store moves on to "Choose your password".
+ * Landing page for links from "Create invite link" and "Create password link". The one-time token
+ * is only used when the person presses Continue, so link previews can't use it up first. Once
+ * signed in, the store moves on to "Choose your password".
  */
 export function AcceptLinkScreen({ tokenHash, type, purpose }: { tokenHash: string; type: string; purpose: string }) {
-  const { acceptLink, phase, user, authNotice } = useStore()
+  const { acceptLink, logout, phase, user, authNotice } = useStore()
   const [state, setState] = useState<'idle' | 'busy' | 'signed-in'>('idle')
   const [error, setError] = useState<string | null>(null)
   const invite = purpose ? purpose === 'invite' : type === 'invite'
+  // Using the link would replace whoever is signed in on this browser (e.g. an admin checking it).
+  const otherSession = state === 'idle' && (phase === 'set-password' || (phase === 'ready' && !!user))
 
   useEffect(() => {
-    if (state !== 'signed-in' || phase !== 'ready') return
-    if (user) navigate(`/${user.role}`)
-    else if (authNotice) {
+    if (state !== 'signed-in') return
+    // Leaving this route lets the app show "Choose your password".
+    if (phase === 'set-password') navigate('/')
+    else if (phase === 'ready' && authNotice) {
       setError(authNotice)
       setState('idle')
     }
-  }, [state, phase, user, authNotice])
+  }, [state, phase, authNotice])
 
   const go = async () => {
     setState('busy')
@@ -150,9 +153,21 @@ export function AcceptLinkScreen({ tokenHash, type, purpose }: { tokenHash: stri
           </p>
         </div>
         {error && <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
-        <button className="btn-primary w-full" disabled={state !== 'idle'} onClick={() => void go()}>
-          {state === 'idle' ? 'Continue' : 'Checking your link…'}
-        </button>
+        {otherSession ? (
+          <>
+            <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+              {user ? `You're signed in as ${user.name} on this browser.` : 'Another account is part-way through setup on this browser.'} This
+              link is for someone else's account: open it on their device, or sign out here first.
+            </p>
+            <button className="btn-primary w-full" onClick={() => void logout()}>
+              Sign out
+            </button>
+          </>
+        ) : (
+          <button className="btn-primary w-full" disabled={state !== 'idle' || phase === 'loading'} onClick={() => void go()}>
+            {state === 'idle' ? 'Continue' : 'Checking your link…'}
+          </button>
+        )}
         <a href="#/" className="block text-center text-sm text-slate-500 hover:text-slate-900">
           Go to the home page
         </a>

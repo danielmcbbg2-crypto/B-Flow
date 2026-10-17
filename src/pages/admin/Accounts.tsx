@@ -42,7 +42,8 @@ function ShareLink({ account, link, invite }: { account: UserAccount; link: stri
         </a>
       </div>
       <p className="text-xs text-slate-500">
-        The link works once. If it expires before {first} uses it, open their account and choose “{invite ? 'Copy new invite link' : 'Copy password link'}”.
+        The link works once, and making a new one cancels this one. If it expires before {first} uses it, open their account and choose “
+        {invite ? 'Create new invite link' : 'Create password link'}”.
       </p>
     </div>
   )
@@ -328,7 +329,7 @@ function AccountEditor({
                   else setMsg({ ok: false, text: res.error ?? 'Could not create the link.' })
                 }}
               >
-                <Copy size={15} /> {linkBusy ? 'Creating link…' : invitePending ? 'Copy new invite link' : 'Copy password link'}
+                <Copy size={15} /> {linkBusy ? 'Creating link…' : invitePending ? 'Create new invite link' : 'Create password link'}
               </button>
             )}
             {onDelete &&
@@ -366,7 +367,7 @@ function AccountEditor({
         {msg && <p className={`text-sm sm:col-span-2 ${msg.ok ? 'text-emerald-700' : 'text-red-600'}`}>{msg.text}</p>}
         {shared && (
           <div className="border-t border-slate-100 pt-4 sm:col-span-2">
-            <ShareLink account={account} link={shared} invite={invitePending} />
+            <ShareLink key={shared} account={account} link={shared} invite={invitePending} />
           </div>
         )}
       </form>

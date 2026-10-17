@@ -243,6 +243,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
     const load = async (session: Session | null) => {
       if (!session) {
+        recovering.current = false
         teardown()
         setCloudProfile(null)
         setData(emptyData())
@@ -364,9 +365,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (!supabase) return 'Not available in demo mode.'
     if (!tokenHash || (type !== 'invite' && type !== 'recovery')) return 'This link is not valid.'
     setAuthNotice(null)
-    // A recovery link fires PASSWORD_RECOVERY, which sends the person to "Choose your password".
+    // Every link an admin sends ends at "Choose your password", whichever kind of token it carries.
+    recovering.current = true
     const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type })
-    return error ? 'This link has expired or has already been used. Ask Next Phase Maintenance for a new one.' : null
+    if (!error) return null
+    recovering.current = false
+    return error.status === 403 || error.code === 'otp_expired'
+      ? 'This link has expired or has already been used. Ask Next Phase Maintenance for a new one.'
+      : "Couldn't check your link. Check your connection and press Continue again."
   }, [])
 
   const setNewPassword = useCallback(
