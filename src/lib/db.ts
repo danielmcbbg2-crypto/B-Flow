@@ -110,6 +110,7 @@ const requestRow = (r: MaintenanceRequest): Row => ({
   sms_notified: r.smsNotified,
   created_at: r.createdAt,
   completed_at: nul(r.completedAt),
+  created_by: nul(r.createdBy),
 })
 
 const projectRow = (p: Project): Row => ({
@@ -126,6 +127,8 @@ const projectRow = (p: Project): Row => ({
   status: p.status,
   assigned_provider_id: nul(p.assignedProviderId),
   created_at: p.createdAt,
+  created_by: nul(p.createdBy),
+  quote_decided_by: nul(p.quoteDecidedBy),
 })
 
 const milestoneRow = (projectId: string, m: Milestone): Row => ({ id: m.id, project_id: projectId, title: m.title, date: m.date, done: m.done })
@@ -134,6 +137,7 @@ const expenseRow = (projectId: string, e: Expense): Row => ({
   id: e.id,
   project_id: projectId,
   provider_id: e.providerId || null,
+  created_by: nul(e.createdBy),
   date: e.date,
   description: e.description,
   category: e.category,
@@ -164,6 +168,7 @@ const inboxRow = (m: InboxMessage): Row => ({
   read: m.read,
   requires_ack: m.requiresAck,
   acknowledged: m.acknowledged,
+  acknowledged_by: nul(m.acknowledgedBy),
   request_id: nul(m.requestId),
   project_id: nul(m.projectId),
 })
@@ -200,12 +205,14 @@ interface Spec {
 const SPECS: Spec[] = [
   { table: 'profiles', rows: (d) => d.users.map(profileRow) },
   { table: 'properties', rows: (d) => d.properties.map(propertyRow) },
-  { table: 'projects', rows: (d) => d.projects.map(projectRow), readonly: ['number'] },
-  { table: 'requests', rows: (d) => d.requests.map(requestRow), readonly: ['number'] },
+  // created_by, quote_decided_by and acknowledged_by are stamped by the database from whoever is
+  // signed in, so the app never sends them.
+  { table: 'projects', rows: (d) => d.projects.map(projectRow), readonly: ['number', 'created_by', 'quote_decided_by'] },
+  { table: 'requests', rows: (d) => d.requests.map(requestRow), readonly: ['number', 'created_by'] },
   { table: 'project_milestones', rows: (d) => d.projects.flatMap((p) => p.milestones.map((m) => milestoneRow(p.id, m))) },
-  { table: 'project_expenses', rows: (d) => d.projects.flatMap((p) => p.expenses.map((e) => expenseRow(p.id, e))) },
+  { table: 'project_expenses', rows: (d) => d.projects.flatMap((p) => p.expenses.map((e) => expenseRow(p.id, e))), readonly: ['created_by'] },
   { table: 'invoices', rows: (d) => d.invoices.map(invoiceRow) },
-  { table: 'inbox', rows: (d) => d.inbox.map(inboxRow) },
+  { table: 'inbox', rows: (d) => d.inbox.map(inboxRow), readonly: ['acknowledged_by'] },
   { table: 'sms_log', rows: (d) => d.sms.map(smsRow) },
   { table: 'settings', rows: (d) => [settingsRow(d)] },
 ]
@@ -300,6 +307,7 @@ export const requestFromRow = (r: Row): MaintenanceRequest => ({
   smsNotified: r.sms_notified as boolean,
   createdAt: r.created_at as string,
   completedAt: opt(r.completed_at as string | null),
+  createdBy: opt(r.created_by as string | null),
 })
 
 export const projectFromRow = (r: Row, milestones: Row[] = [], expenses: Row[] = []): Project => ({
@@ -316,6 +324,8 @@ export const projectFromRow = (r: Row, milestones: Row[] = [], expenses: Row[] =
   status: r.status as Project['status'],
   assignedProviderId: opt(r.assigned_provider_id as string | null),
   createdAt: r.created_at as string,
+  createdBy: opt(r.created_by as string | null),
+  quoteDecidedBy: opt(r.quote_decided_by as string | null),
   milestones: milestones
     .map((m) => ({ id: m.id as string, title: m.title as string, date: m.date as string, done: m.done as boolean }))
     .sort((a, b) => a.date.localeCompare(b.date)),
@@ -328,6 +338,7 @@ export const projectFromRow = (r: Row, milestones: Row[] = [], expenses: Row[] =
       category: e.category as Expense['category'],
       amount: num(e.amount),
       status: e.status as Expense['status'],
+      createdBy: opt(e.created_by as string | null),
     }))
     .sort((a, b) => a.date.localeCompare(b.date)),
 })
@@ -355,6 +366,7 @@ const inboxFromRow = (r: Row): InboxMessage => ({
   read: r.read as boolean,
   requiresAck: r.requires_ack as boolean,
   acknowledged: r.acknowledged as boolean,
+  acknowledgedBy: opt(r.acknowledged_by as string | null),
   requestId: opt(r.request_id as string | null),
   projectId: opt(r.project_id as string | null),
 })

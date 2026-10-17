@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
 import { Empty, Field, Modal, PageHeader, Sep, Tabs } from '../../components/ui'
-import { ProjectProgress } from '../../components/works'
+import { ProjectBy, ProjectProgress } from '../../components/works'
 import { ProjectStatusText } from '../../components/status'
 import { ExpenseTable } from '../provider/ProviderPortal'
 import { useLookup, useStore } from '../../lib/store'
@@ -95,6 +95,7 @@ export function AdminProjects() {
                       <span className="num text-xs text-slate-500">P-{p.number}</span>
                       <p className="font-semibold">{p.title}</p>
                       <p className="text-xs text-slate-500">{prop?.address}, {prop?.suburb}</p>
+                      <ProjectBy p={p} />
                     </td>
                     <td className="td">
                       {lk.user(p.clientId)?.name}

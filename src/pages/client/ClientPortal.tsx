@@ -4,7 +4,7 @@ import { GridTile, PortalShell, type NavItem } from '../../components/PortalShel
 import { Calendar } from '../../components/Calendar'
 import { Empty, Field, Modal, PageHeader, PhotoInput, Sep, Tabs } from '../../components/ui'
 import { ProjectStatusText } from '../../components/status'
-import { ProjectProgress, RequestDetail, RequestRow, useLinkedCalendar } from '../../components/works'
+import { ProjectBy, ProjectProgress, RequestDetail, RequestRow, useLinkedCalendar } from '../../components/works'
 import { useLookup, useStore } from '../../lib/store'
 import { navigate } from '../../lib/router'
 import { TRADES, type Property, type Trade } from '../../lib/types'
@@ -283,7 +283,7 @@ function Hub() {
 }
 
 function Projects() {
-  const { user, update, requestQuote } = useStore()
+  const { user, actor, update, requestQuote, can } = useStore()
   const lk = useLookup()
   const mine = useMine()
   const [quoteOpen, setQuoteOpen] = useState(false)
@@ -310,8 +310,12 @@ function Projects() {
   const respond = (id: string, approve: boolean) =>
     update((d) => {
       const p = d.projects.find((x) => x.id === id)
-      if (p) p.status = approve ? 'approved' : 'rejected'
+      if (!p) return
+      p.status = approve ? 'approved' : 'rejected'
+      p.quoteDecidedBy = actor?.id
     })
+  // An admin in this client's dashboard answers quotes with their own project permission.
+  const canRespond = actor?.id === user?.id || can('canManageProjects')
 
   return (
     <>
@@ -339,6 +343,7 @@ function Projects() {
                 <h2 className="mt-1 text-lg font-bold">{p.title}</h2>
                 <p className="text-sm text-slate-500">{prop ? `${prop.address}, ${prop.suburb}` : ''}</p>
                 <p className="mt-2 text-sm text-slate-600">{p.description}</p>
+                <ProjectBy p={p} className="mt-1" />
                 <dl className="mt-4 grid grid-cols-2 gap-3 border-t border-slate-100 pt-3 text-sm">
                   <div>
                     <dt className="text-xs text-slate-500">Your budget</dt>
@@ -368,7 +373,7 @@ function Projects() {
                     </ol>
                   </div>
                 )}
-                {p.status === 'quoted' && !!p.quoteAmount && (
+                {p.status === 'quoted' && !!p.quoteAmount && canRespond && (
                   <div className="mt-4 flex gap-2 border-t border-slate-100 pt-4">
                     <button className="btn-primary" onClick={() => respond(p.id, true)}>Accept quote</button>
                     <button className="btn-ghost" onClick={() => respond(p.id, false)}>Decline</button>

@@ -5,7 +5,7 @@ import { Calendar } from '../../components/Calendar'
 import { Empty, Field, Modal, PageHeader, PhotoInput, Sep, Status, Tabs } from '../../components/ui'
 import { ProjectStatusText } from '../../components/status'
 import { ProjectProgress, RequestDetail, RequestRow, useLinkedCalendar } from '../../components/works'
-import { useLookup, useStore } from '../../lib/store'
+import { doneBy, useLookup, useStore } from '../../lib/store'
 import { REQUEST_STATUS_LABEL, type Expense, type RequestStatus } from '../../lib/types'
 import { cx, fmtDate, fmtDateTime, money, todayISO, uid } from '../../lib/utils'
 
@@ -74,14 +74,16 @@ function Overview({ unread }: { unread: number }) {
 }
 
 function Inbox() {
-  const { update, user } = useStore()
+  const { update, user, actor } = useStore()
   const a = useAssigned()
   const lk = useLookup()
   const [openReq, setOpenReq] = useState<string | null>(null)
   const mark = (id: string, patch: { read?: boolean; acknowledged?: boolean }) =>
     update((d) => {
       const m = d.inbox.find((x) => x.id === id)
-      if (m) Object.assign(m, patch)
+      if (!m) return
+      if (patch.acknowledged && !m.acknowledged) m.acknowledgedBy = actor?.id
+      Object.assign(m, patch)
     })
   return (
     <>
@@ -115,7 +117,9 @@ function Inbox() {
                       <Check size={16} /> Acknowledge
                     </button>
                   ) : m.requiresAck ? (
-                    <Status tone="green">Acknowledged</Status>
+                    <Status tone="green">
+                      {m.acknowledgedBy && m.acknowledgedBy !== m.userId ? `Acknowledged by ${lk.byName(m.acknowledgedBy)}` : 'Acknowledged'}
+                    </Status>
                   ) : (
                     !m.read && <button className="btn-ghost" onClick={() => mark(m.id, { read: true })}>Mark read</button>
                   )}
@@ -131,7 +135,7 @@ function Inbox() {
 }
 
 function Hub() {
-  const { update, pushAdminInbox, user } = useStore()
+  const { update, pushAdminInbox, user, actor } = useStore()
   const lk = useLookup()
   const a = useAssigned()
   const [tab, setTab] = useState<'live' | 'completed'>('live')
@@ -151,7 +155,7 @@ function Hub() {
       if (status === 'completed') x.completedAt = new Date().toISOString()
     })
     if (status === 'completed' && r) {
-      void pushAdminInbox(`Work order #${r.number} completed`, `${user?.name} marked “${r.title}” complete. Ready to invoice.`, { requestId: r.id })
+      void pushAdminInbox(`Work order #${r.number} completed`, `${doneBy(actor, user)} marked “${r.title}” complete. Ready to invoice.`, { requestId: r.id })
     }
   }
 
@@ -161,7 +165,7 @@ function Hub() {
       const x = d.requests.find((y) => y.id === open.id)
       if (!x) return
       x.completionPhotos.push(...photos)
-      if (note.trim()) x.notes = [x.notes, `${fmtDate(todayISO())} — ${user?.name}: ${note.trim()}`].filter(Boolean).join('\n')
+      if (note.trim()) x.notes = [x.notes, `${fmtDate(todayISO())} — ${doneBy(actor, user)}: ${note.trim()}`].filter(Boolean).join('\n')
     })
     setPhotos([])
     setNote('')
@@ -283,7 +287,7 @@ function ProviderCalendar() {
 const OPEN_FOR_EXPENSES = ['approved', 'in_progress']
 
 function Budget() {
-  const { user, update, can } = useStore()
+  const { user, actor, update, can } = useStore()
   const a = useAssigned()
   const [adding, setAdding] = useState<string | null>(null)
   const [form, setForm] = useState({ date: todayISO(), description: '', category: 'Materials' as Expense['category'], amount: '' })
@@ -297,6 +301,7 @@ function Budget() {
       d.projects.find((p) => p.id === adding)?.expenses.push({
         id: uid('e'),
         providerId: user.id,
+        createdBy: actor?.id,
         date: form.date,
         description: form.description,
         category: form.category,
@@ -383,23 +388,28 @@ export function ExpenseTable({ expenses, actions }: { expenses: Expense[]; actio
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
-          {expenses.map((e) => (
-            <tr key={e.id}>
-              <td className="td num whitespace-nowrap text-slate-600">{fmtDate(e.date)}</td>
-              <td className="td">
-                {e.description}
-                {actions && <span className="block text-xs text-slate-500">{lk.user(e.providerId)?.name}</span>}
-              </td>
-              <td className="td text-slate-600">{e.category}</td>
-              <td className="td num text-right">{money(e.amount)}</td>
-              <td className="td">
-                <Status tone={e.status === 'approved' ? 'green' : e.status === 'rejected' ? 'red' : 'orange'}>
-                  {e.status === 'submitted' ? 'Awaiting approval' : e.status === 'approved' ? 'Approved' : 'Rejected'}
-                </Status>
-              </td>
-              {actions && <td className="td text-right">{actions(e)}</td>}
-            </tr>
-          ))}
+          {expenses.map((e) => {
+            // Shown when an admin added it from the trade's dashboard.
+            const addedBy = e.createdBy && e.createdBy !== e.providerId ? `Added by ${lk.byName(e.createdBy)}` : ''
+            const meta = [actions ? lk.user(e.providerId)?.name : '', addedBy].filter(Boolean).join(' · ')
+            return (
+              <tr key={e.id}>
+                <td className="td num whitespace-nowrap text-slate-600">{fmtDate(e.date)}</td>
+                <td className="td">
+                  {e.description}
+                  {meta && <span className="block text-xs text-slate-500">{meta}</span>}
+                </td>
+                <td className="td text-slate-600">{e.category}</td>
+                <td className="td num text-right">{money(e.amount)}</td>
+                <td className="td">
+                  <Status tone={e.status === 'approved' ? 'green' : e.status === 'rejected' ? 'red' : 'orange'}>
+                    {e.status === 'submitted' ? 'Awaiting approval' : e.status === 'approved' ? 'Approved' : 'Rejected'}
+                  </Status>
+                </td>
+                {actions && <td className="td text-right">{actions(e)}</td>}
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>

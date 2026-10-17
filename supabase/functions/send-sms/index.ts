@@ -111,7 +111,13 @@ Deno.serve(async (req) => {
       const prefix = `NPM quote request P-${p.number} `
       const { count } = await db.from('sms_log').select('id', { count: 'exact', head: true }).like('message', `${prefix}%`)
       if (count) return json({ results: [] }) // already alerted
-      const results = await sendToAdmins(recipients, `${prefix}— ${p.title} (${me.name})`, 'Renovation quote request')
+      // An admin may request it from the client's dashboard: name both.
+      let who = me.name
+      if (p.client_id !== me.id) {
+        const { data: client } = await db.from('profiles').select('name').eq('id', p.client_id).maybeSingle()
+        who = `${me.name} for ${client?.name ?? 'client'}`
+      }
+      const results = await sendToAdmins(recipients, `${prefix}— ${p.title} (${who})`, 'Renovation quote request')
       return json({ results })
     }
 

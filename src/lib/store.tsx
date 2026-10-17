@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { RealtimeChannel, Session } from '@supabase/supabase-js'
 import type { AppData, InboxMessage, MaintenanceRequest, Permission, Project, Role, UserAccount } from './types'
+import { BRAND } from './brand'
 import { createSeed, DATA_VERSION } from './seed'
 import { dispatchSms } from './sms'
 import { generateInviteCode, sha256, uid } from './utils'
@@ -9,6 +10,16 @@ import { CLOUD, DEMO, DEMO_BUILD, supabase, supabaseAdapter, uploadPhoto } from 
 
 const DATA_KEY = 'npm.data.v1'
 const SESSION_KEY = 'npm.session.v1'
+const ACTING_KEY = 'npm.actingAs.v1'
+
+/**
+ * In a dashboard an admin has opened for a client or trade, an action that person's own permission
+ * would allow needs this admin permission instead (the same rule the database applies to admins).
+ */
+const ACTING_PERMISSION: Partial<Record<Permission, Permission>> = {
+  canSubmitRequests: 'canDispatchJobs',
+  canSubmitExpenses: 'canManageProjects',
+}
 
 function loadDemoData(): AppData {
   if (!DEMO_BUILD) return emptyData()
@@ -72,6 +83,17 @@ interface StoreValue {
   syncError: string | null
   /** Message for the signed-out home page, e.g. after a suspended account is signed out. */
   authNotice: string | null
+  /**
+   * Who is really signed in. The same as `user`, except inside a dashboard an admin has opened for
+   * someone else: there `user` is that client or trade and `actor` is the admin. Name `actor` in
+   * anything that records who did something.
+   */
+  actor: UserAccount | null
+  /** The client or trade whose dashboard the signed-in admin has open, if any. */
+  actingAs: UserAccount | null
+  /** Admins: open a client's or trade's dashboard, or leave it. */
+  startActingAs: (id: string) => void
+  stopActingAs: () => void
   /** Apply a mutation to a copy of the data and save it. Keep side effects out of `fn`. */
   update: (fn: (draft: AppData) => void) => void
   can: (p: Permission) => boolean
@@ -119,6 +141,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [phase, setPhase] = useState<Phase>(CLOUD ? 'loading' : 'ready')
   const [syncError, setSyncError] = useState<string | null>(null)
   const [authNotice, setAuthNotice] = useState<string | null>(null)
+  // Kept for this tab only, so a reload stays in the dashboard but a new tab starts as the admin.
+  const [actingAsId, setActingAsId] = useState<string | null>(() => {
+    try {
+      return sessionStorage.getItem(ACTING_KEY)
+    } catch {
+      return null
+    }
+  })
 
   const dataRef = useRef(data)
   const setData = useCallback((d: AppData) => {
@@ -147,6 +177,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       /* session simply won't persist */
     }
   }, [demoSessionId])
+
+  useEffect(() => {
+    try {
+      if (actingAsId) sessionStorage.setItem(ACTING_KEY, actingAsId)
+      else sessionStorage.removeItem(ACTING_KEY)
+    } catch {
+      /* the dashboard simply won't survive a reload */
+    }
+  }, [actingAsId])
 
   // ───────────── cloud sync ─────────────
 
@@ -315,6 +354,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const can = useCallback((p: Permission) => !!user?.permissions.includes(p), [user])
 
+  const actingAs = useMemo(
+    () => (user?.role === 'admin' && actingAsId ? data.users.find((u) => u.id === actingAsId && u.role !== 'admin') ?? null : null),
+    [user, actingAsId, data.users],
+  )
+  const startActingAs = useCallback((id: string) => setActingAsId(id), [])
+  const stopActingAs = useCallback(() => setActingAsId(null), [])
+
   const login = useCallback(async (email: string, password: string): Promise<AuthResult> => {
     if (supabase) {
       const { data: res, error } = await supabase.auth.signInWithPassword({ email: email.trim(), password })
@@ -395,6 +441,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   )
 
   const logout = useCallback(async () => {
+    setActingAsId(null)
     if (supabase) {
       await supabase.auth.signOut()
       return
@@ -530,6 +577,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         smsNotified: shouldSms,
         completionPhotos: [],
         notes: '',
+        createdBy: user?.id,
       }
       update((d) => {
         d.requests.unshift(req)
@@ -541,7 +589,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       return req
     },
-    [update, mergeLocal, notifyAdmins, reportError],
+    [update, mergeLocal, notifyAdmins, reportError, user],
+  )
+
+  /** The client's name, or "Admin for Client" when an admin did it from the client's dashboard. */
+  const requester = useCallback(
+    (clientId: string) => {
+      const client = dataRef.current.users.find((u) => u.id === clientId)
+      const name = client?.name ?? 'Client'
+      return user && user.id !== clientId ? `${user.name} for ${name}` : name
+    },
+    [user],
   )
 
   const requestQuote = useCallback(
@@ -557,7 +615,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         mergeLocal((d) => {
           d.projects.unshift(project)
         })
-        await pushAdminInbox(`Quote request P-${project.number}`, q.title, { projectId: project.id })
+        await pushAdminInbox(`Quote request P-${project.number}`, `${requester(q.clientId)}: ${q.title}`, { projectId: project.id })
         await invokeFunction('send-sms', { kind: 'quote_request', projectId: project.id }).catch(reportError)
         return
       }
@@ -579,13 +637,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           milestones: [],
           expenses: [],
           createdAt: new Date().toISOString(),
+          createdBy: user?.id,
         })
       })
-      const client = d0.users.find((u) => u.id === q.clientId)
-      await pushAdminInbox(`Quote request P-${number}`, `${client?.name ?? 'Client'}: ${q.title}`, { projectId: id })
-      await notifyAdmins(`NPM quote request P-${number} — ${q.title} (${client?.name ?? 'client'})`, 'Renovation quote request')
+      await pushAdminInbox(`Quote request P-${number}`, `${requester(q.clientId)}: ${q.title}`, { projectId: id })
+      await notifyAdmins(`NPM quote request P-${number} — ${q.title} (${requester(q.clientId)})`, 'Renovation quote request')
     },
-    [update, mergeLocal, pushAdminInbox, notifyAdmins, reportError],
+    [update, mergeLocal, pushAdminInbox, notifyAdmins, reportError, requester, user],
   )
 
   const assignRequest = useCallback(
@@ -711,6 +769,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     phase,
     data,
     user,
+    actor: user,
+    actingAs,
+    startActingAs,
+    stopActingAs,
     syncError,
     authNotice,
     update,
@@ -739,6 +801,27 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>
 }
 
+/**
+ * Wraps a client or trade portal that an admin has opened: inside it, `user` is that client or trade
+ * (so the portal shows exactly their dashboard) while `actor` stays the admin, who is the one doing
+ * and being recorded for everything. Outside an admin's opened dashboard it changes nothing.
+ */
+export function ActingAsProvider({ children }: { children: ReactNode }) {
+  const outer = useStore()
+  const { actingAs, user: admin, can: adminCan } = outer
+  const value = useMemo<StoreValue>(
+    () => (actingAs ? { ...outer, user: actingAs, actor: admin, can: (p: Permission) => adminCan(ACTING_PERMISSION[p] ?? p) } : outer),
+    [outer, actingAs, admin, adminCan],
+  )
+  return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>
+}
+
+/** Names who did something: the person themselves, or "Admin for Person" from a dashboard an admin opened. */
+export function doneBy(actor: UserAccount | null, user: UserAccount | null): string {
+  if (!actor || !user || actor.id === user.id) return user?.name ?? actor?.name ?? ''
+  return `${actor.name} for ${user.name}`
+}
+
 export function useStore(): StoreValue {
   const ctx = useContext(StoreContext)
   if (!ctx) throw new Error('useStore must be used inside StoreProvider')
@@ -751,6 +834,8 @@ export function useLookup() {
   return useMemo(
     () => ({
       user: (id?: string) => data.users.find((u) => u.id === id),
+      /** Name for "Lodged by"-style lines. Office staff a client or trade can't look up show as the business. */
+      byName: (id?: string) => data.users.find((u) => u.id === id)?.name ?? BRAND.name,
       property: (id?: string) => data.properties.find((p) => p.id === id),
       request: (id?: string) => data.requests.find((r) => r.id === id),
       project: (id?: string) => data.projects.find((p) => p.id === id),

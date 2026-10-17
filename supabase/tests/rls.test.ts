@@ -417,8 +417,8 @@ describe('admin', () => {
     assert.equal(d.invoices.find((x) => x.id === 'i-x')!.amount, 99.5)
     assert.deepEqual(d.smsSettings.recipients, ['+61400000000'])
     assert.equal(d.bank.bsb, '063-000')
-    // Admins can message a trade's inbox but can't read it back.
-    assert.ok(!d.inbox.some((m) => m.id === 'n-x'))
+    // Admins can message a trade's inbox and read it back (they can open the trade's dashboard).
+    assert.ok(d.inbox.some((m) => m.id === 'n-x'))
   })
 
   test('reloading produces no spurious changes', async () => {
@@ -452,5 +452,85 @@ describe('admin', () => {
     })
     const d = await fetchAll(admin)
     assert.ok(!d.projects.some((p) => p.id === 'pr-q'))
+  })
+})
+
+describe('admins acting in a client or trade dashboard', () => {
+  test('records who really created a job, quote or expense, and it cannot be changed', async () => {
+    // A client lodging their own request is recorded as them, whatever the app sends.
+    const own = await asUser<{ created_by: string }>(
+      uid.sarah,
+      `insert into requests (client_id, property_id, title, category, created_by) values ('u-client-1', 'p-1', 'Gutter', 'Handyman', 'u-admin') returning created_by`,
+    )
+    assert.equal(own.rows[0].created_by, 'u-client-1')
+    // An admin lodging one from the client's dashboard is recorded as the admin.
+    const forClient = await asUser<{ id: string; created_by: string }>(
+      uid.admin,
+      `insert into requests (client_id, property_id, title, category, created_by) values ('u-client-1', 'p-1', 'Leaking tap', 'Plumbing', 'u-client-1') returning id, created_by`,
+    )
+    assert.equal(forClient.rows[0].created_by, 'u-admin')
+    const quote = await asUser<{ created_by: string }>(uid.admin, `insert into projects (client_id, property_id, title) values ('u-client-1', 'p-1', 'Deck') returning created_by`)
+    assert.equal(quote.rows[0].created_by, 'u-admin')
+    const expense = await asUser<{ created_by: string }>(
+      uid.admin,
+      `insert into project_expenses (project_id, provider_id, date, description, category, amount) values ('pr-1', 'u-prov-3', '2030-01-02', 'Glue', 'Materials', 12) returning created_by`,
+    )
+    assert.equal(expense.rows[0].created_by, 'u-admin')
+    // Nobody signed in through the app can rewrite it afterwards.
+    const later = await asUser<{ created_by: string }>(
+      uid.admin,
+      `update requests set created_by = 'u-client-1', title = 'Leaking tap (kitchen)' where id = $1 returning created_by`,
+      [forClient.rows[0].id],
+    )
+    assert.equal(later.rows[0].created_by, 'u-admin')
+  })
+
+  test('the synced app data carries who created each record', async () => {
+    const d = await fetchAll(admin)
+    assert.ok(d.requests.some((r) => r.title === 'Leaking tap (kitchen)' && r.createdBy === 'u-admin'))
+    assert.ok(d.requests.some((r) => r.title === 'Gutter' && r.createdBy === 'u-client-1'))
+  })
+
+  test("admins can read and acknowledge a trade's inbox; other people still cannot", async () => {
+    const msgs = await asUser<{ id: string }>(uid.admin, `select id from inbox where user_id = 'u-prov-3'`)
+    assert.ok(msgs.rows.length > 0)
+    const ack = await asUser<{ acknowledged_by: string }>(
+      uid.admin,
+      `update inbox set acknowledged = true, read = true where id = $1 returning acknowledged_by`,
+      [msgs.rows[0].id],
+    )
+    assert.equal(ack.rowCount, 1)
+    // Recorded as the admin, not the trade, and the app can't say otherwise.
+    assert.equal(ack.rows[0].acknowledged_by, 'u-admin')
+    await assert.rejects(asUser(uid.admin, `update inbox set acknowledged_by = 'u-prov-3' where id = $1`, [msgs.rows[0].id]), /Only read and acknowledged/)
+    const d = await fetchAll(admin)
+    assert.equal(d.inbox.find((m) => m.id === msgs.rows[0].id)?.acknowledgedBy, 'u-admin')
+    await assert.rejects(asUser(uid.admin, `update inbox set title = 'x' where id = $1`, [msgs.rows[0].id]), /Only read and acknowledged/)
+    const other = await asUser(uid.sarah, `select id from inbox where user_id = 'u-prov-3'`)
+    assert.equal(other.rowCount, 0)
+  })
+
+  test('records who accepted or declined a quote', async () => {
+    const quoted = `insert into projects (client_id, property_id, title, status, quote_amount, quote_decided_by)
+      values ('u-client-1', 'p-1', $1, 'quoted', 5000, 'u-client-1') returning id, quote_decided_by`
+    const a = await asUser<{ id: string; quote_decided_by: string | null }>(uid.admin, quoted, ['Fence'])
+    assert.equal(a.rows[0].quote_decided_by, null)
+    // The client answers their own quote.
+    await assert.rejects(asUser(uid.sarah, `update projects set quote_decided_by = 'u-admin' where id = $1`, [a.rows[0].id]), /accept or decline/)
+    const mine = await asUser<{ quote_decided_by: string }>(uid.sarah, `update projects set status = 'approved' where id = $1 returning quote_decided_by`, [a.rows[0].id])
+    assert.equal(mine.rows[0].quote_decided_by, 'u-client-1')
+    // An admin answers one from the client's dashboard.
+    const b = await asUser<{ id: string }>(uid.admin, quoted, ['Pergola'])
+    const theirs = await asUser<{ quote_decided_by: string }>(uid.admin, `update projects set status = 'rejected' where id = $1 returning quote_decided_by`, [b.rows[0].id])
+    assert.equal(theirs.rows[0].quote_decided_by, 'u-admin')
+    // Later edits keep it.
+    const later = await asUser<{ quote_decided_by: string }>(
+      uid.admin,
+      `update projects set title = 'Pergola (cancelled)', quote_decided_by = null where id = $1 returning quote_decided_by`,
+      [b.rows[0].id],
+    )
+    assert.equal(later.rows[0].quote_decided_by, 'u-admin')
+    const d = await fetchAll(admin)
+    assert.equal(d.projects.find((p) => p.id === b.rows[0].id)?.quoteDecidedBy, 'u-admin')
   })
 })

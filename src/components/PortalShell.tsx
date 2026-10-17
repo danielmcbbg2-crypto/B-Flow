@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { ArrowUpRight, KeyRound, LogOut, type LucideIcon } from 'lucide-react'
+import { ArrowLeft, ArrowUpRight, KeyRound, LogOut, type LucideIcon } from 'lucide-react'
 import { Field, Modal } from './ui'
 import { Logo } from './Logo'
 import { useStore } from '../lib/store'
@@ -26,7 +26,7 @@ export function PortalShell({
   active: string
   children: ReactNode
 }) {
-  const { user, logout, syncError, cloud } = useStore()
+  const { user, actor, actingAs, logout, syncError, cloud } = useStore()
   const [pwOpen, setPwOpen] = useState(false)
   const navRef = useRef<HTMLElement>(null)
   // On phones the tab bar scrolls sideways; keep the current section's tab in view.
@@ -43,20 +43,30 @@ export function PortalShell({
               <p className="text-sm font-semibold leading-tight">{user?.name}</p>
               <p className="text-xs text-slate-500">{user?.company ?? user?.email}</p>
             </div>
-            <button className="btn-ghost px-2.5" aria-label="Change password" title="Change password" onClick={() => setPwOpen(true)}>
-              <KeyRound size={16} />
-            </button>
-            <button
-              className="btn-ghost"
-              aria-label="Sign out"
-              onClick={async () => {
-                await logout()
-                navigate('/')
-              }}
-            >
-              <LogOut size={16} />
-              <span className="hidden sm:inline">Sign out</span>
-            </button>
+            {actingAs ? (
+              // Arriving back in the admin portal closes the dashboard (see App).
+              <button className="btn-primary" onClick={() => navigate('/admin/accounts')}>
+                <ArrowLeft size={16} />
+                <span>Back to accounts</span>
+              </button>
+            ) : (
+              <>
+                <button className="btn-ghost px-2.5" aria-label="Change password" title="Change password" onClick={() => setPwOpen(true)}>
+                  <KeyRound size={16} />
+                </button>
+                <button
+                  className="btn-ghost"
+                  aria-label="Sign out"
+                  onClick={async () => {
+                    await logout()
+                    navigate('/')
+                  }}
+                >
+                  <LogOut size={16} />
+                  <span className="hidden sm:inline">Sign out</span>
+                </button>
+              </>
+            )}
           </div>
         </div>
         <div className="relative mx-auto max-w-7xl">
@@ -85,6 +95,12 @@ export function PortalShell({
           <div className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-white to-transparent lg:hidden" aria-hidden="true" />
         </div>
       </header>
+      {actingAs && (
+        <div className="bg-accent px-4 py-2 text-center text-sm text-slate-900" role="status">
+          You're in <strong>{actingAs.name}</strong>'s {actingAs.role === 'client' ? 'client' : 'service provider'} dashboard, signed in as{' '}
+          <strong>{actor?.name}</strong>. Anything you do here is recorded as you.
+        </div>
+      )}
       {!cloud && (
         <div className="bg-slate-900 px-4 py-1.5 text-center text-xs text-white">
           Demo mode — data is saved in this browser only and isn't shared with anyone else.

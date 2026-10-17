@@ -84,6 +84,7 @@ Sign-in links (emailed or copied) last one hour by default. To give people a ful
 - **Invite people:** Admin → Accounts → Invite account → **Create invite link**, then **Text it**, **Email it** or **Copy message** to send it yourself. Or use **Email the invite** once email delivery is set up (step 6). They open the link, press Continue, choose a password and land in their portal. Each link works once; if one expires, open the account and choose **Create new invite link**.
 - **Forgotten passwords:** Admin → Accounts → Edit → **Create password link** and send it to them. Once email delivery is set up, they can also use Sign in → "Forgot password?", or you can use "Email password link".
 - **Change your own password:** the key icon in the portal header.
+- **Open a client's or service provider's dashboard:** Admin → Accounts → click their name or **Open dashboard**. You see their portal exactly as they do and can work in it: lodge a request, ask for or answer a quote, add a property, update a job, acknowledge a work order or submit an expense. Nothing you do there is recorded as them: jobs, quotes and expenses show "Lodged by" / "Added by" your name, notes and office messages read "Your name for Their name", and acknowledged work orders and answered quotes say who did it. An orange bar across the top shows whose dashboard you're in; **Back to accounts** (or any admin tab) returns you to your own portal.
 
 ## How the data is protected
 
@@ -91,7 +92,7 @@ The rules live in the database (row-level security), so they apply even if someo
 
 - **Clients** see only their own properties, requests, projects, invoices and inbox. They can lodge requests, ask for quotes, and accept or decline a quote, but can't change prices or job details.
 - **Service providers** see only the jobs and projects assigned to them, plus the related property and client. They can update status, notes, schedule dates, completion photos and milestones, and submit expenses. They can't change anything else or approve their own expenses.
-- **Admins** see everything. Finance requires the "Manage invoices" permission, and accounts require "Edit accounts & permissions".
+- **Admins** see everything. Finance requires the "Manage invoices" permission, and accounts require "Edit accounts & permissions". Working in someone else's dashboard uses the admin's own permissions ("Dispatch & assign jobs" to lodge or update jobs, "Manage projects & quotes" for quotes, milestones and expenses). The database records the signed-in admin as the person who created each job, quote and expense, accepted or declined each quote, and acknowledged each work order; the app can't change that.
 - **SMS** can only be sent through the server function. Clients can trigger the office alert for their own new request, once. Only admins can text other numbers.
 
 Photo links use long random names that can't be guessed, but anyone who has a link can open it. Avoid photographing anything highly sensitive, such as alarm codes.

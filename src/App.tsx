@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { useStore } from './lib/store'
+import { ActingAsProvider, useStore } from './lib/store'
 import { navigate, useHashRoute } from './lib/router'
 import { PublicHome } from './pages/PublicHome'
 import { ClientPortal } from './pages/client/ClientPortal'
@@ -9,16 +9,25 @@ import { AcceptLinkScreen, SetPasswordScreen } from './components/SignInModal'
 import { LogoMark } from './components/Logo'
 
 export function App() {
-  const { user, phase, cloud } = useStore()
+  const { user, phase, cloud, actingAs, stopActingAs } = useStore()
   const [area = '', section = 'home'] = useHashRoute()
   const isPortal = area === 'client' || area === 'provider' || area === 'admin'
+  // An admin who has opened a client's or trade's dashboard may also use that portal.
+  const role = actingAs?.role ?? user?.role
+  const allowed = !!user && (area === user.role || area === role)
 
   // Portals are role-locked: signed-out users go home, others to their own portal.
   useEffect(() => {
     if (!isPortal || phase !== 'ready') return
     if (!user) navigate('/')
-    else if (user.role !== area) navigate(`/${user.role}`)
-  }, [isPortal, user, area, phase])
+    else if (!allowed) navigate(`/${role}`)
+  }, [isPortal, user, allowed, role, phase])
+
+  // Arriving in the admin portal (Back to accounts, its tabs, the browser's back button) leaves the
+  // opened dashboard. Keyed on the route alone: opening a dashboard starts it just before leaving admin.
+  useEffect(() => {
+    if (area === 'admin') stopActingAs()
+  }, [area, stopActingAs])
 
   // Before the set-password check, so a half-finished setup on this browser can't take over a new link.
   if (cloud && area.startsWith('accept')) {
@@ -34,8 +43,7 @@ export function App() {
       </div>
     )
   }
-  if (!isPortal || !user || user.role !== area) return <PublicHome />
-  if (area === 'client') return <ClientPortal section={section} />
-  if (area === 'provider') return <ProviderPortal section={section} />
-  return <AdminPortal section={section} />
+  if (!isPortal || !allowed) return <PublicHome />
+  if (area === 'admin') return <AdminPortal section={section} />
+  return <ActingAsProvider>{area === 'client' ? <ClientPortal section={section} /> : <ProviderPortal section={section} />}</ActingAsProvider>
 }
