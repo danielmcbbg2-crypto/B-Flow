@@ -34,11 +34,19 @@ update public.projects set created_by = client_id where created_by is null;
 update public.project_expenses set created_by = provider_id where created_by is null;
 
 -- An admin viewing a service provider's dashboard sees their inbox and can acknowledge work
--- orders for them (the column guard still limits changes to read / acknowledged).
+-- orders for them (the column guard still limits changes to read / acknowledged). Only service
+-- providers' inboxes: no dashboard shows anyone else's, and loading every admin's copy of every
+-- office notification would soon run into the API's row limit.
 drop policy inbox_select on public.inbox;
-create policy inbox_select on public.inbox for select to authenticated using (user_id = current_profile_id() or is_admin());
+create policy inbox_select on public.inbox for select to authenticated using (
+  user_id = current_profile_id()
+  or (is_admin() and exists (select 1 from public.profiles p where p.id = inbox.user_id and p.role = 'provider'))
+);
 drop policy inbox_update on public.inbox;
-create policy inbox_update on public.inbox for update to authenticated using (user_id = current_profile_id() or is_admin());
+create policy inbox_update on public.inbox for update to authenticated using (
+  user_id = current_profile_id()
+  or (is_admin() and exists (select 1 from public.profiles p where p.id = inbox.user_id and p.role = 'provider'))
+);
 
 -- Who acknowledged a work order, so one acknowledged by an admin from the trade's dashboard says so.
 alter table public.inbox add column acknowledged_by text references public.profiles (id) on delete set null;

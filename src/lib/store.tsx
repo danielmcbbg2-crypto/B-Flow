@@ -866,18 +866,25 @@ export function useStore(): StoreValue {
 
 /** Lookup helpers bound to the current data. */
 export function useLookup() {
-  const { data } = useStore()
+  const { data, actor } = useStore()
   return useMemo(
     () => ({
       user: (id?: string) => data.users.find((u) => u.id === id),
-      /** Name for "Lodged by"-style lines. Office staff a client or trade can't look up show as the business. */
-      byName: (id?: string) => data.users.find((u) => u.id === id)?.name ?? BRAND.name,
+      /**
+       * Name for "Lodged by"-style lines. Clients and trades see office staff as the business (live
+       * mode can't load admins' accounts for them; demo mode has them all, so this hides them too).
+       * Admins see names, including in a dashboard they've opened.
+       */
+      byName: (id?: string) => {
+        const u = data.users.find((x) => x.id === id)
+        return u && (actor?.role === 'admin' || u.role !== 'admin') ? u.name : BRAND.name
+      },
       property: (id?: string) => data.properties.find((p) => p.id === id),
       request: (id?: string) => data.requests.find((r) => r.id === id),
       project: (id?: string) => data.projects.find((p) => p.id === id),
       providers: data.users.filter((u) => u.role === 'provider' && u.status === 'active'),
       clients: data.users.filter((u) => u.role === 'client'),
     }),
-    [data],
+    [data, actor],
   )
 }

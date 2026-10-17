@@ -512,6 +512,13 @@ describe('admins acting in a client or trade dashboard', () => {
     await assert.rejects(asUser(uid.admin, `update inbox set title = 'x' where id = $1`, [msgs.rows[0].id]), /Only read and acknowledged/)
     const other = await asUser(uid.sarah, `select id from inbox where user_id = 'u-prov-3'`)
     assert.equal(other.rowCount, 0)
+    // Only trades' inboxes: not clients' or other admins' (no dashboard shows them).
+    await asUser(uid.admin, `insert into inbox (user_id, title, body) values ('u-client-1', 'For Sarah', 'x'), ('u-office', 'For Office', 'x')`)
+    const seen = await asUser<{ title: string }>(uid.admin, `select title from inbox where title in ('For Sarah', 'For Office')`)
+    assert.equal(seen.rowCount, 0)
+    const marked = await asUser(uid.admin, `update inbox set read = true where title in ('For Sarah', 'For Office')`)
+    assert.equal(marked.rowCount, 0)
+    assert.equal((await asUser(uid.sarah, `select id from inbox where title = 'For Sarah'`)).rowCount, 1)
   })
 
   test('records who last accepted or rejected a quote, and clears it when the quote is issued again', async () => {
