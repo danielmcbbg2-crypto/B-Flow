@@ -1,5 +1,6 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Field, Modal } from './ui'
+import { Logo } from './Logo'
 import { useStore } from '../lib/store'
 import { navigate } from '../lib/router'
 
@@ -103,6 +104,75 @@ export function SignInModal({ open, onClose }: { open: boolean; onClose: () => v
         </div>
       </form>
     </Modal>
+  )
+}
+
+/**
+ * Landing page for links from "Create invite link" and "Create password link". The one-time token
+ * is only used when the person presses Continue, so link previews can't use it up first. Once
+ * signed in, the store moves on to "Choose your password".
+ */
+export function AcceptLinkScreen({ tokenHash, type, purpose }: { tokenHash: string; type: string; purpose: string }) {
+  const { acceptLink, logout, phase, user, authNotice } = useStore()
+  const [state, setState] = useState<'idle' | 'busy' | 'signed-in'>('idle')
+  const [error, setError] = useState<string | null>(null)
+  const invite = purpose ? purpose === 'invite' : type === 'invite'
+  // Using the link would replace whoever is signed in on this browser (e.g. an admin checking it).
+  const otherSession = state === 'idle' && (phase === 'set-password' || (phase === 'ready' && !!user))
+
+  useEffect(() => {
+    if (state !== 'signed-in') return
+    // Leaving this route lets the app show "Choose your password".
+    if (phase === 'set-password') navigate('/')
+    else if (phase === 'ready' && authNotice) {
+      setError(authNotice)
+      setState('idle')
+    }
+  }, [state, phase, authNotice])
+
+  const go = async () => {
+    setState('busy')
+    setError(null)
+    const err = await acceptLink(tokenHash, type)
+    if (err) {
+      setError(err)
+      setState('idle')
+    } else setState('signed-in')
+  }
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
+      <div className="card w-full max-w-md space-y-5 p-6">
+        <Logo />
+        <div>
+          <h1 className="text-xl font-bold">{invite ? 'You’re invited' : 'Reset your password'}</h1>
+          <p className="mt-1 text-sm text-slate-600">
+            {invite
+              ? 'Next Phase Maintenance has set up a portal account for you. Continue to choose your password.'
+              : 'Continue to choose a new password for your Next Phase Maintenance portal.'}
+          </p>
+        </div>
+        {error && <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+        {otherSession ? (
+          <>
+            <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+              {user ? `You're signed in as ${user.name} on this browser.` : 'Another account is part-way through setup on this browser.'} This
+              link is for someone else's account: open it on their device, or sign out here first.
+            </p>
+            <button className="btn-primary w-full" onClick={() => void logout()}>
+              Sign out
+            </button>
+          </>
+        ) : (
+          <button className="btn-primary w-full" disabled={state !== 'idle' || phase === 'loading'} onClick={() => void go()}>
+            {state === 'idle' ? 'Continue' : 'Checking your link…'}
+          </button>
+        )}
+        <a href="#/" className="block text-center text-sm text-slate-500 hover:text-slate-900">
+          Go to the home page
+        </a>
+      </div>
+    </div>
   )
 }
 
