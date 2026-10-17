@@ -82,7 +82,7 @@ interface StoreValue {
   sendPasswordEmail: (email: string) => Promise<string | null>
   /** Cloud mode: finish an invite or reset by choosing a password. */
   setNewPassword: (password: string) => Promise<AuthResult>
-  /** Cloud mode: sign in with a link made by "Create invite link" / "Copy password link"; returns an error or null. */
+  /** Cloud mode: sign in with a link made by "Create invite link" / "Create password link"; returns an error or null. */
   acceptLink: (tokenHash: string, type: string) => Promise<string | null>
   logout: () => Promise<void>
   changePassword: (current: string, next: string) => Promise<string | null>

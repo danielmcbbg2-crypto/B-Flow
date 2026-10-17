@@ -81,8 +81,8 @@ Sign-in links (emailed or copied) last one hour by default. To give people a ful
 
 ### Day-to-day
 
-- **Invite people:** Admin → Accounts → Invite account → **Create invite link**, then **Text it**, **Email it** or **Copy message** to send it yourself. Or use **Email the invite** once email delivery is set up (step 6). They open the link, press Continue, choose a password and land in their portal. Each link works once; if one expires, open the account and choose **Copy new invite link**.
-- **Forgotten passwords:** Admin → Accounts → Edit → **Copy password link** and send it to them. Once email delivery is set up, they can also use Sign in → "Forgot password?", or you can use "Email password link".
+- **Invite people:** Admin → Accounts → Invite account → **Create invite link**, then **Text it**, **Email it** or **Copy message** to send it yourself. Or use **Email the invite** once email delivery is set up (step 6). They open the link, press Continue, choose a password and land in their portal. Each link works once; if one expires, open the account and choose **Create new invite link**.
+- **Forgotten passwords:** Admin → Accounts → Edit → **Create password link** and send it to them. Once email delivery is set up, they can also use Sign in → "Forgot password?", or you can use "Email password link".
 - **Change your own password:** the key icon in the portal header.
 
 ## How the data is protected
