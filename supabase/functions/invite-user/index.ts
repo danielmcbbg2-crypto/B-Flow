@@ -3,9 +3,9 @@
 //   { action: 'invite', profile: {...}, redirectTo, delivery? }  creates the profile and emails a
 //       Supabase invite link; the person chooses a password when they open it. With
 //       delivery: 'link' nothing is emailed and the link comes back for the admin to send.
-//   { action: 'link', profileId, redirectTo }  a fresh link for an existing account: a new invite
-//       link while the invite is pending (cancelling the earlier one), otherwise a link to choose
-//       a new password.
+//   { action: 'link', profileId, redirectTo }  a fresh link for an existing account: an invite link
+//       for someone added without a login or with an invite pending (cancelling any earlier one),
+//       otherwise a link to choose a new password.
 //   { action: 'delete', profileId }  removes the login and the profile.
 import { createClient } from 'npm:@supabase/supabase-js@2.49.4'
 
@@ -21,7 +21,7 @@ const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SE
 
 const MASTER_ID = 'u-admin'
 const ROLES = ['admin', 'client', 'provider']
-const PERMISSIONS = ['canSubmitRequests', 'canDispatchJobs', 'canManageInvoices', 'canEditPermissions', 'canManageProjects', 'canSubmitExpenses']
+const PERMISSIONS = ['canSubmitRequests', 'canDispatchJobs', 'canManageInvoices', 'canEditPermissions', 'canManageProjects', 'canSubmitExpenses', 'canManageStore']
 
 /**
  * A one-time link to the app's accept page, which only uses the token when the person presses
@@ -32,7 +32,7 @@ const PERMISSIONS = ['canSubmitRequests', 'canDispatchJobs', 'canManageInvoices'
  * the login is confirmed, GoTrue refuses invites (the old token was used), so it falls back to a
  * password token, as it does for everyone else. `purpose` sets the accept page's wording.
  */
-async function signInLink(email: string, hasLogin: boolean, purpose: 'invite' | 'password', redirectTo: string): Promise<string> {
+async function signInLink(email: string, hasLogin: boolean, purpose: 'invite' | 'password', redirectTo: string): Promise<{ link: string; userId: string }> {
   const generate = (type: 'invite' | 'recovery') =>
     type === 'invite'
       ? db.auth.admin.generateLink({ type: 'invite', email, options: { redirectTo } })
@@ -44,7 +44,7 @@ async function signInLink(email: string, hasLogin: boolean, purpose: 'invite' | 
   if (res.error) throw res.error
   const { hashed_token, verification_type } = res.data.properties
   const query = new URLSearchParams({ token_hash: hashed_token, type: verification_type, for: purpose })
-  return `${redirectTo.split('#')[0]}#/accept?${query}`
+  return { link: `${redirectTo.split('#')[0]}#/accept?${query}`, userId: res.data.user.id }
 }
 
 const isAppUrl = (u: unknown): u is string => typeof u === 'string' && /^https?:\/\/[^\s]+$/.test(u)
@@ -80,6 +80,8 @@ Deno.serve(async (req) => {
         trade: p.trade || null,
         permissions: (Array.isArray(p.permissions) ? p.permissions : []).filter((x: string) => PERMISSIONS.includes(x)),
         status: 'invited',
+        // Lets the database link the login created below to this account.
+        login_invited: true,
       })
       .select('id')
       .single()
@@ -88,7 +90,7 @@ Deno.serve(async (req) => {
     }
     if (byLink) {
       try {
-        return json({ id: created.id, link: await signInLink(email, false, 'invite', body.redirectTo) })
+        return json({ id: created.id, link: (await signInLink(email, false, 'invite', body.redirectTo)).link })
       } catch (e) {
         await db.from('profiles').delete().eq('id', created.id)
         return json({ error: `Couldn't create the invite link: ${(e as Error).message}` }, 400)
@@ -107,11 +109,30 @@ Deno.serve(async (req) => {
     const { data: target } = await db.from('profiles').select('id, email, auth_id, status').eq('id', body.profileId).maybeSingle()
     if (!target) return json({ error: 'Account not found' }, 404)
     if (target.status === 'suspended') return json({ error: 'This account is suspended. Reactivate it first.' }, 400)
+    if (!target.email) return json({ error: 'Add their email address and save it first.' }, 400)
     if (target.id === MASTER_ID && me.id !== MASTER_ID) return json({ error: 'Only the master admin can do this for the master admin account' }, 403)
+    // The first link creates the login: allow the database to link it to this account (and only
+    // for as long as it takes), then check that it did.
+    const firstLogin = !target.auth_id
+    if (firstLogin) {
+      const { error } = await db.from('profiles').update({ login_invited: true }).eq('id', target.id)
+      if (error) return json({ error: `Couldn't create the link: ${error.message}` }, 400)
+    }
     try {
       const purpose = target.status === 'invited' ? 'invite' : 'password'
-      return json({ link: await signInLink(target.email, !!target.auth_id, purpose, body.redirectTo) })
+      const { link, userId } = await signInLink(target.email, !!target.auth_id, purpose, body.redirectTo)
+      if (firstLogin) {
+        const { data: linked } = await db.from('profiles').select('auth_id').eq('id', target.id).maybeSingle()
+        // Auth reused a login that already existed for this email but isn't this account's (left
+        // over from a deleted account, say): don't hand out a link to it.
+        if (linked?.auth_id !== userId) {
+          await db.from('profiles').update({ login_invited: false }).eq('id', target.id).is('auth_id', null)
+          return json({ error: 'This email already has a login that isn’t linked to this account, so no link was made. Use another email, or delete that login in Supabase (Authentication → Users) and try again.' }, 409)
+        }
+      }
+      return json({ link })
     } catch (e) {
+      if (firstLogin) await db.from('profiles').update({ login_invited: false }).eq('id', target.id).is('auth_id', null)
       return json({ error: `Couldn't create the link: ${(e as Error).message}` }, 400)
     }
   }

@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { Copy, LayoutDashboard, Mail, MessageSquare, UserPlus } from 'lucide-react'
 import { Field, Modal, PageHeader, Status, Tabs } from '../../components/ui'
-import { useStore } from '../../lib/store'
+import { hasNoLogin as noLogin, useStore } from '../../lib/store'
 import { navigate } from '../../lib/router'
 import { ALL_PERMISSIONS, DEFAULT_PERMISSIONS, TRADES, type Permission, type Role, type UserAccount } from '../../lib/types'
 import { fmtDate, generateInviteCode, uid } from '../../lib/utils'
@@ -10,7 +10,8 @@ import { CLOUD } from '../../lib/supabase'
 const ROLE_LABEL: Record<Role, string> = { admin: 'Admin', client: 'Client', provider: 'Service provider' }
 const MASTER_ID = 'u-admin'
 
-type Delivery = 'email' | 'link'
+type Delivery = 'email' | 'link' | 'none'
+
 
 /** A one-time sign-in link the admin sends themselves, with copy, text and email shortcuts. */
 function ShareLink({ account, link, invite }: { account: UserAccount; link: string; invite: boolean }) {
@@ -55,7 +56,7 @@ export function Accounts() {
   const [tab, setTab] = useState<'all' | Role>('all')
   const [editing, setEditing] = useState<UserAccount | null>(null)
   const [inviting, setInviting] = useState(false)
-  const [issued, setIssued] = useState<{ account: UserAccount; code?: string; link?: string } | null>(null)
+  const [issued, setIssued] = useState<{ account: UserAccount; code?: string; link?: string; added?: boolean } | null>(null)
   const list = data.users.filter((u) => tab === 'all' || u.role === tab)
   // Clients' and trades' dashboards open here for the admin to view and work in; admins have none.
   const openDashboard = (u: UserAccount) => {
@@ -111,7 +112,7 @@ export function Accounts() {
                       {u.name}
                     </button>
                   )}
-                  <p className="text-xs text-slate-500">{u.email}</p>
+                  <p className="text-xs text-slate-500">{u.email || 'No email yet'}</p>
                   {u.company && <p className="text-xs text-slate-500">{u.company}{u.trade ? ` · ${u.trade}` : ''}</p>}
                 </td>
                 <td className="td">{ROLE_LABEL[u.role]}</td>
@@ -119,7 +120,7 @@ export function Accounts() {
                 <td className="td num text-slate-600">{u.permissions.length}/{ALL_PERMISSIONS.length}</td>
                 <td className="td">
                   <Status tone={u.status === 'active' ? 'green' : u.status === 'invited' ? 'outline' : 'red'}>
-                    {u.status === 'active' ? 'Active' : u.status === 'invited' ? 'Invite pending' : 'Suspended'}
+                    {u.status === 'active' ? 'Active' : u.status === 'invited' ? (noLogin(u) ? 'No login' : 'Invite pending') : 'Suspended'}
                   </Status>
                   {!CLOUD && u.status === 'invited' && u.inviteCode && <p className="num mt-0.5 text-xs text-slate-500">{u.inviteCode}</p>}
                 </td>
@@ -146,9 +147,14 @@ export function Accounts() {
           onClose={() => setEditing(null)}
           onGetLink={CLOUD && !(editing.id === MASTER_ID || editing.id === user?.id) ? () => getSignInLink(editing.id) : undefined}
           onSave={(a) => {
+            // Checked against the account as saved now: a link made from the open form may have
+            // created their login since it opened.
+            const saved = data.users.find((u) => u.id === a.id) ?? a
             const email = a.email.trim().toLowerCase()
-            if (data.users.some((u) => u.id !== a.id && u.email.toLowerCase() === email)) return 'Another account already uses this email.'
-            update((d) => { d.users = d.users.map((x) => (x.id === a.id ? { ...a, email: a.email.trim() } : x)) })
+            if (email && data.users.some((u) => u.id !== a.id && u.email.toLowerCase() === email)) return 'Another account already uses this email.'
+            if (!email && !noLogin(saved)) return 'Add their email address: they sign in with it.'
+            if (CLOUD && !noLogin(saved) && email !== saved.email.trim().toLowerCase()) return 'The email can’t change once they have a login.'
+            update((d) => { d.users = d.users.map((x) => (x.id === a.id ? { ...a, email: a.email.trim(), hasLogin: x.hasLogin } : x)) })
             setEditing(null)
             return null
           }}
@@ -167,8 +173,18 @@ export function Accounts() {
       {inviting && (
         <InviteForm
           onClose={() => setInviting(false)}
-          existingEmails={data.users.map((u) => u.email.toLowerCase())}
+          existingEmails={data.users.map((u) => u.email.toLowerCase()).filter(Boolean)}
           onCreate={async (a, delivery) => {
+            if (delivery === 'none') {
+              // Just the account: no login and nothing sent. Projects and jobs can be recorded against
+              // it now, and an invite sent from the account later gives them access to all of it.
+              update((d) => {
+                d.users.push({ ...a, email: a.email.trim(), status: 'invited', passwordHash: '', inviteCode: undefined, hasLogin: false })
+              })
+              setInviting(false)
+              setIssued({ account: a, added: true })
+              return null
+            }
             const res = await inviteAccount(a, delivery)
             if (res.error) return res.error
             setInviting(false)
@@ -177,7 +193,21 @@ export function Accounts() {
           }}
         />
       )}
-      <Modal open={!!issued} onClose={() => setIssued(null)} title={issued?.link ? 'Invite link ready' : 'Invite created'} width={issued?.link ? 'max-w-xl' : undefined}>
+      <Modal
+        open={!!issued}
+        onClose={() => setIssued(null)}
+        title={issued?.added ? 'Account added' : issued?.link ? 'Invite link ready' : 'Invite created'}
+        width={issued?.link ? 'max-w-xl' : undefined}
+      >
+        {issued?.added && (
+          <p className="text-sm text-slate-600">
+            <span className="font-semibold text-slate-900">{issued.account.name}</span> has been added without a login, and nothing has been sent to
+            them. You can add {issued.account.role === 'client' ? 'their properties, projects and jobs' : 'them to jobs and projects'} now (Quotes &
+            projects → New project, or Open dashboard). To give them access later, open their account,{' '}
+            {CLOUD ? 'make sure their email is there and choose “Create invite link”' : 'add their email, choose “Create invite code”, save, and send them the code'}:
+            they'll see everything already recorded for them.
+          </p>
+        )}
         {issued?.link && (
           <div className="space-y-4">
             <p className="text-sm text-slate-600">
@@ -187,7 +217,7 @@ export function Accounts() {
             <ShareLink account={issued.account} link={issued.link} invite />
           </div>
         )}
-        {issued && !issued.code && !issued.link && (
+        {issued && !issued.added && !issued.code && !issued.link && (
           <p className="text-sm text-slate-600">
             An invitation email is on its way to <span className="font-semibold text-slate-900">{issued.account.email}</span>. The link lets{' '}
             {issued.account.name} choose a password and open their portal.
@@ -240,12 +270,31 @@ function PermissionBoxes({ value, onChange, disabled }: { value: Permission[]; o
   )
 }
 
-function AccountFields({ a, set, lockRole, lockEmail }: { a: UserAccount; set: (p: Partial<UserAccount>) => void; lockRole?: boolean; lockEmail?: boolean }) {
+function AccountFields({
+  a,
+  set,
+  lockRole,
+  lockEmail,
+  emailOptional,
+}: {
+  a: UserAccount
+  set: (p: Partial<UserAccount>) => void
+  lockRole?: boolean
+  lockEmail?: boolean
+  emailOptional?: boolean
+}) {
   return (
     <>
       <Field label="Full name"><input className="input" required value={a.name} onChange={(e) => set({ name: e.target.value })} /></Field>
-      <Field label="Email">
-        <input className="input disabled:bg-slate-50 disabled:text-slate-500" type="email" required disabled={lockEmail} value={a.email} onChange={(e) => set({ email: e.target.value })} />
+      <Field label={emailOptional ? 'Email (needed to invite them)' : 'Email'}>
+        <input
+          className="input disabled:bg-slate-50 disabled:text-slate-500"
+          type="email"
+          required={!emailOptional}
+          disabled={lockEmail}
+          value={a.email}
+          onChange={(e) => set({ email: e.target.value })}
+        />
       </Field>
       <Field label="Mobile"><input className="input num" type="tel" value={a.phone} onChange={(e) => set({ phone: e.target.value })} /></Field>
       <Field label="Role">
@@ -289,13 +338,19 @@ function AccountEditor({
   onDelete?: () => Promise<string | null>
   onGetLink?: () => Promise<{ error?: string; link?: string }>
 }) {
-  const { sendPasswordEmail } = useStore()
+  const { sendPasswordEmail, data } = useStore()
   const [a, setA] = useState(account)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [shared, setShared] = useState<string | null>(null)
   const [linkBusy, setLinkBusy] = useState(false)
-  // Based on the saved account, not unsaved edits in this form.
-  const invitePending = account.status === 'invited'
+  // Based on the account as saved now (a link made here can create their login), not on unsaved
+  // edits in this form.
+  const saved = data.users.find((u) => u.id === account.id) ?? account
+  const invitePending = saved.status === 'invited'
+  const withoutLogin = noLogin(saved)
+  const emailUnsaved = a.email.trim() !== saved.email
+  // Reactivating puts an account that never signed in back to waiting for its invite.
+  const reactivateAs = account.status === 'invited' || (CLOUD ? saved.hasLogin === false : !saved.passwordHash) ? 'invited' : 'active'
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const set = (patch: Partial<UserAccount>) => setA({ ...a, ...patch })
   return (
@@ -305,7 +360,8 @@ function AccountEditor({
           const err = onSave(a)
           if (err) setMsg({ ok: false, text: err })
         }}>
-        <AccountFields a={a} set={set} lockRole={locked} lockEmail={CLOUD} />
+        {/* Live mode ties the login to the email, so it can only change before the first invite. */}
+        <AccountFields a={a} set={set} lockRole={locked} lockEmail={CLOUD && !withoutLogin} emailOptional={withoutLogin} />
         <div className="sm:col-span-2">
           <span className="label">Permissions</span>
           <PermissionBoxes value={a.permissions} onChange={(permissions) => set({ permissions })} disabled={locked} />
@@ -313,13 +369,14 @@ function AccountEditor({
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-4 sm:col-span-2">
           <div className="flex flex-wrap gap-2">
-            {!locked && a.status !== 'invited' && (
-              <button type="button" className="btn-ghost" onClick={() => set({ status: a.status === 'active' ? 'suspended' : 'active' })}>
-                {a.status === 'active' ? 'Suspend' : 'Reactivate'}
+            {!locked && (
+              <button type="button" className="btn-ghost" onClick={() => set({ status: a.status === 'suspended' ? reactivateAs : 'suspended' })}>
+                {a.status === 'suspended' ? 'Reactivate' : 'Suspend'}
               </button>
             )}
             {!locked &&
               (CLOUD ? (
+                !withoutLogin && (
                 <button
                   type="button"
                   className="btn-ghost"
@@ -330,26 +387,32 @@ function AccountEditor({
                 >
                   Email password link
                 </button>
+                )
               ) : (
                 <button type="button" className="btn-ghost" onClick={() => set({ status: 'invited', passwordHash: '', inviteCode: generateInviteCode() })}>
-                  Reset & re-invite
+                  {withoutLogin ? 'Create invite code' : 'Reset & re-invite'}
                 </button>
               ))}
-            {onGetLink && account.status !== 'suspended' && (
+            {onGetLink && saved.status !== 'suspended' && (
               <button
                 type="button"
                 className="btn-ghost"
-                disabled={linkBusy}
+                disabled={linkBusy || (withoutLogin && (!saved.email || emailUnsaved))}
+                title={withoutLogin && (!saved.email || emailUnsaved) ? 'Save their email first' : undefined}
                 onClick={async () => {
                   setLinkBusy(true)
                   setMsg(null)
                   const res = await onGetLink()
                   setLinkBusy(false)
-                  if (res.link) setShared(res.link)
-                  else setMsg({ ok: false, text: res.error ?? 'Could not create the link.' })
+                  if (res.link) {
+                    // The login now exists and is tied to the saved email.
+                    setA((cur) => ({ ...cur, email: saved.email, hasLogin: true }))
+                    setShared(res.link)
+                  } else setMsg({ ok: false, text: res.error ?? 'Could not create the link.' })
                 }}
               >
-                <Copy size={15} /> {linkBusy ? 'Creating link…' : invitePending ? 'Create new invite link' : 'Create password link'}
+                <Copy size={15} />{' '}
+                {linkBusy ? 'Creating link…' : withoutLogin ? 'Create invite link' : invitePending ? 'Create new invite link' : 'Create password link'}
               </button>
             )}
             {onDelete &&
@@ -382,6 +445,17 @@ function AccountEditor({
           <p className="text-sm text-red-700 sm:col-span-2">
             Delete {account.name}'s account and login? This can't be undone. Clients with jobs or invoices, and admins who have done work
             for other people, can't be deleted; suspend them instead. A service provider's jobs are kept, unassigned.
+          </p>
+        )}
+        {withoutLogin && (
+          <p className="text-sm text-slate-600 sm:col-span-2">
+            No login yet: nothing has been sent to {account.name}.{' '}
+            {CLOUD
+              ? saved.email && !emailUnsaved
+                ? 'To give them access, choose “Create invite link” and send it to them.'
+                : 'To give them access, add their email and save, then open their account again and choose “Create invite link”.'
+              : 'To give them access, choose “Create invite code”, save, and send them the code.'}{' '}
+            They'll see everything already recorded for them.
           </p>
         )}
         {msg && <p className={`text-sm sm:col-span-2 ${msg.ok ? 'text-emerald-700' : 'text-red-600'}`}>{msg.text}</p>}
@@ -421,26 +495,32 @@ function InviteForm({
     inviteCode: generateInviteCode(),
   })
   const set = (patch: Partial<UserAccount>) => setA({ ...a, ...patch })
-  const dupe = existingEmails.includes(a.email.trim().toLowerCase())
+  const dupe = !!a.email.trim() && existingEmails.includes(a.email.trim().toLowerCase())
   return (
-    <Modal open onClose={onClose} title="Invite a new account" width="max-w-2xl">
+    <Modal open onClose={onClose} title="Add an account" width="max-w-2xl">
       <form
         className="grid gap-4 sm:grid-cols-2"
         onSubmit={async (e) => {
           e.preventDefault()
           if (dupe) return
+          if (delivery.current === 'none' && a.role === 'admin') return setError('Admins need a login: send them an invite instead.')
+          if (delivery.current !== 'none' && !a.email.trim()) return setError('Add their email to send an invite, or choose “Add without login”.')
           setBusy(delivery.current)
           setError(await onCreate({ ...a, email: a.email.trim() }, delivery.current))
           setBusy(null)
         }}
       >
-        <AccountFields a={a} set={set} />
+        <AccountFields a={a} set={set} emailOptional />
         {dupe && <p className="text-sm text-red-600 sm:col-span-2">An account with this email already exists.</p>}
         <div className="sm:col-span-2">
           <span className="label">Permissions</span>
           <PermissionBoxes value={a.permissions} onChange={(permissions) => set({ permissions })} />
         </div>
         {error && <p className="text-sm text-red-600 sm:col-span-2">{error}</p>}
+        <p className="text-xs text-slate-500 sm:col-span-2">
+          Not ready to give them access? “Add without login” sets up a client or service provider so you can record their properties, projects and
+          jobs now; invite them from their account whenever you like.
+        </p>
         {/* Reversed so "Create invite link" comes first in the form and is what Enter submits. */}
         <div className="flex flex-row-reverse flex-wrap items-center justify-start gap-2 sm:col-span-2">
           {CLOUD ? (
@@ -453,7 +533,15 @@ function InviteForm({
               </button>
             </>
           ) : (
-            <button className="btn-primary" disabled={dupe || !!busy}>{busy ? 'Creating…' : 'Create invite'}</button>
+            <button className="btn-primary" disabled={dupe || !!busy} onClick={() => (delivery.current = 'link')}>
+              {busy ? 'Creating…' : 'Create invite'}
+            </button>
+          )}
+          {/* Last, so Enter still sends an invite; shown at the left. */}
+          {a.role !== 'admin' && (
+            <button className="btn-ghost mr-auto" disabled={dupe || !!busy} onClick={() => (delivery.current = 'none')}>
+              <UserPlus size={15} /> Add without login
+            </button>
           )}
         </div>
       </form>

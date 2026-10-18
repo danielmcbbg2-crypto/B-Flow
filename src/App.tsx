@@ -7,6 +7,7 @@ import { ProviderPortal } from './pages/provider/ProviderPortal'
 import { AdminPortal } from './pages/admin/AdminPortal'
 import { AcceptLinkScreen, SetPasswordScreen } from './components/SignInModal'
 import { LogoMark } from './components/Logo'
+import { StorePage } from './pages/store/Shop'
 
 export function App() {
   const { user, phase, cloud, actingAs, stopActingAs } = useStore()
@@ -35,6 +36,8 @@ export function App() {
     return <AcceptLinkScreen tokenHash={q.get('token_hash') ?? ''} type={q.get('type') ?? ''} purpose={q.get('for') ?? ''} />
   }
   if (phase === 'set-password') return <SetPasswordScreen />
+  // The shop is open to everyone, signed in or not.
+  if (area === 'store') return <StorePage />
   if (isPortal && phase === 'loading') {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-3 text-sm text-slate-500">

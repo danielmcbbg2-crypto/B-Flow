@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { BellRing, Send } from 'lucide-react'
 import { Empty, Field, Modal, PageHeader, Tabs } from '../../components/ui'
 import { RequestDetail, RequestRow } from '../../components/works'
-import { useLookup, useStore } from '../../lib/store'
+import { hasNoLogin, useLookup, useStore } from '../../lib/store'
 import { REQUEST_STATUS_LABEL, type MaintenanceRequest, type RequestStatus } from '../../lib/types'
 import { todayISO } from '../../lib/utils'
 
@@ -153,17 +153,17 @@ function AssignForm({ r, onClose }: { r: MaintenanceRequest; onClose: () => void
           <span className="font-semibold text-slate-900">{r.title}</span> · {r.category}
         </p>
         {lk.providers.length === 0 ? (
-          <p className="text-sm text-slate-500">No active service providers. Invite one from Accounts.</p>
+          <p className="text-sm text-slate-500">No service providers yet. Add one from Accounts.</p>
         ) : (
           <Field label="Service provider">
             <select className="input" value={providerId} onChange={(e) => setProviderId(e.target.value)} required>
               {matching.length > 0 && (
                 <optgroup label={`${r.category} trades`}>
-                  {matching.map((p) => <option key={p.id} value={p.id}>{p.name}{p.company ? ` — ${p.company}` : ''}</option>)}
+                  {matching.map((p) => <option key={p.id} value={p.id}>{p.name}{p.company ? ` — ${p.company}` : ''}{hasNoLogin(p) ? ' (no login)' : ''}</option>)}
                 </optgroup>
               )}
               <optgroup label="Other trades">
-                {others.map((p) => <option key={p.id} value={p.id}>{p.name}{p.company ? ` — ${p.company}` : ''}{p.trade ? ` (${p.trade})` : ''}</option>)}
+                {others.map((p) => <option key={p.id} value={p.id}>{p.name}{p.company ? ` — ${p.company}` : ''}{p.trade ? ` (${p.trade})` : ''}{hasNoLogin(p) ? ' (no login)' : ''}</option>)}
               </optgroup>
             </select>
           </Field>
@@ -175,7 +175,9 @@ function AssignForm({ r, onClose }: { r: MaintenanceRequest; onClose: () => void
           <input type="checkbox" className="h-4 w-4 accent-slate-900" checked={sms} onChange={(e) => setSms(e.target.checked)} />
           SMS the provider{chosen?.phone ? <span className="num text-slate-500"> ({chosen.phone})</span> : <span className="text-slate-500"> (no phone on file)</span>}
         </label>
-        <p className="text-xs text-slate-500">The provider also gets a work order in their Inbox to acknowledge.</p>
+        <p className="text-xs text-slate-500">
+          The provider also gets a work order in their Inbox to acknowledge{chosen && hasNoLogin(chosen) ? ', which they’ll see once you invite them from Accounts' : ''}.
+        </p>
         <div className="flex justify-end">
           <button className="btn-accent" disabled={busy || !providerId}><Send size={16} /> {busy ? 'Dispatching…' : 'Dispatch'}</button>
         </div>

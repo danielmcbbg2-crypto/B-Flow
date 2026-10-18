@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react'
-import { Building2, ClipboardPlus, FolderKanban, Home, Wrench, CheckCircle2, Plus, Pencil } from 'lucide-react'
+import { Building2, ClipboardPlus, FolderKanban, Home, Wrench, CheckCircle2, Plus, Pencil, ShoppingBag } from 'lucide-react'
 import { GridTile, PortalShell, type NavItem } from '../../components/PortalShell'
 import { Calendar } from '../../components/Calendar'
 import { Empty, Field, Modal, PageHeader, PhotoInput, Sep, Tabs } from '../../components/ui'
@@ -7,6 +7,7 @@ import { ProjectStatusText } from '../../components/status'
 import { ProjectBy, ProjectProgress, RequestDetail, RequestRow, useLinkedCalendar } from '../../components/works'
 import { stampQuoteDecision, useLookup, useStore } from '../../lib/store'
 import { navigate } from '../../lib/router'
+import { PortalStore } from '../store/Shop'
 import { TRADES, type Property, type Trade } from '../../lib/types'
 import { fmtDate, money, uid } from '../../lib/utils'
 
@@ -16,6 +17,7 @@ const NAV: NavItem[] = [
   { key: 'hub', label: 'Maintenance Hub', icon: Wrench },
   { key: 'projects', label: 'Projects & quotes', icon: FolderKanban },
   { key: 'properties', label: 'Properties', icon: Building2 },
+  { key: 'store', label: 'Store', icon: ShoppingBag },
 ]
 
 export function ClientPortal({ section }: { section: string }) {
@@ -29,6 +31,8 @@ export function ClientPortal({ section }: { section: string }) {
         <Projects />
       ) : section === 'properties' ? (
         <Properties />
+      ) : section === 'store' ? (
+        <PortalStore />
       ) : (
         <Overview />
       )}

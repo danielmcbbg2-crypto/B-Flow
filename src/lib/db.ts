@@ -12,11 +12,14 @@ import type {
   InboxMessage,
   MaintenanceRequest,
   Milestone,
+  OrderItem,
+  Product,
   Project,
   Property,
   QuickBooksInvoice,
   SmsNotification,
   SmsSettings,
+  StoreOrder,
   UserAccount,
 } from './types'
 import { DATA_VERSION } from './seed'
@@ -34,6 +37,12 @@ export const TABLES = [
   'inbox',
   'sms_log',
   'settings',
+  'products',
+  'product_trade_prices',
+  'product_sources',
+  'orders',
+  'order_items',
+  'order_notes',
 ] as const
 export type TableName = (typeof TABLES)[number]
 
@@ -65,10 +74,10 @@ export const DEFAULT_SMS: SmsSettings = {
 
 // ───────────── to rows ─────────────
 
-const profileRow = (u: UserAccount): Row => ({
+export const profileRow = (u: UserAccount): Row => ({
   id: u.id,
   name: u.name,
-  email: u.email,
+  email: u.email.trim() || null,
   role: u.role,
   phone: u.phone,
   company: nul(u.company),
@@ -78,7 +87,7 @@ const profileRow = (u: UserAccount): Row => ({
   created_at: u.createdAt,
 })
 
-const propertyRow = (p: Property): Row => ({
+export const propertyRow = (p: Property): Row => ({
   id: p.id,
   client_id: p.clientId,
   address: p.address,
@@ -195,6 +204,47 @@ const settingsRow = (d: AppData): Row => ({
   bank: d.bank,
 })
 
+const productRow = (p: Product): Row => ({
+  id: p.id,
+  title: p.title,
+  description: p.description,
+  category: p.category,
+  brand: p.brand,
+  sku: p.sku,
+  price: p.price,
+  images: p.images,
+  status: p.status,
+  stock: p.stock,
+  created_by: nul(p.createdBy),
+  created_at: p.createdAt,
+})
+
+const orderRow = (o: StoreOrder): Row => ({
+  id: o.id,
+  number: o.number,
+  customer_id: nul(o.customerId),
+  name: o.name,
+  email: o.email,
+  phone: o.phone,
+  delivery: o.delivery,
+  address: o.address,
+  notes: o.notes,
+  trade: o.trade,
+  total: o.total,
+  status: o.status,
+  created_at: o.createdAt,
+})
+
+const orderItemRow = (orderId: string, i: OrderItem): Row => ({
+  id: i.id,
+  order_id: orderId,
+  product_id: nul(i.productId),
+  title: i.title,
+  sku: i.sku,
+  unit_price: i.unitPrice,
+  qty: i.qty,
+})
+
 interface Spec {
   table: TableName
   rows: (d: AppData) => Row[]
@@ -216,6 +266,24 @@ const SPECS: Spec[] = [
   { table: 'inbox', rows: (d) => d.inbox.map(inboxRow), readonly: ['acknowledged_by'] },
   { table: 'sms_log', rows: (d) => d.sms.map(smsRow) },
   { table: 'settings', rows: (d) => [settingsRow(d)] },
+  { table: 'products', rows: (d) => d.products.map(productRow), readonly: ['created_by'] },
+  // Keyed by the product's id. Only store managers change these.
+  {
+    table: 'product_trade_prices',
+    rows: (d) => d.products.filter((p) => p.tradePrice !== undefined).map((p) => ({ id: p.id, price: p.tradePrice })),
+  },
+  {
+    table: 'product_sources',
+    rows: (d) =>
+      d.products
+        .filter((p) => p.source)
+        .map((p) => ({ id: p.id, supplier: p.source!.supplier, source_url: p.source!.url, cost: nul(p.source!.cost), notes: p.source!.notes })),
+  },
+  // Orders are placed by the database (place_order); store managers only change the status, and
+  // keep their notes in order_notes (keyed by the order's id), which customers can't read.
+  { table: 'orders', rows: (d) => d.orders.map(orderRow), readonly: ['number'] },
+  { table: 'order_items', rows: (d) => d.orders.flatMap((o) => o.items.map((i) => orderItemRow(o.id, i))) },
+  { table: 'order_notes', rows: (d) => d.orders.filter((o) => o.adminNotes).map((o) => ({ id: o.id, notes: o.adminNotes })) },
 ]
 
 const strip = (row: Row, cols: string[] = []) => {
@@ -265,7 +333,7 @@ export async function applyOps(db: DbAdapter, ops: Op[]): Promise<void> {
 export const userFromRow = (r: Row): UserAccount => ({
   id: r.id as string,
   name: r.name as string,
-  email: r.email as string,
+  email: (r.email as string | null) ?? '',
   role: r.role as UserAccount['role'],
   phone: (r.phone as string) ?? '',
   company: opt(r.company as string | null),
@@ -274,6 +342,7 @@ export const userFromRow = (r: Row): UserAccount => ({
   createdAt: r.created_at as string,
   status: r.status as UserAccount['status'],
   passwordHash: '',
+  hasLogin: r.has_login as boolean,
 })
 
 const propertyFromRow = (r: Row): Property => ({
@@ -386,10 +455,71 @@ const smsFromRow = (r: Row): SmsNotification => ({
 const newestFirst = (k: string) => (a: Row, b: Row) => String(b[k]).localeCompare(String(a[k]))
 
 /** Loads everything the signed-in person is allowed to see. */
+export const productsFromRows = (products: Row[], tradePrices: Row[] = [], sources: Row[] = []): Product[] => {
+  const trade = new Map(tradePrices.map((r) => [r.id as string, num(r.price)]))
+  const source = new Map(sources.map((r) => [r.id as string, r]))
+  return products
+    .sort((a, b) => String(a.title).localeCompare(String(b.title)))
+    .map((r) => {
+      const s = source.get(r.id as string)
+      return {
+        id: r.id as string,
+        title: r.title as string,
+        description: r.description as string,
+        category: r.category as string,
+        brand: r.brand as string,
+        sku: r.sku as string,
+        price: num(r.price),
+        tradePrice: trade.get(r.id as string),
+        images: (r.images as string[]) ?? [],
+        status: r.status as Product['status'],
+        stock: r.stock as Product['stock'],
+        source: s
+          ? { supplier: s.supplier as string, url: s.source_url as string, cost: s.cost === null ? undefined : num(s.cost), notes: s.notes as string }
+          : undefined,
+        createdBy: opt(r.created_by as string | null),
+        createdAt: r.created_at as string,
+      }
+    })
+}
+
+const ordersFromRows = (orders: Row[], items: Row[], notes: Row[]): StoreOrder[] => {
+  const noteFor = new Map(notes.map((r) => [r.id as string, r.notes as string]))
+  const byOrder = new Map<string, OrderItem[]>()
+  for (const i of items) {
+    const list = byOrder.get(i.order_id as string) ?? []
+    list.push({
+      id: i.id as string,
+      productId: opt(i.product_id as string | null),
+      title: i.title as string,
+      sku: i.sku as string,
+      unitPrice: num(i.unit_price),
+      qty: i.qty as number,
+    })
+    byOrder.set(i.order_id as string, list)
+  }
+  return orders.sort(newestFirst('created_at')).map((r) => ({
+    id: r.id as string,
+    number: r.number as number,
+    customerId: opt(r.customer_id as string | null),
+    name: r.name as string,
+    email: r.email as string,
+    phone: r.phone as string,
+    delivery: r.delivery as StoreOrder['delivery'],
+    address: r.address as string,
+    notes: r.notes as string,
+    trade: r.trade as boolean,
+    total: num(r.total),
+    status: r.status as StoreOrder['status'],
+    adminNotes: noteFor.get(r.id as string) ?? '',
+    createdAt: r.created_at as string,
+    items: (byOrder.get(r.id as string) ?? []).sort((a, b) => a.title.localeCompare(b.title)),
+  }))
+}
+
 export async function fetchAll(db: DbAdapter): Promise<AppData> {
-  const [profiles, properties, projects, requests, milestones, expenses, invoices, inbox, sms, settings] = await Promise.all(
-    TABLES.map((t) => db.select(t)),
-  )
+  const [profiles, properties, projects, requests, milestones, expenses, invoices, inbox, sms, settings, products, tradePrices, sources, orders, orderItems, orderNotes] =
+    await Promise.all(TABLES.map((t) => db.select(t)))
   const byProject = (rows: Row[]) => {
     const m = new Map<string, Row[]>()
     for (const r of rows) m.set(r.project_id as string, [...(m.get(r.project_id as string) ?? []), r])
@@ -409,6 +539,8 @@ export async function fetchAll(db: DbAdapter): Promise<AppData> {
     inbox: inbox.sort(newestFirst('created_at')).map(inboxFromRow),
     smsSettings: { ...DEFAULT_SMS, ...(s?.sms ?? {}) },
     bank: s?.bank ?? { accountName: 'Next Phase Maintenance', bsb: '', accountNumber: '' },
+    products: productsFromRows(products, tradePrices, sources),
+    orders: ordersFromRows(orders, orderItems, orderNotes),
   }
 }
 
@@ -424,5 +556,7 @@ export function emptyData(): AppData {
     inbox: [],
     smsSettings: DEFAULT_SMS,
     bank: { accountName: 'Next Phase Maintenance', bsb: '', accountNumber: '' },
+    products: [],
+    orders: [],
   }
 }

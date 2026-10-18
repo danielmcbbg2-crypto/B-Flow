@@ -90,6 +90,9 @@ export function PublicHome() {
                 {label}
               </a>
             ))}
+            <a href="#/store" className="font-semibold hover:text-accent-ink">
+              Shop
+            </a>
           </nav>
           <div className="flex items-center gap-2">
             {user ? (
@@ -129,6 +132,9 @@ export function PublicHome() {
                 {label}
               </a>
             ))}
+            <a href="#/store" className="block py-3.5 text-base font-semibold text-slate-900 hover:text-accent-ink">
+              Shop
+            </a>
           </nav>
         </div>
       </header>
@@ -233,6 +239,20 @@ export function PublicHome() {
               </li>
             ))}
           </ol>
+        </div>
+      </section>
+
+      <section className="border-t border-slate-200 bg-slate-900 text-white">
+        <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-14 sm:px-6 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 className="text-2xl font-bold sm:text-[28px]">Shop bathroom & kitchen fixtures</h2>
+            <p className="mt-3 max-w-xl text-base font-light leading-[1.8] text-white/80">
+              Vanities, shower screens, tapware and more, from the brands we install. Order online; we confirm, invoice and deliver or fit.
+            </p>
+          </div>
+          <a href="#/store" className="btn-accent shrink-0 px-7 py-3.5 text-base font-normal">
+            Visit the shop <ArrowRight size={16} />
+          </a>
         </div>
       </section>
 

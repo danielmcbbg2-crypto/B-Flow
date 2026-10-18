@@ -7,6 +7,7 @@ export type Permission =
   | 'canEditPermissions'
   | 'canManageProjects'
   | 'canSubmitExpenses'
+  | 'canManageStore'
 
 export const ALL_PERMISSIONS: { key: Permission; label: string }[] = [
   { key: 'canSubmitRequests', label: 'Submit maintenance requests' },
@@ -15,10 +16,11 @@ export const ALL_PERMISSIONS: { key: Permission; label: string }[] = [
   { key: 'canEditPermissions', label: 'Edit accounts & permissions' },
   { key: 'canManageProjects', label: 'Manage projects & quotes' },
   { key: 'canSubmitExpenses', label: 'Submit project expenses' },
+  { key: 'canManageStore', label: 'Manage store & orders' },
 ]
 
 export const DEFAULT_PERMISSIONS: Record<Role, Permission[]> = {
-  admin: ['canSubmitRequests', 'canDispatchJobs', 'canManageInvoices', 'canEditPermissions', 'canManageProjects', 'canSubmitExpenses'],
+  admin: ['canSubmitRequests', 'canDispatchJobs', 'canManageInvoices', 'canEditPermissions', 'canManageProjects', 'canSubmitExpenses', 'canManageStore'],
   client: ['canSubmitRequests'],
   provider: ['canSubmitExpenses'],
 }
@@ -26,6 +28,7 @@ export const DEFAULT_PERMISSIONS: Record<Role, Permission[]> = {
 export interface UserAccount {
   id: string
   name: string
+  /** Empty for a client or trade added without a login and no email yet. */
   email: string
   role: Role
   phone: string
@@ -37,6 +40,8 @@ export interface UserAccount {
   /** SHA-256 hex of password. Empty while an invite is pending. */
   passwordHash: string
   inviteCode?: string
+  /** Live mode: whether a login exists yet (it's created by the first invite). */
+  hasLogin?: boolean
 }
 
 export interface PaintColors {
@@ -217,6 +222,120 @@ export interface InboxMessage {
   projectId?: string
 }
 
+export const STORE_CATEGORIES = [
+  'Vanities',
+  'Shower screens',
+  'Tapware',
+  'Basins',
+  'Toilets',
+  'Baths',
+  'Mirrors & cabinets',
+  'Accessories',
+  'Hardware',
+  'Other',
+] as const
+
+export const STOCK_LABEL: Record<Product['stock'], string> = {
+  in_stock: 'In stock',
+  to_order: 'Made to order',
+  out_of_stock: 'Out of stock',
+}
+
+export interface Product {
+  id: string
+  title: string
+  description: string
+  category: string
+  brand: string
+  sku: string
+  /** Retail price, inc. GST. */
+  price: number
+  /** Price for signed-in service providers, when set. Only they and store managers can see it. */
+  tradePrice?: number
+  /** Public image links (uploaded photos). */
+  images: string[]
+  status: 'draft' | 'published' | 'archived'
+  stock: 'in_stock' | 'to_order' | 'out_of_stock'
+  /** Store managers only: where it comes from. */
+  source?: ProductSource
+  createdBy?: string
+  createdAt: string
+}
+
+export interface ProductSource {
+  supplier: string
+  url: string
+  /** What it costs the business, inc. GST. */
+  cost?: number
+  notes: string
+}
+
+export interface OrderItem {
+  id: string
+  productId?: string
+  title: string
+  sku: string
+  unitPrice: number
+  qty: number
+}
+
+export type OrderStatus = 'new' | 'confirmed' | 'paid' | 'fulfilled' | 'cancelled'
+
+export const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
+  new: 'New',
+  confirmed: 'Confirmed: awaiting payment',
+  paid: 'Paid',
+  fulfilled: 'Collected / delivered',
+  cancelled: 'Cancelled',
+}
+
+export interface StoreOrder {
+  id: string
+  number: number
+  /** The signed-in client or service provider who ordered; empty for a visitor. */
+  customerId?: string
+  name: string
+  email: string
+  phone: string
+  delivery: 'pickup' | 'delivery'
+  address: string
+  notes: string
+  /** Priced at trade. */
+  trade: boolean
+  total: number
+  status: OrderStatus
+  /** Store managers only. */
+  adminNotes: string
+  createdAt: string
+  items: OrderItem[]
+}
+
+/** A product the AI assistant found on the web. */
+export interface FoundProduct {
+  name: string
+  brand: string
+  supplier: string
+  url: string
+  /** As shown on the page, e.g. "$1,249 inc. GST"; empty if not shown. */
+  price: string
+  category: string
+  summary: string
+}
+
+/** A listing the AI assistant drafted for the admin to review. */
+export interface DraftListing {
+  title: string
+  description: string
+  specs: string[]
+  category: string
+  brand: string
+  sku: string
+  /** Retail price as shown, e.g. "1249.00"; empty if none. */
+  suggested_price: string
+  /** Things to check before publishing. */
+  notes: string
+}
+
 export interface AppData {
   version: number
   users: UserAccount[]
@@ -228,4 +347,6 @@ export interface AppData {
   smsSettings: SmsSettings
   bank: BankDetails
   inbox: InboxMessage[]
+  products: Product[]
+  orders: StoreOrder[]
 }
