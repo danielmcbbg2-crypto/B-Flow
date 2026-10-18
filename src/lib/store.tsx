@@ -77,6 +77,9 @@ async function invokeFunction<T = unknown>(name: string, body: Record<string, un
     // `code` lets the screen react to a known case (e.g. the AI assistant isn't set up yet).
     throw Object.assign(new Error(message), { code })
   }
+  // Slow functions (the AI assistant) send their status before they finish, so report failures here.
+  const failed = data as { error?: string; code?: string } | null
+  if (failed?.error) throw Object.assign(new Error(failed.error), { code: failed.code })
   return data as T
 }
 
@@ -823,9 +826,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const loadCatalog = useCallback(async (): Promise<Product[]> => {
     if (supabase) {
-      const { data: rows, error } = await supabase.from('products').select('*').eq('status', 'published')
-      if (error) throw new Error(error.message)
-      return productsFromRows(rows ?? [])
+      const rows = []
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await supabase.from('products').select('*').eq('status', 'published').order('id').range(from, from + 999)
+        if (error) throw new Error(error.message)
+        rows.push(...(data ?? []))
+        if (!data || data.length < 1000) return productsFromRows(rows)
+      }
     }
     return dataRef.current.products.filter((p) => p.status === 'published')
   }, [])
@@ -854,6 +861,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (o.phone.replace(/\D/g, '').length < 8) throw new Error('Enter a phone number we can reach you on')
       if (o.delivery === 'delivery' && !o.address.trim()) throw new Error('Enter the delivery address')
       if (o.items.length === 0) throw new Error('Your cart is empty')
+      if (o.items.length > 30) throw new Error('Up to 30 different products per order. Please split it into two orders.')
       const trade = user?.role === 'provider' && user.status === 'active'
       const unavailable = o.items
         .map((i) => ({ i, p: d0.products.find((p) => p.id === i.productId) }))
@@ -1095,6 +1103,11 @@ export function hasNoLogin(u: UserAccount): boolean {
   return u.status === 'invited' && (CLOUD ? u.hasLogin === false : !u.inviteCode)
 }
 
+/** Has never had a login, whatever the account's status (e.g. one suspended before it was invited). */
+export function lacksLogin(u: UserAccount): boolean {
+  return CLOUD ? u.hasLogin === false : !u.passwordHash && !u.inviteCode
+}
+
 /** Names who did something: the person themselves, or "Admin for Person" from a dashboard an admin opened. */
 export function doneBy(actor: UserAccount | null, user: UserAccount | null): string {
   if (!actor || !user || actor.id === user.id) return user?.name ?? actor?.name ?? ''
@@ -1140,8 +1153,9 @@ export function useLookup() {
       property: (id?: string) => data.properties.find((p) => p.id === id),
       request: (id?: string) => data.requests.find((r) => r.id === id),
       project: (id?: string) => data.projects.find((p) => p.id === id),
-      // Who admins can assign work to: active trades, and trades added without a login yet.
-      providers: data.users.filter((u) => u.role === 'provider' && (u.status === 'active' || hasNoLogin(u))),
+      // Who admins can assign work to: every trade that isn't suspended, including those without a
+      // login yet or with an invite pending (their work waits in their inbox).
+      providers: data.users.filter((u) => u.role === 'provider' && u.status !== 'suspended'),
       clients: data.users.filter((u) => u.role === 'client'),
     }),
     [data, actor],

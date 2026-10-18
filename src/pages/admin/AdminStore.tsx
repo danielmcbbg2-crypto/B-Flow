@@ -30,6 +30,8 @@ export function AdminStore() {
   const newOrders = data.orders.filter((o) => o.status === 'new').length
   const [tab, setTab] = useState<'orders' | 'products' | 'assistant'>(newOrders || data.products.length ? 'orders' : 'products')
   const [editing, setEditing] = useState<Product | null>(null)
+  // After saving a draft from the AI finder, stay there (with its results) and say where it went.
+  const [savedDraft, setSavedDraft] = useState(false)
   return (
     <>
       <PageHeader
@@ -51,8 +53,22 @@ export function AdminStore() {
           { value: 'assistant', label: 'AI product finder' },
         ]}
       />
+      {tab === 'assistant' && savedDraft && (
+        <p className="mb-4 text-sm text-emerald-700">Saved. Find it under Products to check it, add photos and publish.</p>
+      )}
       {tab === 'orders' ? <Orders /> : tab === 'products' ? <Products onEdit={setEditing} /> : <ProductAssistant onDraft={setEditing} />}
-      {editing && <ProductEditor key={editing.id} product={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); setTab('products') }} />}
+      {editing && (
+        <ProductEditor
+          key={editing.id}
+          product={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            if (tab === 'assistant') setSavedDraft(true)
+            else setTab('products')
+            setEditing(null)
+          }}
+        />
+      )}
     </>
   )
 }

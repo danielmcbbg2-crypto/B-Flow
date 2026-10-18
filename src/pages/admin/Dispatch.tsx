@@ -131,7 +131,9 @@ function AssignForm({ r, onClose }: { r: MaintenanceRequest; onClose: () => void
   const lk = useLookup()
   const matching = lk.providers.filter((p) => p.trade === r.category)
   const others = lk.providers.filter((p) => p.trade !== r.category)
-  const [providerId, setProviderId] = useState(r.assignedProviderId ?? matching[0]?.id ?? lk.providers[0]?.id ?? '')
+  // The current trade if they can still be chosen (so the list shows who the job goes to).
+  const current = lk.providers.some((p) => p.id === r.assignedProviderId) ? r.assignedProviderId : undefined
+  const [providerId, setProviderId] = useState(current ?? matching[0]?.id ?? lk.providers[0]?.id ?? '')
   const [date, setDate] = useState(r.scheduledDate ?? todayISO())
   const [sms, setSms] = useState(data.smsSettings.notifyProviderOnAssign)
   const [busy, setBusy] = useState(false)
@@ -159,11 +161,11 @@ function AssignForm({ r, onClose }: { r: MaintenanceRequest; onClose: () => void
             <select className="input" value={providerId} onChange={(e) => setProviderId(e.target.value)} required>
               {matching.length > 0 && (
                 <optgroup label={`${r.category} trades`}>
-                  {matching.map((p) => <option key={p.id} value={p.id}>{p.name}{p.company ? ` — ${p.company}` : ''}{hasNoLogin(p) ? ' (no login)' : ''}</option>)}
+                  {matching.map((p) => <option key={p.id} value={p.id}>{p.name}{p.company ? ` — ${p.company}` : ''}{hasNoLogin(p) ? ' (no login)' : p.status === 'invited' ? ' (invite pending)' : ''}</option>)}
                 </optgroup>
               )}
               <optgroup label="Other trades">
-                {others.map((p) => <option key={p.id} value={p.id}>{p.name}{p.company ? ` — ${p.company}` : ''}{p.trade ? ` (${p.trade})` : ''}{hasNoLogin(p) ? ' (no login)' : ''}</option>)}
+                {others.map((p) => <option key={p.id} value={p.id}>{p.name}{p.company ? ` — ${p.company}` : ''}{p.trade ? ` (${p.trade})` : ''}{hasNoLogin(p) ? ' (no login)' : p.status === 'invited' ? ' (invite pending)' : ''}</option>)}
               </optgroup>
             </select>
           </Field>
@@ -176,7 +178,8 @@ function AssignForm({ r, onClose }: { r: MaintenanceRequest; onClose: () => void
           SMS the provider{chosen?.phone ? <span className="num text-slate-500"> ({chosen.phone})</span> : <span className="text-slate-500"> (no phone on file)</span>}
         </label>
         <p className="text-xs text-slate-500">
-          The provider also gets a work order in their Inbox to acknowledge{chosen && hasNoLogin(chosen) ? ', which they’ll see once you invite them from Accounts' : ''}.
+          The provider also gets a work order in their Inbox to acknowledge
+          {chosen && hasNoLogin(chosen) ? ', which they’ll see once you invite them from Accounts' : chosen?.status === 'invited' ? ', which they’ll see once they accept their invite' : ''}.
         </p>
         <div className="flex justify-end">
           <button className="btn-accent" disabled={busy || !providerId}><Send size={16} /> {busy ? 'Dispatching…' : 'Dispatch'}</button>

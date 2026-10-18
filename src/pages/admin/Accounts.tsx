@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { Copy, LayoutDashboard, Mail, MessageSquare, UserPlus } from 'lucide-react'
 import { Field, Modal, PageHeader, Status, Tabs } from '../../components/ui'
-import { hasNoLogin as noLogin, useStore } from '../../lib/store'
+import { hasNoLogin as noLogin, lacksLogin, useStore } from '../../lib/store'
 import { navigate } from '../../lib/router'
 import { ALL_PERMISSIONS, DEFAULT_PERMISSIONS, TRADES, type Permission, type Role, type UserAccount } from '../../lib/types'
 import { fmtDate, generateInviteCode, uid } from '../../lib/utils'
@@ -152,8 +152,8 @@ export function Accounts() {
             const saved = data.users.find((u) => u.id === a.id) ?? a
             const email = a.email.trim().toLowerCase()
             if (email && data.users.some((u) => u.id !== a.id && u.email.toLowerCase() === email)) return 'Another account already uses this email.'
-            if (!email && !noLogin(saved)) return 'Add their email address: they sign in with it.'
-            if (CLOUD && !noLogin(saved) && email !== saved.email.trim().toLowerCase()) return 'The email can’t change once they have a login.'
+            if (!email && !lacksLogin(saved)) return 'Add their email address: they sign in with it.'
+            if (CLOUD && !lacksLogin(saved) && email !== saved.email.trim().toLowerCase()) return 'The email can’t change once they have a login.'
             update((d) => { d.users = d.users.map((x) => (x.id === a.id ? { ...a, email: a.email.trim(), hasLogin: x.hasLogin } : x)) })
             setEditing(null)
             return null
@@ -348,6 +348,8 @@ function AccountEditor({
   const saved = data.users.find((u) => u.id === account.id) ?? account
   const invitePending = saved.status === 'invited'
   const withoutLogin = noLogin(saved)
+  // Never had a login (also when suspended): the email is optional and can still change.
+  const loginless = lacksLogin(saved)
   const emailUnsaved = a.email.trim() !== saved.email
   // Reactivating puts an account that never signed in back to waiting for its invite.
   const reactivateAs = account.status === 'invited' || (CLOUD ? saved.hasLogin === false : !saved.passwordHash) ? 'invited' : 'active'
@@ -361,7 +363,7 @@ function AccountEditor({
           if (err) setMsg({ ok: false, text: err })
         }}>
         {/* Live mode ties the login to the email, so it can only change before the first invite. */}
-        <AccountFields a={a} set={set} lockRole={locked} lockEmail={CLOUD && !withoutLogin} emailOptional={withoutLogin} />
+        <AccountFields a={a} set={set} lockRole={locked} lockEmail={CLOUD && !loginless} emailOptional={loginless} />
         <div className="sm:col-span-2">
           <span className="label">Permissions</span>
           <PermissionBoxes value={a.permissions} onChange={(permissions) => set({ permissions })} disabled={locked} />
@@ -369,14 +371,15 @@ function AccountEditor({
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-4 sm:col-span-2">
           <div className="flex flex-wrap gap-2">
-            {!locked && (
+            {/* Not for a pending invite in live mode: reactivating would make them active before they've set a password. */}
+            {!locked && !(CLOUD && saved.status === 'invited' && !loginless) && (
               <button type="button" className="btn-ghost" onClick={() => set({ status: a.status === 'suspended' ? reactivateAs : 'suspended' })}>
                 {a.status === 'suspended' ? 'Reactivate' : 'Suspend'}
               </button>
             )}
             {!locked &&
               (CLOUD ? (
-                !withoutLogin && (
+                !loginless && (
                 <button
                   type="button"
                   className="btn-ghost"

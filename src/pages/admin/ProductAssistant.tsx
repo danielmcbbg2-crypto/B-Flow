@@ -60,11 +60,16 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product) => void })
         category: (STORE_CATEGORIES as readonly string[]).includes(l.category) ? l.category : 'Other',
         brand: l.brand,
         sku: l.sku,
-        price: parsePrice(l.suggested_price) || parsePrice(found.price),
+        // Only the drafted retail price (inc. GST); otherwise the admin enters one.
+        price: parsePrice(l.suggested_price),
         images: [],
         status: 'draft',
         stock: 'to_order',
-        source: { supplier: found.supplier, url: found.url, notes: l.notes ? `AI draft notes: ${l.notes}` : '' },
+        source: {
+          supplier: found.supplier,
+          url: found.url,
+          notes: [l.notes && `AI draft notes: ${l.notes}`, found.price && `Price shown in search: ${found.price}`].filter(Boolean).join('\n'),
+        },
         createdAt: new Date().toISOString(),
       })
     } catch (err) {
@@ -138,9 +143,11 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product) => void })
                     <span className="text-slate-500"> · {p.supplier}</span>
                   </p>
                   <div className="mt-auto flex flex-wrap gap-2 pt-4">
-                    <a className="btn-ghost px-3 py-1.5" href={p.url} target="_blank" rel="noreferrer noopener">
-                      <ExternalLink size={14} /> Supplier page
-                    </a>
+                    {/^https?:\/\//i.test(p.url) && (
+                      <a className="btn-ghost px-3 py-1.5" href={p.url} target="_blank" rel="noreferrer noopener">
+                        <ExternalLink size={14} /> Supplier page
+                      </a>
+                    )}
                     <button className="btn-primary px-3 py-1.5" disabled={!!busy} onClick={() => void draft(p)}>
                       <Sparkles size={14} /> {busy === p.url ? 'Drafting…' : 'Draft listing'}
                     </button>
