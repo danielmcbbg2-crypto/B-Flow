@@ -1,6 +1,6 @@
-import { useState, type FormEvent } from 'react'
-import { ExternalLink, Search, Sparkles } from 'lucide-react'
-import { Empty, Field } from '../../components/ui'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { ExternalLink, ImageOff, Search, Sparkles, Square } from 'lucide-react'
+import { Empty, Field, Modal } from '../../components/ui'
 import { useStore } from '../../lib/store'
 import { CLOUD } from '../../lib/supabase'
 import { STORE_CATEGORIES, type FoundProduct, type Product } from '../../lib/types'
@@ -14,20 +14,73 @@ const parsePrice = (s: string) => {
   return m ? Math.round(Number(m[0]) * 100) / 100 : 0
 }
 
+const isWebLink = (url: string) => /^https?:\/\//i.test(url)
+
+/** The supplier's photo, or a plain placeholder when there's none or it won't load. */
+function FoundPhoto({ src, className }: { src?: string; className: string }) {
+  const [failed, setFailed] = useState(false)
+  if (!src || failed) {
+    return (
+      <div className={`flex flex-col items-center justify-center gap-1 bg-slate-50 text-xs text-slate-400 ${className}`}>
+        <ImageOff size={22} strokeWidth={1.5} aria-hidden="true" />
+        No photo found
+      </div>
+    )
+  }
+  // No referrer: some suppliers refuse images linked from other sites.
+  return <img src={src} alt="" referrerPolicy="no-referrer" loading="lazy" className={`bg-white object-contain ${className}`} onError={() => setFailed(true)} />
+}
+
+/** "Working… 12 s" while the assistant runs, with what it's doing now and a way to stop it. */
+function Working({ text, onStop }: { text: string; onStop: () => void }) {
+  const [seconds, setSeconds] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => setSeconds((s) => s + 1), 1000)
+    return () => clearInterval(t)
+  }, [])
+  return (
+    <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600" role="status">
+      <span className="h-2 w-2 animate-pulse rounded-full bg-accent" aria-hidden="true" />
+      <span className="min-w-0 flex-1 truncate">{text}</span>
+      <span className="num text-slate-400">{seconds} s</span>
+      <button type="button" className="btn-ghost px-3 py-1" onClick={onStop}>
+        <Square size={12} /> Stop
+      </button>
+    </div>
+  )
+}
+
 /**
- * Admin → Store → AI product finder: search the web for products to stock, then have one drafted
- * into a listing that opens in the product editor as a draft for the admin to check and publish.
+ * Admin → Store → AI product finder: search the web for products to stock (with each product's
+ * photo), then have one drafted into a listing that opens in the product editor as a draft for the
+ * admin to check and publish.
  */
 export function ProductAssistant({ onDraft }: { onDraft: (p: Product) => void }) {
   const { findProducts, draftListing } = useStore()
   const [query, setQuery] = useState('')
-  const [busy, setBusy] = useState<'find' | string | null>(null)
+  // What's running: a search, or drafting the product with this link.
+  const [busy, setBusy] = useState<{ kind: 'find' } | { kind: 'draft'; url: string } | null>(null)
+  const [progress, setProgress] = useState('')
   const [results, setResults] = useState<{ products: FoundProduct[]; note: string } | null>(null)
   const [error, setError] = useState<{ text: string; setup?: boolean } | null>(null)
   const [instructions, setInstructions] = useState('')
+  const [preview, setPreview] = useState<FoundProduct | null>(null)
+  const stopper = useRef<AbortController | null>(null)
 
+  // Leaving the page stops anything still running.
+  useEffect(() => () => stopper.current?.abort(), [])
+
+  const begin = (b: NonNullable<typeof busy>, first: string) => {
+    stopper.current?.abort()
+    stopper.current = new AbortController()
+    setBusy(b)
+    setProgress(first)
+    setError(null)
+    return stopper.current.signal
+  }
   const fail = (e: unknown) => {
     const err = e as Error & { code?: string }
+    if (err.name === 'AbortError') return setError({ text: 'Stopped.' })
     setError({ text: err.message, setup: err.code === 'not_configured' })
   }
 
@@ -35,23 +88,27 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product) => void })
     e?.preventDefault()
     if (!q.trim()) return
     setQuery(q)
-    setBusy('find')
-    setError(null)
     setResults(null)
+    const signal = begin({ kind: 'find' }, 'Starting the search…')
+    // A newer search or draft takes over: then this one's outcome is ignored.
+    const current = () => stopper.current?.signal === signal
     try {
-      setResults(await findProducts(q))
+      const found = await findProducts(q, (t) => current() && setProgress(t), signal)
+      if (current()) setResults(found)
     } catch (err) {
-      fail(err)
+      if (current()) fail(err)
     } finally {
-      setBusy(null)
+      if (current()) setBusy(null)
     }
   }
 
   const draft = async (found: FoundProduct) => {
-    setBusy(found.url)
-    setError(null)
+    setPreview(null)
+    const signal = begin({ kind: 'draft', url: found.url }, `Reading ${found.supplier || 'the product page'}…`)
+    const current = () => stopper.current?.signal === signal
     try {
-      const l = await draftListing(found, instructions)
+      const l = await draftListing(found, instructions, (t) => current() && setProgress(t), signal)
+      if (!current()) return
       const specs = l.specs.filter(Boolean)
       onDraft({
         id: uid('sp'),
@@ -68,15 +125,26 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product) => void })
         source: {
           supplier: found.supplier,
           url: found.url,
-          notes: [l.notes && `AI draft notes: ${l.notes}`, found.price && `Price shown in search: ${found.price}`].filter(Boolean).join('\n'),
+          notes: [
+            l.notes && `AI draft notes: ${l.notes}`,
+            found.price && `Price shown in search: ${found.price}`,
+            found.image && isWebLink(found.image) && `Supplier photo: ${found.image} (check you may use it before adding it)`,
+          ]
+            .filter(Boolean)
+            .join('\n'),
         },
         createdAt: new Date().toISOString(),
       })
     } catch (err) {
-      fail(err)
+      if (current()) fail(err)
     } finally {
-      setBusy(null)
+      if (current()) setBusy(null)
     }
+  }
+
+  const stop = () => {
+    stopper.current?.abort()
+    setBusy(null)
   }
 
   return (
@@ -87,8 +155,8 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product) => void })
           <div>
             <h2 className="font-bold">Find products to stock</h2>
             <p className="text-sm text-slate-600">
-              Describe what you're after. The assistant searches the web for products sold in Australia and lists them with links and prices. Pick one and
-              it drafts a listing in your words for you to review: nothing is published until you choose to.
+              Describe what you're after. The assistant searches the web for products sold in Australia and lists them with photos, links and prices.
+              Pick one and it drafts a listing in your words for you to review: nothing is published until you choose to.
             </p>
           </div>
         </div>
@@ -97,7 +165,7 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product) => void })
             <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden="true" />
             <input className="input pl-9" placeholder="e.g. frameless shower screens 900 mm" aria-label="What are you looking for?" value={query} onChange={(e) => setQuery(e.target.value)} />
           </label>
-          <button className="btn-primary" disabled={!!busy || !query.trim()}>{busy === 'find' ? 'Searching…' : 'Find products'}</button>
+          <button className="btn-primary" disabled={!!busy || !query.trim()}>{busy?.kind === 'find' ? 'Searching…' : 'Find products'}</button>
         </div>
         <div className="flex flex-wrap gap-2 text-xs">
           {SUGGESTIONS.map((s) => (
@@ -106,7 +174,7 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product) => void })
             </button>
           ))}
         </div>
-        {busy === 'find' && <p className="text-sm text-slate-500">Searching the web… this can take up to a minute.</p>}
+        {busy?.kind === 'find' && <Working text={progress} onStop={stop} />}
       </form>
 
       {error &&
@@ -120,7 +188,7 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product) => void })
             </ol>
           </div>
         ) : (
-          <p className="text-sm text-red-600">{error.text}</p>
+          <p className={error.text === 'Stopped.' ? 'text-sm text-slate-500' : 'text-sm text-red-600'}>{error.text}</p>
         ))}
 
       {results &&
@@ -132,35 +200,65 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product) => void })
             <Field label="Instructions for drafting (optional)">
               <input className="input" value={instructions} onChange={(e) => setInstructions(e.target.value)} placeholder="e.g. mention we install across Melbourne; keep it short" />
             </Field>
-            <div className="grid gap-4 md:grid-cols-2">
+            {busy?.kind === 'draft' && <Working text={progress} onStop={stop} />}
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {results.products.map((p, i) => (
-                <article key={`${i}-${p.url}`} className="card flex flex-col p-4">
-                  <p className="text-xs text-slate-500">{[p.category, p.brand].filter(Boolean).join(' · ')}</p>
-                  <h3 className="mt-1 font-semibold leading-snug">{p.name}</h3>
-                  <p className="mt-1 text-sm text-slate-600">{p.summary}</p>
-                  <p className="mt-2 text-sm">
-                    <span className="num font-semibold">{p.price || 'Price not shown'}</span>
-                    <span className="text-slate-500"> · {p.supplier}</span>
-                  </p>
-                  <div className="mt-auto flex flex-wrap gap-2 pt-4">
-                    {/^https?:\/\//i.test(p.url) && (
-                      <a className="btn-ghost px-3 py-1.5" href={p.url} target="_blank" rel="noreferrer noopener">
-                        <ExternalLink size={14} /> Supplier page
-                      </a>
-                    )}
-                    <button className="btn-primary px-3 py-1.5" disabled={!!busy} onClick={() => void draft(p)}>
-                      <Sparkles size={14} /> {busy === p.url ? 'Drafting…' : 'Draft listing'}
-                    </button>
+                <article key={`${i}-${p.url}`} className="card flex flex-col overflow-hidden">
+                  <button type="button" className="block border-b border-slate-100" onClick={() => setPreview(p)} aria-label={`Preview ${p.name}`}>
+                    <FoundPhoto src={p.image} className="aspect-[4/3] w-full" />
+                  </button>
+                  <div className="flex flex-1 flex-col p-4">
+                    <p className="text-xs text-slate-500">{[p.category, p.brand].filter(Boolean).join(' · ')}</p>
+                    <h3 className="mt-1 font-semibold leading-snug">{p.name}</h3>
+                    <p className="mt-1 text-sm text-slate-600">{p.summary}</p>
+                    <p className="mt-2 text-sm">
+                      <span className="num font-semibold">{p.price || 'Price not shown'}</span>
+                      <span className="text-slate-500"> · {p.supplier}</span>
+                    </p>
+                    <div className="mt-auto flex flex-wrap gap-2 pt-4">
+                      {isWebLink(p.url) && (
+                        <a className="btn-ghost px-3 py-1.5" href={p.url} target="_blank" rel="noreferrer noopener">
+                          <ExternalLink size={14} /> Supplier page
+                        </a>
+                      )}
+                      <button className="btn-primary px-3 py-1.5" disabled={!!busy} onClick={() => void draft(p)}>
+                        <Sparkles size={14} /> {busy?.kind === 'draft' && busy.url === p.url ? 'Drafting…' : 'Draft listing'}
+                      </button>
+                    </div>
                   </div>
                 </article>
               ))}
             </div>
             <p className="text-xs text-slate-500">
-              Results come from the web and can be out of date: check prices, specifications and stock with the supplier before publishing.
+              Results come from the web and can be out of date: check prices, specifications and stock with the supplier before publishing. Photos are
+              the supplier's: use your own, or ones they let you use, in your listings.
               {!CLOUD && ' (Demo mode shows sample results.)'}
             </p>
           </>
         ))}
+
+      {preview && (
+        <Modal open onClose={() => setPreview(null)} title={preview.name} width="max-w-3xl">
+          <div className="grid gap-5 md:grid-cols-2">
+            <FoundPhoto src={preview.image} className="aspect-square w-full border border-slate-100" />
+            <div className="space-y-3 text-sm">
+              <p className="text-xs text-slate-500">{[preview.category, preview.brand, preview.supplier].filter(Boolean).join(' · ')}</p>
+              <p className="num text-lg font-bold">{preview.price || 'Price not shown'}</p>
+              <p className="text-slate-700">{preview.summary}</p>
+              <div className="flex flex-wrap gap-2 pt-2">
+                {isWebLink(preview.url) && (
+                  <a className="btn-ghost px-3 py-1.5" href={preview.url} target="_blank" rel="noreferrer noopener">
+                    <ExternalLink size={14} /> Supplier page
+                  </a>
+                )}
+                <button className="btn-primary px-3 py-1.5" disabled={!!busy} onClick={() => void draft(preview)}>
+                  <Sparkles size={14} /> Draft listing
+                </button>
+              </div>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   )
 }

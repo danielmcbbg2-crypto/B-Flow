@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "test:db": "bash supabase/tests/run.sh",
-    "build:demo": "tsc -b && vite build --mode demo"
+    "build:demo": "tsc -b && vite build --mode demo",
+    "test:unit": "tsx --test supabase/tests/photo.test.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.4",

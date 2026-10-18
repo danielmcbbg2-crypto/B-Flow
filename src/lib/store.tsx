@@ -20,7 +20,7 @@ import { createSeed, DATA_VERSION } from './seed'
 import { dispatchSms } from './sms'
 import { generateInviteCode, money, sha256, uid } from './utils'
 import { applyOps, diff, emptyData, fetchAll, productsFromRows, profileRow, projectFromRow, propertyRow, requestFromRow, userFromRow } from './db'
-import { CLOUD, DEMO, DEMO_BUILD, supabase, supabaseAdapter, uploadPhoto } from './supabase'
+import { ANON_KEY, CLOUD, DEMO, DEMO_BUILD, FUNCTIONS_URL, supabase, supabaseAdapter, uploadPhoto } from './supabase'
 
 const DATA_KEY = 'npm.data.v1'
 const SESSION_KEY = 'npm.session.v1'
@@ -77,11 +77,66 @@ async function invokeFunction<T = unknown>(name: string, body: Record<string, un
     // `code` lets the screen react to a known case (e.g. the AI assistant isn't set up yet).
     throw Object.assign(new Error(message), { code })
   }
-  // Slow functions (the AI assistant) send their status before they finish, so report failures here.
-  const failed = data as { error?: string; code?: string } | null
-  if (failed?.error) throw Object.assign(new Error(failed.error), { code: failed.code })
   return data as T
 }
+
+/**
+ * Calls a server function that answers as lines of JSON while it works (the AI product finder):
+ * progress lines go to `onProgress`, and the last line is the result or the error.
+ */
+async function streamFunction<T>(name: string, body: Record<string, unknown>, onProgress?: (text: string) => void, signal?: AbortSignal): Promise<T> {
+  const { data: auth } = await supabase!.auth.getSession()
+  const res = await fetch(`${FUNCTIONS_URL}/${name}`, {
+    method: 'POST',
+    signal,
+    headers: { 'Content-Type': 'application/json', apikey: ANON_KEY, Authorization: `Bearer ${auth.session?.access_token ?? ANON_KEY}` },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok || !res.body) {
+    const json = await res.json().catch(() => null)
+    throw Object.assign(new Error(json?.error ?? `The request failed (${res.status}). Try again.`), { code: json?.code })
+  }
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader()
+  let buffer = ''
+  for (;;) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buffer += value
+    let end: number
+    while ((end = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, end).trim()
+      buffer = buffer.slice(end + 1)
+      if (!line) continue // keep-alive
+      const msg = JSON.parse(line) as { type: string; text?: string; data?: T; error?: string; code?: string }
+      if (msg.type === 'progress' && msg.text) onProgress?.(msg.text)
+      else if (msg.type === 'result') return msg.data as T
+      else if (msg.type === 'error') throw Object.assign(new Error(msg.error ?? 'Something went wrong.'), { code: msg.code })
+    }
+  }
+  throw new Error('The assistant stopped before it finished. Try again.')
+}
+
+/** Waits like a slow server call would, for demo mode; rejects if `signal` is aborted. */
+function demoWait(ms: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    const stop = () => {
+      clearTimeout(t)
+      reject(new DOMException('Stopped', 'AbortError'))
+    }
+    const t = setTimeout(() => {
+      signal?.removeEventListener('abort', stop)
+      resolve()
+    }, ms)
+    if (signal?.aborted) stop()
+    else signal?.addEventListener('abort', stop, { once: true })
+  })
+}
+
+/** A plain picture for demo results (live mode shows the supplier's photo). */
+const demoPhoto = (label: string, hue: number) =>
+  `data:image/svg+xml,${encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="hsl(${hue},25%,92%)"/><rect x="120" y="70" width="160" height="160" rx="12" fill="hsl(${hue},25%,70%)"/><text x="200" y="275" font-family="sans-serif" font-size="18" text-anchor="middle" fill="#334155">${label}</text></svg>`,
+  )}`
 
 type AuthResult = { error?: string; role?: Role }
 type NewRequest = Omit<MaintenanceRequest, 'id' | 'number' | 'createdAt' | 'status' | 'smsNotified' | 'completionPhotos' | 'notes'>
@@ -167,10 +222,13 @@ interface StoreValue {
   loadCatalog: () => Promise<Product[]>
   /** Places a store order for anyone; throws with a message the customer can act on. */
   placeOrder: (o: OrderInput) => Promise<{ number: number; total: number }>
-  /** Store managers: the AI assistant searches the web for products (sample results in demo mode). */
-  findProducts: (query: string) => Promise<{ products: FoundProduct[]; note: string }>
+  /**
+   * Store managers: the AI assistant searches the web for products (sample results in demo mode).
+   * `onProgress` hears what it's doing as it goes; aborting `signal` stops it.
+   */
+  findProducts: (query: string, onProgress?: (text: string) => void, signal?: AbortSignal) => Promise<{ products: FoundProduct[]; note: string }>
   /** Store managers: the AI assistant drafts a listing from a found product, for review. */
-  draftListing: (product: FoundProduct, instructions?: string) => Promise<DraftListing>
+  draftListing: (product: FoundProduct, instructions?: string, onProgress?: (text: string) => void, signal?: AbortSignal) => Promise<DraftListing>
   /** Admins: create a project, with its client and property if they're new. Throws with a message if it can't be saved. */
   createProject: (p: NewProject) => Promise<Project>
   /** Message one person's inbox (admins). */
@@ -909,11 +967,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [update, refresh, user],
   )
 
-  const findProducts = useCallback(async (query: string) => {
-    if (supabase) return invokeFunction<{ products: FoundProduct[]; note: string }>('store-assistant', { action: 'find', query })
-    await new Promise((r) => setTimeout(r, 400))
+  const findProducts = useCallback(async (query: string, onProgress?: (text: string) => void, signal?: AbortSignal) => {
+    if (supabase) return streamFunction<{ products: FoundProduct[]; note: string }>('store-assistant', { action: 'find', query }, onProgress, signal)
     const q = query.trim() || 'bathroom products'
-    const sample = (n: number, brand: string, price: string): FoundProduct => ({
+    onProgress?.(`Searching: ${q}`)
+    await demoWait(500, signal)
+    onProgress?.('Found 3. Getting photos…')
+    await demoWait(300, signal)
+    const sample = (n: number, brand: string, price: string, hue: number): FoundProduct => ({
       name: `${brand} ${q} (option ${n})`,
       brand,
       supplier: `${brand} Australia`,
@@ -921,24 +982,34 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       price,
       category: 'Other',
       summary: `Sample result for “${q}”. In live mode the assistant searches the web for real products sold in Australia.`,
+      image: n === 3 ? '' : demoPhoto(`${brand} (sample)`, hue),
     })
-    return { products: [sample(1, 'Aqualine', '$449 inc. GST'), sample(2, 'Stonebridge', '$689 inc. GST'), sample(3, 'Hydro', '')], note: 'Demo mode: these are sample results.' }
-  }, [])
-
-  const draftListing = useCallback(async (product: FoundProduct, instructions?: string): Promise<DraftListing> => {
-    if (supabase) return (await invokeFunction<{ listing: DraftListing }>('store-assistant', { action: 'draft', product, instructions })).listing
-    await new Promise((r) => setTimeout(r, 400))
     return {
-      title: product.name,
-      description: `${product.summary}\n\nNext Phase Maintenance can supply and install it.`,
-      specs: ['Sample spec: check the supplier page'],
-      category: product.category,
-      brand: product.brand,
-      sku: '',
-      suggested_price: product.price.replace(/[^0-9.]/g, ''),
-      notes: 'Demo mode: this draft is a sample. In live mode the assistant reads the product page and writes an original description.',
+      products: [sample(1, 'Aqualine', '$449 inc. GST', 200), sample(2, 'Stonebridge', '$689 inc. GST', 30), sample(3, 'Hydro', '', 140)],
+      note: 'Demo mode: these are sample results.',
     }
   }, [])
+
+  const draftListing = useCallback(
+    async (product: FoundProduct, instructions?: string, onProgress?: (text: string) => void, signal?: AbortSignal): Promise<DraftListing> => {
+      if (supabase) {
+        return (await streamFunction<{ listing: DraftListing }>('store-assistant', { action: 'draft', product, instructions }, onProgress, signal)).listing
+      }
+      onProgress?.(`Reading ${product.supplier}…`)
+      await demoWait(400, signal)
+      return {
+        title: product.name,
+        description: `${product.summary}\n\nNext Phase Maintenance can supply and install it.`,
+        specs: ['Sample spec: check the supplier page'],
+        category: product.category,
+        brand: product.brand,
+        sku: '',
+        suggested_price: product.price.replace(/[^0-9.]/g, ''),
+        notes: 'Demo mode: this draft is a sample. In live mode the assistant reads the product page and writes an original description.',
+      }
+    },
+    [],
+  )
 
   // ───────────── accounts & files ─────────────
 

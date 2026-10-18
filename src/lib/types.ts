@@ -320,6 +320,8 @@ export interface FoundProduct {
   price: string
   category: string
   summary: string
+  /** The photo on the product page (live mode), for the preview only; empty if none was found. */
+  image?: string
 }
 
 /** A listing the AI assistant drafted for the admin to review. */
