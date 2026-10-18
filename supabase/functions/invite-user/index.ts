@@ -3,9 +3,9 @@
 //   { action: 'invite', profile: {...}, redirectTo, delivery? }  creates the profile and emails a
 //       Supabase invite link; the person chooses a password when they open it. With
 //       delivery: 'link' nothing is emailed and the link comes back for the admin to send.
-//   { action: 'link', profileId, redirectTo }  a fresh link for an existing account: a new invite
-//       link while the invite is pending (cancelling the earlier one), otherwise a link to choose
-//       a new password.
+//   { action: 'link', profileId, redirectTo }  a fresh link for an existing account: an invite link
+//       for someone added without a login or with an invite pending (cancelling any earlier one),
+//       otherwise a link to choose a new password.
 //   { action: 'delete', profileId }  removes the login and the profile.
 import { createClient } from 'npm:@supabase/supabase-js@2.49.4'
 
@@ -107,6 +107,7 @@ Deno.serve(async (req) => {
     const { data: target } = await db.from('profiles').select('id, email, auth_id, status').eq('id', body.profileId).maybeSingle()
     if (!target) return json({ error: 'Account not found' }, 404)
     if (target.status === 'suspended') return json({ error: 'This account is suspended. Reactivate it first.' }, 400)
+    if (!target.email) return json({ error: 'Add their email address and save it first.' }, 400)
     if (target.id === MASTER_ID && me.id !== MASTER_ID) return json({ error: 'Only the master admin can do this for the master admin account' }, 403)
     try {
       const purpose = target.status === 'invited' ? 'invite' : 'password'

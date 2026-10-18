@@ -1,11 +1,11 @@
-import { useState } from 'react'
+import { useState, type FormEvent } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
 import { Empty, Field, Modal, PageHeader, Sep, Tabs } from '../../components/ui'
 import { ProjectBy, ProjectProgress } from '../../components/works'
 import { ProjectStatusText } from '../../components/status'
 import { ExpenseTable } from '../provider/ProviderPortal'
-import { stampQuoteDecision, useLookup, useStore } from '../../lib/store'
-import { PROJECT_STATUS_LABEL, type Project, type ProjectStatus } from '../../lib/types'
+import { hasNoLogin, stampQuoteDecision, useLookup, useStore, type NewProject } from '../../lib/store'
+import { DEFAULT_PERMISSIONS, PROJECT_STATUS_LABEL, type Project, type ProjectStatus, type Property, type UserAccount } from '../../lib/types'
 import { money, todayISO, uid } from '../../lib/utils'
 
 export function AdminProjects() {
@@ -13,6 +13,7 @@ export function AdminProjects() {
   const lk = useLookup()
   const [tab, setTab] = useState<'quotes' | 'active' | 'closed'>('quotes')
   const [editing, setEditing] = useState<Project | null>(null)
+  const [creating, setCreating] = useState(false)
 
   const quotes = data.projects.filter((p) => p.status === 'quote_requested' || p.status === 'quoted')
   const active = data.projects.filter((p) => p.status === 'approved' || p.status === 'in_progress')
@@ -44,7 +45,11 @@ export function AdminProjects() {
 
   return (
     <>
-      <PageHeader title="Quotes & projects" subtitle="Price requests, attach scope of works, then run the project." />
+      <PageHeader
+        title="Quotes & projects"
+        subtitle="Price requests, attach scope of works, then run the project."
+        actions={<button className="btn-primary" onClick={() => setCreating(true)}><Plus size={16} /> New project</button>}
+      />
       {pendingExpenses.length > 0 && (
         <section className="card mb-6 overflow-hidden">
           <h2 className="border-b border-slate-200 px-5 py-3 font-bold">Expenses awaiting approval</h2>
@@ -119,7 +124,222 @@ export function AdminProjects() {
         </div>
       )}
       {editing && <ProjectEditor key={editing.id} project={editing} onClose={() => setEditing(null)} onSave={save} />}
+      {creating && (
+        <NewProjectForm
+          onClose={() => setCreating(false)}
+          onCreated={(p) => {
+            setCreating(false)
+            setTab(p.status === 'quote_requested' || p.status === 'quoted' ? 'quotes' : 'active')
+          }}
+        />
+      )}
     </>
+  )
+}
+
+const NEW = '__new'
+const NEW_PROJECT_STATUSES: ProjectStatus[] = ['quote_requested', 'quoted', 'approved', 'in_progress']
+
+/**
+ * An admin sets up a project for any client, including one added here without a login: the client
+ * sees it (with its property) once they're invited and sign in.
+ */
+function NewProjectForm({ onClose, onCreated }: { onClose: () => void; onCreated: (p: Project) => void }) {
+  const { data, can, createProject } = useStore()
+  const lk = useLookup()
+  // Ids are made once, so saving again after an error doesn't add the client or property twice.
+  const [ids] = useState(() => ({ client: uid('u'), property: uid('p') }))
+  const canAddClient = can('canEditPermissions')
+  const clients = [...lk.clients].sort((a, b) => a.name.localeCompare(b.name))
+  const [clientId, setClientId] = useState(canAddClient && clients.length === 0 ? NEW : '')
+  const [client, setClient] = useState({ name: '', email: '', phone: '', company: '' })
+  const [propertyId, setPropertyId] = useState('')
+  const [property, setProperty] = useState({ address: '', suburb: '', postcode: '' })
+  const [p, setP] = useState({
+    title: '',
+    description: '',
+    type: 'renovation' as Project['type'],
+    status: 'approved' as ProjectStatus,
+    budget: '',
+    quoteAmount: '',
+    scopeOfWorks: '',
+    assignedProviderId: '',
+  })
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // A client added here (or saved by an earlier attempt) has no properties yet, so it needs a new one.
+  const newClient = clientId === NEW && !data.users.some((u) => u.id === ids.client)
+  const effectiveClientId = clientId === NEW ? ids.client : clientId
+  const properties = data.properties.filter((x) => x.clientId === effectiveClientId)
+  const newProperty = propertyId === NEW || (!!effectiveClientId && properties.length === 0)
+  // After an attempt that saved the new property but not the project, carry on with that property.
+  const chosenProperty = propertyId || (properties.some((x) => x.id === ids.property) ? ids.property : '')
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!effectiveClientId) return setError('Choose the client.')
+    if (!newProperty && !chosenProperty) return setError('Choose the property.')
+    const email = client.email.trim()
+    if (newClient && email && data.users.some((u) => u.email.toLowerCase() === email.toLowerCase())) {
+      return setError('Another account already uses this email. Choose that client instead.')
+    }
+    if (p.status === 'quoted' && !(Number(p.quoteAmount) > 0)) return setError('Enter the quote amount to create it as an issued quote.')
+    const input: NewProject = {
+      newClient: newClient
+        ? ({
+            id: ids.client,
+            name: client.name.trim(),
+            email,
+            phone: client.phone.trim(),
+            company: client.company.trim() || undefined,
+            role: 'client',
+            permissions: DEFAULT_PERMISSIONS.client,
+            status: 'invited',
+            createdAt: new Date().toISOString(),
+            passwordHash: '',
+            hasLogin: false,
+          } satisfies UserAccount)
+        : undefined,
+      newProperty: newProperty
+        ? ({
+            id: ids.property,
+            clientId: effectiveClientId,
+            address: property.address.trim(),
+            suburb: property.suburb.trim(),
+            postcode: property.postcode.trim(),
+            paintColors: { walls: '', trim: '', ceiling: '' },
+            skirtProfile: '',
+            claddingType: '',
+            accessCode: '',
+            notes: '',
+          } satisfies Property)
+        : undefined,
+      project: {
+        clientId: effectiveClientId,
+        propertyId: newProperty ? ids.property : chosenProperty,
+        title: p.title.trim(),
+        description: p.description.trim(),
+        type: p.type,
+        status: p.status,
+        budget: Number(p.budget) || 0,
+        quoteAmount: p.quoteAmount ? Number(p.quoteAmount) : undefined,
+        scopeOfWorks: p.scopeOfWorks.trim(),
+        assignedProviderId: p.assignedProviderId || undefined,
+      },
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      onCreated(await createProject(input))
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal open onClose={onClose} title="New project" width="max-w-3xl">
+      <form className="grid gap-4 sm:grid-cols-2" onSubmit={submit}>
+        <Field label="Client" className="sm:col-span-2">
+          <select
+            className="input"
+            required
+            value={clientId}
+            onChange={(e) => {
+              setClientId(e.target.value)
+              setPropertyId('')
+            }}
+          >
+            <option value="">Choose a client…</option>
+            {clients.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+                {c.company ? ` — ${c.company}` : ''}
+                {hasNoLogin(c) ? ' (no login)' : ''}
+              </option>
+            ))}
+            {canAddClient && <option value={NEW}>+ New client (no login yet)</option>}
+          </select>
+        </Field>
+        {newClient && (
+          <fieldset className="grid gap-4 rounded-md border border-slate-200 p-4 sm:col-span-2 sm:grid-cols-2">
+            <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">New client</legend>
+            <p className="text-xs text-slate-500 sm:col-span-2">
+              Added without a login and sent nothing. Invite them from Accounts whenever you like; they'll see this project when they sign in.
+            </p>
+            <Field label="Full name"><input className="input" required value={client.name} onChange={(e) => setClient({ ...client, name: e.target.value })} /></Field>
+            <Field label="Email (needed to invite them)">
+              <input className="input" type="email" value={client.email} onChange={(e) => setClient({ ...client, email: e.target.value })} />
+            </Field>
+            <Field label="Mobile"><input className="input num" type="tel" value={client.phone} onChange={(e) => setClient({ ...client, phone: e.target.value })} /></Field>
+            <Field label="Company"><input className="input" value={client.company} onChange={(e) => setClient({ ...client, company: e.target.value })} /></Field>
+          </fieldset>
+        )}
+        {effectiveClientId && properties.length > 0 && (
+          <Field label="Property" className="sm:col-span-2">
+            <select className="input" required value={chosenProperty} onChange={(e) => setPropertyId(e.target.value)}>
+              <option value="">Choose a property…</option>
+              {properties.map((x) => (
+                <option key={x.id} value={x.id}>{x.address}, {x.suburb}</option>
+              ))}
+              <option value={NEW}>+ New property</option>
+            </select>
+          </Field>
+        )}
+        {newProperty && (
+          <fieldset className="grid gap-4 rounded-md border border-slate-200 p-4 sm:col-span-2 sm:grid-cols-3">
+            <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">New property</legend>
+            <Field label="Street address" className="sm:col-span-3">
+              <input className="input" required value={property.address} onChange={(e) => setProperty({ ...property, address: e.target.value })} />
+            </Field>
+            <Field label="Suburb" className="sm:col-span-2">
+              <input className="input" value={property.suburb} onChange={(e) => setProperty({ ...property, suburb: e.target.value })} />
+            </Field>
+            <Field label="Postcode">
+              <input className="input num" inputMode="numeric" value={property.postcode} onChange={(e) => setProperty({ ...property, postcode: e.target.value })} />
+            </Field>
+          </fieldset>
+        )}
+        <Field label="Project title" className="sm:col-span-2">
+          <input className="input" required value={p.title} onChange={(e) => setP({ ...p, title: e.target.value })} placeholder="e.g. Kitchen renovation" />
+        </Field>
+        <Field label="Description" className="sm:col-span-2">
+          <textarea className="input min-h-[80px]" value={p.description} onChange={(e) => setP({ ...p, description: e.target.value })} />
+        </Field>
+        <Field label="Type">
+          <select className="input" value={p.type} onChange={(e) => setP({ ...p, type: e.target.value as Project['type'] })}>
+            <option value="renovation">Renovation</option>
+            <option value="maintenance_contract">Maintenance contract</option>
+          </select>
+        </Field>
+        <Field label="Status">
+          <select className="input" value={p.status} onChange={(e) => setP({ ...p, status: e.target.value as ProjectStatus })}>
+            {NEW_PROJECT_STATUSES.map((s) => <option key={s} value={s}>{PROJECT_STATUS_LABEL[s]}</option>)}
+          </select>
+        </Field>
+        <Field label="Budget (AUD)">
+          <input type="number" min="0" step="100" className="input num" value={p.budget} onChange={(e) => setP({ ...p, budget: e.target.value })} />
+        </Field>
+        <Field label="Quote amount (AUD, inc. GST)">
+          <input type="number" min="0" step="0.01" className="input num" value={p.quoteAmount} onChange={(e) => setP({ ...p, quoteAmount: e.target.value })} />
+        </Field>
+        <Field label="Assigned trade" className="sm:col-span-2">
+          <select className="input" value={p.assignedProviderId} onChange={(e) => setP({ ...p, assignedProviderId: e.target.value })}>
+            <option value="">Unassigned</option>
+            {lk.providers.map((u) => <option key={u.id} value={u.id}>{u.name}{u.trade ? ` (${u.trade})` : ''}</option>)}
+          </select>
+        </Field>
+        <Field label="Scope of works" className="sm:col-span-2">
+          <textarea className="input min-h-[80px]" value={p.scopeOfWorks} onChange={(e) => setP({ ...p, scopeOfWorks: e.target.value })} />
+        </Field>
+        {error && <p className="text-sm text-red-600 sm:col-span-2">{error}</p>}
+        <div className="flex justify-end sm:col-span-2">
+          <button className="btn-primary" disabled={busy}>{busy ? 'Creating…' : 'Create project'}</button>
+        </div>
+      </form>
+    </Modal>
   )
 }
 

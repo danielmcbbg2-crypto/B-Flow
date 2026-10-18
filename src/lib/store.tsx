@@ -1,11 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { RealtimeChannel, Session } from '@supabase/supabase-js'
-import type { AppData, InboxMessage, MaintenanceRequest, Permission, Project, ProjectStatus, Role, UserAccount } from './types'
+import type { AppData, InboxMessage, MaintenanceRequest, Permission, Project, ProjectStatus, Property, Role, UserAccount } from './types'
 import { BRAND } from './brand'
 import { createSeed, DATA_VERSION } from './seed'
 import { dispatchSms } from './sms'
-import { generateInviteCode, sha256, uid } from './utils'
-import { applyOps, diff, emptyData, fetchAll, projectFromRow, requestFromRow, userFromRow } from './db'
+import { generateInviteCode, money, sha256, uid } from './utils'
+import { applyOps, diff, emptyData, fetchAll, profileRow, projectFromRow, propertyRow, requestFromRow, userFromRow } from './db'
 import { CLOUD, DEMO, DEMO_BUILD, supabase, supabaseAdapter, uploadPhoto } from './supabase'
 
 const DATA_KEY = 'npm.data.v1'
@@ -67,6 +67,16 @@ type AuthResult = { error?: string; role?: Role }
 type NewRequest = Omit<MaintenanceRequest, 'id' | 'number' | 'createdAt' | 'status' | 'smsNotified' | 'completionPhotos' | 'notes'>
 type InboxDraft = Omit<InboxMessage, 'id' | 'createdAt' | 'read' | 'acknowledged'>
 
+/** A project an admin sets up, optionally with a new client (added without a login) and property. */
+export interface NewProject {
+  newClient?: UserAccount
+  newProperty?: Property
+  project: Pick<
+    Project,
+    'clientId' | 'propertyId' | 'title' | 'description' | 'type' | 'budget' | 'quoteAmount' | 'scopeOfWorks' | 'status' | 'assignedProviderId'
+  >
+}
+
 /**
  * - `loading`: checking the session or loading data (cloud mode)
  * - `set-password`: arrived from an invite or reset email and must choose a password
@@ -122,6 +132,8 @@ interface StoreValue {
   submitRequest: (req: NewRequest) => Promise<MaintenanceRequest>
   requestQuote: (q: { clientId: string; propertyId: string; title: string; description: string; budget: number }) => Promise<void>
   assignRequest: (requestId: string, providerId: string, scheduledDate: string, sms: boolean) => Promise<void>
+  /** Admins: create a project, with its client and property if they're new. Throws with a message if it can't be saved. */
+  createProject: (p: NewProject) => Promise<Project>
   /** Message one person's inbox (admins). */
   pushInbox: (msg: InboxDraft) => void
   /** Message every admin's inbox (anyone signed in). */
@@ -689,6 +701,86 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [update, sendSms],
   )
 
+  const createProject = useCallback(
+    async ({ newClient, newProperty, project: p }: NewProject): Promise<Project> => {
+      // A client or property already saved by an earlier attempt (that failed later on) isn't added again.
+      const d0 = dataRef.current
+      const client = newClient && !d0.users.some((u) => u.id === newClient.id) ? newClient : undefined
+      const property = newProperty && !d0.properties.some((x) => x.id === newProperty.id) ? newProperty : undefined
+      const notify = (saved: Project) => {
+        if (saved.assignedProviderId) {
+          pushInbox({ userId: saved.assignedProviderId, title: `Assigned to project P-${saved.number}`, body: saved.title, requiresAck: true, projectId: saved.id })
+        }
+        if (saved.status === 'quoted') {
+          pushInbox({
+            userId: saved.clientId,
+            title: `Quote ready: ${saved.title}`,
+            body: `Quoted at ${money(saved.quoteAmount ?? 0)}. Review it under Projects.`,
+            requiresAck: false,
+            projectId: saved.id,
+          })
+        }
+      }
+      if (supabase) {
+        // Saved one at a time, straight away, so the project can refer to them and any error is shown.
+        if (client) {
+          const { error } = await supabase.from('profiles').insert(profileRow(client))
+          if (error) throw new Error(error.code === '23505' ? 'Another account already uses this email.' : error.message)
+          mergeLocal((d) => {
+            d.users.push(client)
+          })
+        }
+        if (property) {
+          const { error } = await supabase.from('properties').insert(propertyRow(property))
+          if (error) throw new Error(error.message)
+          mergeLocal((d) => {
+            d.properties.push(property)
+          })
+        }
+        const { data: row, error } = await supabase
+          .from('projects')
+          .insert({
+            client_id: p.clientId,
+            property_id: p.propertyId,
+            title: p.title,
+            description: p.description,
+            type: p.type,
+            budget: p.budget,
+            quote_amount: p.quoteAmount ?? null,
+            scope_of_works: p.scopeOfWorks,
+            status: p.status,
+            assigned_provider_id: p.assignedProviderId ?? null,
+          })
+          .select()
+          .single()
+        if (error) throw new Error(error.message)
+        const saved = projectFromRow(row)
+        mergeLocal((d) => {
+          d.projects.unshift(saved)
+        })
+        notify(saved)
+        return saved
+      }
+      const saved: Project = {
+        ...p,
+        id: uid('pr'),
+        number: Math.max(200, ...d0.projects.map((x) => x.number)) + 1,
+        milestones: [],
+        expenses: [],
+        createdAt: new Date().toISOString(),
+        createdBy: user?.id,
+      }
+      update((d) => {
+        if (client) d.users.push(client)
+        if (property) d.properties.push(property)
+        d.projects.unshift(saved)
+      })
+      notify(saved)
+      return saved
+    },
+    [update, mergeLocal, pushInbox, user],
+  )
+
   // ───────────── accounts & files ─────────────
 
   const uploadImage = useCallback(async (dataUrl: string) => (supabase ? uploadPhoto(supabase, dataUrl) : dataUrl), [])
@@ -730,11 +822,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (!supabase) return { error: 'Not available in demo mode.' }
     try {
       const res = await invokeFunction<{ link: string }>('invite-user', { action: 'link', profileId, redirectTo: appUrl() })
+      // The first link creates the login, which locks the email address in place.
+      await refresh()
       return { link: res.link }
     } catch (e) {
       return { error: (e as Error).message }
     }
-  }, [])
+  }, [refresh])
 
   const deleteAccount = useCallback(
     async (id: string) => {
@@ -806,6 +900,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     sendSms,
     submitRequest,
     requestQuote,
+    createProject,
     assignRequest,
     pushInbox,
     pushAdminInbox,
@@ -835,6 +930,11 @@ export function ActingAsProvider({ children }: { children: ReactNode }) {
     [outer, actingAs, admin, adminCan],
   )
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>
+}
+
+/** Added without a login and not invited yet (live mode: no login created; demo mode: no invite code). */
+export function hasNoLogin(u: UserAccount): boolean {
+  return u.status === 'invited' && (CLOUD ? !u.hasLogin : !u.inviteCode)
 }
 
 /** Names who did something: the person themselves, or "Admin for Person" from a dashboard an admin opened. */

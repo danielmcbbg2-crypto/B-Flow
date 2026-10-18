@@ -26,6 +26,7 @@ export const DEFAULT_PERMISSIONS: Record<Role, Permission[]> = {
 export interface UserAccount {
   id: string
   name: string
+  /** Empty for a client or trade added without a login and no email yet. */
   email: string
   role: Role
   phone: string
@@ -37,6 +38,8 @@ export interface UserAccount {
   /** SHA-256 hex of password. Empty while an invite is pending. */
   passwordHash: string
   inviteCode?: string
+  /** Live mode: whether a login exists yet (it's created by the first invite). */
+  hasLogin?: boolean
 }
 
 export interface PaintColors {

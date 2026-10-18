@@ -65,10 +65,10 @@ export const DEFAULT_SMS: SmsSettings = {
 
 // ───────────── to rows ─────────────
 
-const profileRow = (u: UserAccount): Row => ({
+export const profileRow = (u: UserAccount): Row => ({
   id: u.id,
   name: u.name,
-  email: u.email,
+  email: u.email.trim() || null,
   role: u.role,
   phone: u.phone,
   company: nul(u.company),
@@ -78,7 +78,7 @@ const profileRow = (u: UserAccount): Row => ({
   created_at: u.createdAt,
 })
 
-const propertyRow = (p: Property): Row => ({
+export const propertyRow = (p: Property): Row => ({
   id: p.id,
   client_id: p.clientId,
   address: p.address,
@@ -265,7 +265,7 @@ export async function applyOps(db: DbAdapter, ops: Op[]): Promise<void> {
 export const userFromRow = (r: Row): UserAccount => ({
   id: r.id as string,
   name: r.name as string,
-  email: r.email as string,
+  email: (r.email as string | null) ?? '',
   role: r.role as UserAccount['role'],
   phone: (r.phone as string) ?? '',
   company: opt(r.company as string | null),
@@ -274,6 +274,7 @@ export const userFromRow = (r: Row): UserAccount => ({
   createdAt: r.created_at as string,
   status: r.status as UserAccount['status'],
   passwordHash: '',
+  hasLogin: r.has_login as boolean,
 })
 
 const propertyFromRow = (r: Row): Property => ({

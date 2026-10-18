@@ -582,3 +582,49 @@ describe('admins acting in a client or trade dashboard', () => {
     assert.equal(del.rowCount, 1)
   })
 })
+
+describe('clients added without a login', () => {
+  const noLogin = (id: string, name: string, email = '') => ({
+    id,
+    name,
+    email,
+    role: 'client' as const,
+    phone: '0400 000 000',
+    permissions: ['canSubmitRequests' as const],
+    createdAt: new Date().toISOString(),
+    status: 'invited' as const,
+    passwordHash: '',
+  })
+
+  test('admins add clients with no email or login, and record a property and project for them', async () => {
+    await mutate(admin, (d) => {
+      d.users.push(noLogin('u-nl-1', 'Olive Nolan'), noLogin('u-nl-2', 'Pete No-Email'))
+      d.properties.push({ ...d.properties[0], id: 'p-nl-1', clientId: 'u-nl-1', address: '5 Quiet Lane', suburb: 'Kew', postcode: '3101' })
+    })
+    await asUser(uid.admin, `insert into projects (id, client_id, property_id, title, status) values ('pr-nl-1', 'u-nl-1', 'p-nl-1', 'Deck rebuild', 'in_progress')`)
+    const d = await fetchAll(admin)
+    const olive = d.users.find((u) => u.id === 'u-nl-1')!
+    assert.equal(olive.email, '')
+    assert.equal(olive.hasLogin, false)
+    assert.equal(d.users.find((u) => u.id === 'u-nl-2')!.email, '')
+    assert.equal(d.projects.find((p) => p.id === 'pr-nl-1')!.createdBy, 'u-admin')
+    // Nothing to reload: no spurious changes for accounts without an email.
+    assert.deepEqual(diff(d, structuredClone(d)), [])
+  })
+
+  test("nobody can sign up as them until an admin adds their email; then they see what was recorded", async () => {
+    await assert.rejects(createAuthUser('olive@example.com'), /No Next Phase Maintenance invitation/)
+    await mutate(admin, (d) => {
+      d.users.find((u) => u.id === 'u-nl-1')!.email = 'olive@example.com'
+    })
+    // Inviting creates the login, which is linked to the account by email.
+    uid.olive = await createAuthUser('olive@example.com')
+    assert.equal((await fetchAll(admin)).users.find((u) => u.id === 'u-nl-1')!.hasLogin, true)
+    await asUser(uid.olive, 'select activate_my_account()')
+    const mine = await fetchAll(adapter(uid.olive))
+    assert.deepEqual(mine.properties.map((p) => p.id), ['p-nl-1'])
+    assert.deepEqual(mine.projects.map((p) => p.title), ['Deck rebuild'])
+    // An account with a login always keeps an email.
+    await assert.rejects(asUser(uid.admin, `update profiles set email = null where id = 'u-nl-1'`), /profiles_login_has_email/)
+  })
+})
