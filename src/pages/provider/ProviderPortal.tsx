@@ -5,7 +5,7 @@ import { Calendar } from '../../components/Calendar'
 import { Empty, Field, Modal, PageHeader, PhotoInput, Sep, Status, Tabs } from '../../components/ui'
 import { ProjectStatusText } from '../../components/status'
 import { ProjectProgress, RequestDetail, RequestRow, useLinkedCalendar } from '../../components/works'
-import { useLookup, useStore } from '../../lib/store'
+import { doneBy, useLookup, useStore } from '../../lib/store'
 import { REQUEST_STATUS_LABEL, type Expense, type RequestStatus } from '../../lib/types'
 import { cx, fmtDate, fmtDateTime, money, todayISO, uid } from '../../lib/utils'
 
@@ -74,14 +74,16 @@ function Overview({ unread }: { unread: number }) {
 }
 
 function Inbox() {
-  const { update, user } = useStore()
+  const { update, user, actor } = useStore()
   const a = useAssigned()
   const lk = useLookup()
   const [openReq, setOpenReq] = useState<string | null>(null)
   const mark = (id: string, patch: { read?: boolean; acknowledged?: boolean }) =>
     update((d) => {
       const m = d.inbox.find((x) => x.id === id)
-      if (m) Object.assign(m, patch)
+      if (!m) return
+      if (patch.acknowledged && !m.acknowledged) m.acknowledgedBy = actor?.id
+      Object.assign(m, patch)
     })
   return (
     <>
@@ -115,7 +117,9 @@ function Inbox() {
                       <Check size={16} /> Acknowledge
                     </button>
                   ) : m.requiresAck ? (
-                    <Status tone="green">Acknowledged</Status>
+                    <Status tone="green">
+                      {m.acknowledgedBy && m.acknowledgedBy !== m.userId ? `Acknowledged by ${lk.byName(m.acknowledgedBy)}` : 'Acknowledged'}
+                    </Status>
                   ) : (
                     !m.read && <button className="btn-ghost" onClick={() => mark(m.id, { read: true })}>Mark read</button>
                   )}
@@ -131,9 +135,14 @@ function Inbox() {
 }
 
 function Hub() {
-  const { update, pushAdminInbox, user } = useStore()
+  const { update, pushAdminInbox, user, actor, canAct } = useStore()
   const lk = useLookup()
   const a = useAssigned()
+  // An admin in this trade's dashboard updates jobs with their own dispatch permission, and leaves a
+  // note of what they changed so the job's history doesn't read as the trade's own work.
+  const canWork = canAct('canDispatchJobs')
+  const acting = !!actor && actor.id !== user?.id
+  const noteLine = (text: string) => `${fmtDate(todayISO())} — ${doneBy(actor, user)}: ${text}`
   const [tab, setTab] = useState<'live' | 'completed'>('live')
   const [openId, setOpenId] = useState<string | null>(null)
   const [photos, setPhotos] = useState<string[]>([])
@@ -143,25 +152,28 @@ function Hub() {
   const open = lk.request(openId ?? undefined)
 
   const setStatus = (id: string, status: RequestStatus) => {
+    if (!canWork) return
     const r = lk.request(id)
     update((d) => {
       const x = d.requests.find((y) => y.id === id)
       if (!x) return
       x.status = status
       if (status === 'completed') x.completedAt = new Date().toISOString()
+      if (acting) x.notes = [x.notes, noteLine(`marked ${REQUEST_STATUS_LABEL[status]}`)].filter(Boolean).join('\n')
     })
     if (status === 'completed' && r) {
-      void pushAdminInbox(`Work order #${r.number} completed`, `${user?.name} marked “${r.title}” complete. Ready to invoice.`, { requestId: r.id })
+      void pushAdminInbox(`Work order #${r.number} completed`, `${doneBy(actor, user)} marked “${r.title}” complete. Ready to invoice.`, { requestId: r.id })
     }
   }
 
   const saveUpdate = () => {
-    if (!open) return
+    if (!open || !canWork) return
+    const said = [note.trim(), acting && photos.length ? `added ${photos.length} completion photo${photos.length > 1 ? 's' : ''}` : '']
     update((d) => {
       const x = d.requests.find((y) => y.id === open.id)
       if (!x) return
       x.completionPhotos.push(...photos)
-      if (note.trim()) x.notes = [x.notes, `${fmtDate(todayISO())} — ${user?.name}: ${note.trim()}`].filter(Boolean).join('\n')
+      if (said.some(Boolean)) x.notes = [x.notes, noteLine(said.filter(Boolean).join('; '))].filter(Boolean).join('\n')
     })
     setPhotos([])
     setNote('')
@@ -182,7 +194,8 @@ function Hub() {
               r={r}
               onOpen={() => setOpenId(r.id)}
               right={
-                r.status !== 'completed' && (
+                r.status !== 'completed' &&
+                canWork && (
                   <select className="input w-auto py-1.5" value={r.status} onChange={(e) => setStatus(r.id, e.target.value as RequestStatus)} aria-label="Update status">
                     {(['assigned', 'in_progress', 'awaiting_parts', 'completed'] as RequestStatus[]).map((s) => (
                       <option key={s} value={s}>{REQUEST_STATUS_LABEL[s]}</option>
@@ -195,35 +208,43 @@ function Hub() {
         </div>
       )}
       <RequestDetail r={open} open={!!open} onClose={() => { setOpenId(null); setPhotos([]); setNote('') }}>
-        <div className="space-y-4">
-          <div>
-            <span className="label">Add completion photos</span>
-            <PhotoInput value={photos} onChange={setPhotos} />
+        {!canWork ? (
+          <p className="text-sm text-slate-500">Your admin account needs “Dispatch & assign jobs” to update jobs here.</p>
+        ) : (
+          <div className="space-y-4">
+            <div>
+              <span className="label">Add completion photos</span>
+              <PhotoInput value={photos} onChange={setPhotos} />
+            </div>
+            <Field label="Site note">
+              <textarea className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Work done, parts used, follow-ups…" />
+            </Field>
+            <div className="flex flex-wrap justify-end gap-2">
+              {open && open.status !== 'completed' && (
+                <button className="btn-ghost" onClick={() => { saveUpdate(); setStatus(open.id, 'completed') }}>Save & mark complete</button>
+              )}
+              <button className="btn-primary" onClick={saveUpdate} disabled={!photos.length && !note.trim()}>Save update</button>
+            </div>
           </div>
-          <Field label="Site note">
-            <textarea className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Work done, parts used, follow-ups…" />
-          </Field>
-          <div className="flex flex-wrap justify-end gap-2">
-            {open && open.status !== 'completed' && (
-              <button className="btn-ghost" onClick={() => { saveUpdate(); setStatus(open.id, 'completed') }}>Save & mark complete</button>
-            )}
-            <button className="btn-primary" onClick={saveUpdate} disabled={!photos.length && !note.trim()}>Save update</button>
-          </div>
-        </div>
+        )}
       </RequestDetail>
     </>
   )
 }
 
 function Projects() {
-  const { update } = useStore()
+  const { update, canAct } = useStore()
   const lk = useLookup()
   const a = useAssigned()
-  const toggle = (pid: string, mid: string) =>
+  // An admin in this trade's dashboard ticks milestones with their own project permission.
+  const canTick = canAct('canManageProjects')
+  const toggle = (pid: string, mid: string) => {
+    if (!canTick) return
     update((d) => {
       const m = d.projects.find((p) => p.id === pid)?.milestones.find((x) => x.id === mid)
       if (m) m.done = !m.done
     })
+  }
   return (
     <>
       <PageHeader title="Live projects" subtitle="Tick off milestones as they're completed." />
@@ -250,7 +271,7 @@ function Projects() {
                   {p.milestones.map((m) => (
                     <li key={m.id}>
                       <label className="flex cursor-pointer items-center gap-3 py-2 text-sm">
-                        <input type="checkbox" className="h-4 w-4 accent-slate-900" checked={m.done} onChange={() => toggle(p.id, m.id)} />
+                        <input type="checkbox" className="h-4 w-4 accent-slate-900" checked={m.done} disabled={!canTick} onChange={() => toggle(p.id, m.id)} />
                         <span className={cx('flex-1', m.done && 'text-slate-500 line-through')}>{m.title}</span>
                         <span className="num text-xs text-slate-500">{fmtDate(m.date)}</span>
                       </label>
@@ -267,6 +288,7 @@ function Projects() {
 }
 
 function ProviderCalendar() {
+  const { canAct } = useStore()
   const a = useAssigned()
   const lk = useLookup()
   const cal = useLinkedCalendar(a.requests, a.projects)
@@ -274,7 +296,18 @@ function ProviderCalendar() {
   return (
     <>
       <PageHeader title="Project calendar" subtitle="Maintenance visits and renovation milestones, synced with your work orders." />
-      <Calendar events={cal.events} onMove={cal.onMove} onOpen={(ev) => ev.kind === 'request' && setOpenId(ev.id.slice(2))} />
+      <Calendar
+        events={cal.events}
+        onMove={
+          // In an opened dashboard the admin's own permissions apply, as on the admin calendar.
+          canAct('canDispatchJobs') || canAct('canManageProjects')
+            ? (ev, date) => {
+                if (canAct(ev.kind === 'request' ? 'canDispatchJobs' : 'canManageProjects')) cal.onMove(ev, date)
+              }
+            : undefined
+        }
+        onOpen={(ev) => ev.kind === 'request' && setOpenId(ev.id.slice(2))}
+      />
       <RequestDetail r={lk.request(openId ?? undefined)} open={!!openId} onClose={() => setOpenId(null)} />
     </>
   )
@@ -283,7 +316,7 @@ function ProviderCalendar() {
 const OPEN_FOR_EXPENSES = ['approved', 'in_progress']
 
 function Budget() {
-  const { user, update, can } = useStore()
+  const { user, actor, update, can } = useStore()
   const a = useAssigned()
   const [adding, setAdding] = useState<string | null>(null)
   const [form, setForm] = useState({ date: todayISO(), description: '', category: 'Materials' as Expense['category'], amount: '' })
@@ -297,6 +330,7 @@ function Budget() {
       d.projects.find((p) => p.id === adding)?.expenses.push({
         id: uid('e'),
         providerId: user.id,
+        createdBy: actor?.id,
         date: form.date,
         description: form.description,
         category: form.category,
@@ -329,7 +363,13 @@ function Budget() {
                   {canSubmit(p.status) ? (
                     <button className="btn-primary" onClick={() => setAdding(p.id)}><Plus size={16} /> Submit expense</button>
                   ) : (
-                    <span className="text-xs text-slate-500">{can('canSubmitExpenses') ? 'Project closed for new expenses' : 'Expense submission not enabled for your account'}</span>
+                    <span className="text-xs text-slate-500">
+                      {can('canSubmitExpenses')
+                        ? 'Project closed for new expenses'
+                        : actor?.id !== user?.id
+                          ? 'Your admin account needs “Manage projects & quotes” to add expenses here'
+                          : 'Expense submission not enabled for your account'}
+                    </span>
                   )}
                 </div>
                 <div className="grid grid-cols-3 divide-x divide-slate-100 border-b border-slate-100 text-sm">
@@ -383,23 +423,28 @@ export function ExpenseTable({ expenses, actions }: { expenses: Expense[]; actio
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
-          {expenses.map((e) => (
-            <tr key={e.id}>
-              <td className="td num whitespace-nowrap text-slate-600">{fmtDate(e.date)}</td>
-              <td className="td">
-                {e.description}
-                {actions && <span className="block text-xs text-slate-500">{lk.user(e.providerId)?.name}</span>}
-              </td>
-              <td className="td text-slate-600">{e.category}</td>
-              <td className="td num text-right">{money(e.amount)}</td>
-              <td className="td">
-                <Status tone={e.status === 'approved' ? 'green' : e.status === 'rejected' ? 'red' : 'orange'}>
-                  {e.status === 'submitted' ? 'Awaiting approval' : e.status === 'approved' ? 'Approved' : 'Rejected'}
-                </Status>
-              </td>
-              {actions && <td className="td text-right">{actions(e)}</td>}
-            </tr>
-          ))}
+          {expenses.map((e) => {
+            // Shown when an admin added it from the trade's dashboard.
+            const addedBy = e.createdBy && e.createdBy !== e.providerId ? `Added by ${lk.byName(e.createdBy)}` : ''
+            const meta = [actions ? lk.user(e.providerId)?.name : '', addedBy].filter(Boolean).join(' · ')
+            return (
+              <tr key={e.id}>
+                <td className="td num whitespace-nowrap text-slate-600">{fmtDate(e.date)}</td>
+                <td className="td">
+                  {e.description}
+                  {meta && <span className="block text-xs text-slate-500">{meta}</span>}
+                </td>
+                <td className="td text-slate-600">{e.category}</td>
+                <td className="td num text-right">{money(e.amount)}</td>
+                <td className="td">
+                  <Status tone={e.status === 'approved' ? 'green' : e.status === 'rejected' ? 'red' : 'orange'}>
+                    {e.status === 'submitted' ? 'Awaiting approval' : e.status === 'approved' ? 'Approved' : 'Rejected'}
+                  </Status>
+                </td>
+                {actions && <td className="td text-right">{actions(e)}</td>}
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>

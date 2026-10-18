@@ -99,6 +99,8 @@ export interface MaintenanceRequest {
   smsNotified: boolean
   createdAt: string
   completedAt?: string
+  /** Who really lodged it (set by the database); differs from the client when an admin did it for them. */
+  createdBy?: string
 }
 
 export type ProjectStatus = 'quote_requested' | 'quoted' | 'approved' | 'in_progress' | 'completed' | 'rejected'
@@ -127,6 +129,8 @@ export interface Expense {
   category: 'Materials' | 'Labour' | 'Equipment hire' | 'Subcontractor' | 'Other'
   amount: number
   status: 'submitted' | 'approved' | 'rejected'
+  /** Who really added it (set by the database); differs from the trade when an admin did it for them. */
+  createdBy?: string
 }
 
 export interface Project {
@@ -145,6 +149,11 @@ export interface Project {
   assignedProviderId?: string
   expenses: Expense[]
   createdAt: string
+  /** Who really requested it (set by the database); differs from the client when an admin did it for them. */
+  createdBy?: string
+  /** Who last accepted or declined the quote, and which (set by the database; cleared when it's issued again). */
+  quoteDecidedBy?: string
+  quoteDecision?: 'approved' | 'rejected'
 }
 
 export type InvoiceStatus = 'draft' | 'sent' | 'paid'
@@ -202,6 +211,8 @@ export interface InboxMessage {
   read: boolean
   requiresAck: boolean
   acknowledged: boolean
+  /** Who acknowledged it: the trade, or an admin who did it from the trade's dashboard. */
+  acknowledgedBy?: string
   requestId?: string
   projectId?: string
 }

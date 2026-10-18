@@ -417,8 +417,8 @@ describe('admin', () => {
     assert.equal(d.invoices.find((x) => x.id === 'i-x')!.amount, 99.5)
     assert.deepEqual(d.smsSettings.recipients, ['+61400000000'])
     assert.equal(d.bank.bsb, '063-000')
-    // Admins can message a trade's inbox but can't read it back.
-    assert.ok(!d.inbox.some((m) => m.id === 'n-x'))
+    // Admins can message a trade's inbox and read it back (they can open the trade's dashboard).
+    assert.ok(d.inbox.some((m) => m.id === 'n-x'))
   })
 
   test('reloading produces no spurious changes', async () => {
@@ -427,7 +427,11 @@ describe('admin', () => {
   })
 
   test("clients with job history can't be deleted; a deleted trade's jobs and expenses are kept", async () => {
-    await assert.rejects(pool.query(`delete from profiles where id = 'u-client-1'`), /foreign key/)
+    await assert.rejects(pool.query(`delete from profiles where id = 'u-client-1'`), /jobs or invoices on record/)
+    // Jobs alone are enough: deleting would otherwise erase them along with the client.
+    assert.equal((await pool.query(`select count(*)::int n from invoices where client_id = 'u-client-2'`)).rows[0].n, 0)
+    await assert.rejects(asUser(uid.admin, `delete from profiles where id = 'u-client-2'`), /jobs or invoices on record/)
+    assert.equal((await pool.query(`select count(*)::int n from projects where client_id = 'u-client-2'`)).rows[0].n > 0, true)
     await pool.query(`delete from profiles where id = 'u-prov-1'`)
     const e = (await fetchAll(admin)).projects.find((p) => p.id === 'pr-1')!.expenses
     assert.equal(e.length, 4)
@@ -452,5 +456,129 @@ describe('admin', () => {
     })
     const d = await fetchAll(admin)
     assert.ok(!d.projects.some((p) => p.id === 'pr-q'))
+  })
+})
+
+describe('admins acting in a client or trade dashboard', () => {
+  test('records who really created a job, quote or expense, and it cannot be changed', async () => {
+    // A client lodging their own request is recorded as them, whatever the app sends.
+    const own = await asUser<{ created_by: string }>(
+      uid.sarah,
+      `insert into requests (client_id, property_id, title, category, created_by) values ('u-client-1', 'p-1', 'Gutter', 'Handyman', 'u-admin') returning created_by`,
+    )
+    assert.equal(own.rows[0].created_by, 'u-client-1')
+    // An admin lodging one from the client's dashboard is recorded as the admin.
+    const forClient = await asUser<{ id: string; created_by: string }>(
+      uid.admin,
+      `insert into requests (client_id, property_id, title, category, created_by) values ('u-client-1', 'p-1', 'Leaking tap', 'Plumbing', 'u-client-1') returning id, created_by`,
+    )
+    assert.equal(forClient.rows[0].created_by, 'u-admin')
+    const quote = await asUser<{ created_by: string }>(uid.admin, `insert into projects (client_id, property_id, title) values ('u-client-1', 'p-1', 'Deck') returning created_by`)
+    assert.equal(quote.rows[0].created_by, 'u-admin')
+    const expense = await asUser<{ created_by: string }>(
+      uid.admin,
+      `insert into project_expenses (project_id, provider_id, date, description, category, amount) values ('pr-1', 'u-prov-3', '2030-01-02', 'Glue', 'Materials', 12) returning created_by`,
+    )
+    assert.equal(expense.rows[0].created_by, 'u-admin')
+    // Nobody signed in through the app can rewrite it afterwards.
+    const later = await asUser<{ created_by: string }>(
+      uid.admin,
+      `update requests set created_by = 'u-client-1', title = 'Leaking tap (kitchen)' where id = $1 returning created_by`,
+      [forClient.rows[0].id],
+    )
+    assert.equal(later.rows[0].created_by, 'u-admin')
+  })
+
+  test('the synced app data carries who created each record', async () => {
+    const d = await fetchAll(admin)
+    assert.ok(d.requests.some((r) => r.title === 'Leaking tap (kitchen)' && r.createdBy === 'u-admin'))
+    assert.ok(d.requests.some((r) => r.title === 'Gutter' && r.createdBy === 'u-client-1'))
+  })
+
+  test("admins can read and acknowledge a trade's inbox; other people still cannot", async () => {
+    const msgs = await asUser<{ id: string }>(uid.admin, `select id from inbox where user_id = 'u-prov-3'`)
+    assert.ok(msgs.rows.length > 0)
+    const ack = await asUser<{ acknowledged_by: string }>(
+      uid.admin,
+      `update inbox set acknowledged = true, read = true where id = $1 returning acknowledged_by`,
+      [msgs.rows[0].id],
+    )
+    assert.equal(ack.rowCount, 1)
+    // Recorded as the admin, not the trade, and the app can't say otherwise.
+    assert.equal(ack.rows[0].acknowledged_by, 'u-admin')
+    await assert.rejects(asUser(uid.admin, `update inbox set acknowledged_by = 'u-prov-3' where id = $1`, [msgs.rows[0].id]), /Only read and acknowledged/)
+    const d = await fetchAll(admin)
+    assert.equal(d.inbox.find((m) => m.id === msgs.rows[0].id)?.acknowledgedBy, 'u-admin')
+    await assert.rejects(asUser(uid.admin, `update inbox set title = 'x' where id = $1`, [msgs.rows[0].id]), /Only read and acknowledged/)
+    const other = await asUser(uid.sarah, `select id from inbox where user_id = 'u-prov-3'`)
+    assert.equal(other.rowCount, 0)
+    // Only trades' inboxes: not clients' or other admins' (no dashboard shows them).
+    await asUser(uid.admin, `insert into inbox (user_id, title, body) values ('u-client-1', 'For Sarah', 'x'), ('u-office', 'For Office', 'x')`)
+    const seen = await asUser<{ title: string }>(uid.admin, `select title from inbox where title in ('For Sarah', 'For Office')`)
+    assert.equal(seen.rowCount, 0)
+    const marked = await asUser(uid.admin, `update inbox set read = true where title in ('For Sarah', 'For Office')`)
+    assert.equal(marked.rowCount, 0)
+    assert.equal((await asUser(uid.sarah, `select id from inbox where title = 'For Sarah'`)).rowCount, 1)
+  })
+
+  test('records who last accepted or rejected a quote, and clears it when the quote is issued again', async () => {
+    type Q = { id: string; status: string; quote_decided_by: string | null; quote_decision: string | null }
+    const quoted = `insert into projects (client_id, property_id, title, status, quote_amount, quote_decided_by, quote_decision)
+      values ('u-client-1', 'p-1', $1, 'quoted', 5000, 'u-client-1', 'approved') returning id, status, quote_decided_by, quote_decision`
+    const set = (who: string, id: string, sql: string) =>
+      asUser<Q>(who, `update projects set ${sql} where id = $1 returning id, status, quote_decided_by, quote_decision`, [id]).then((r) => r.rows[0])
+    const a = (await asUser<Q>(uid.admin, quoted, ['Fence'])).rows[0]
+    assert.deepEqual([a.quote_decided_by, a.quote_decision], [null, null])
+    // The client answers their own quote, and can't write the record themselves.
+    await assert.rejects(set(uid.sarah, a.id, `quote_decided_by = 'u-admin'`), /accept or decline/)
+    await assert.rejects(set(uid.sarah, a.id, `quote_decision = 'rejected'`), /accept or decline/)
+    const mine = await set(uid.sarah, a.id, `status = 'approved'`)
+    assert.deepEqual([mine.quote_decided_by, mine.quote_decision], ['u-client-1', 'approved'])
+    // Carrying on with the project keeps it, and so does moving it back to approved.
+    const started = await set(uid.admin, a.id, `status = 'in_progress', quote_decided_by = null, quote_decision = null`)
+    assert.deepEqual([started.quote_decided_by, started.quote_decision], ['u-client-1', 'approved'])
+    const back = await set(uid.admin, a.id, `status = 'approved'`)
+    assert.deepEqual([back.quote_decided_by, back.quote_decision], ['u-client-1', 'approved'])
+    // An admin answers one from the client's dashboard.
+    const b = (await asUser<Q>(uid.admin, quoted, ['Pergola'])).rows[0]
+    const declined = await set(uid.admin, b.id, `status = 'rejected'`)
+    assert.deepEqual([declined.quote_decided_by, declined.quote_decision], ['u-admin', 'rejected'])
+    // The office re-issues a revised quote: nobody has answered that one yet.
+    const reissued = await set(uid.admin, b.id, `status = 'quoted', quote_amount = 4500`)
+    assert.deepEqual([reissued.quote_decided_by, reissued.quote_decision], [null, null])
+    // The client accepts it, then the office cancels the job: the record follows whoever did each.
+    assert.equal((await set(uid.sarah, b.id, `status = 'approved'`)).quote_decided_by, 'u-client-1')
+    const cancelled = await set(uid.admin, b.id, `status = 'rejected'`)
+    assert.deepEqual([cancelled.quote_decided_by, cancelled.quote_decision], ['u-admin', 'rejected'])
+    // Reopening a rejected job, or moving a quote straight into work after a phone call, counts as
+    // accepting it, by whoever did it.
+    const c = (await asUser<Q>(uid.admin, quoted, ['Shed'])).rows[0]
+    const phoned = await set(uid.admin, c.id, `status = 'in_progress'`)
+    assert.deepEqual([phoned.quote_decided_by, phoned.quote_decision], ['u-admin', 'approved'])
+    const d = await fetchAll(admin)
+    const p = d.projects.find((x) => x.id === b.id)
+    assert.deepEqual([p?.quoteDecidedBy, p?.quoteDecision], ['u-admin', 'rejected'])
+    const reopened = await set(uid.admin, b.id, `status = 'in_progress'`)
+    assert.deepEqual([reopened.quote_decided_by, reopened.quote_decision], ['u-admin', 'approved'])
+  })
+
+  test("an admin who did work for other people can't be deleted; other accounts delete as before", async () => {
+    // The office admin acknowledges a trade's work order from the trade's dashboard.
+    const msg = await asUser<{ id: string }>(uid.admin, `insert into inbox (user_id, title, body, requires_ack) values ('u-prov-3', 'WO', 'x', true) returning id`)
+    await asUser(uid.office, `update inbox set acknowledged = true where id = $1`, [msg.rows[0].id])
+    await assert.rejects(asUser(uid.admin, `delete from profiles where id = 'u-office'`), (e: Error & { code?: string }) => {
+      assert.equal(e.code, '23503')
+      assert.match(e.message, /done work for other people on record/)
+      return true
+    })
+    // Nor through the server (service role).
+    await assert.rejects(pool.query(`delete from profiles where id = 'u-office'`), /done work for other people/)
+    assert.equal((await pool.query(`select acknowledged_by from inbox where id = $1`, [msg.rows[0].id])).rows[0].acknowledged_by, 'u-office')
+    // Accounts with only their own records still delete (like the trade deleted earlier), and so does a new admin.
+    await mutate(admin, (d) => {
+      d.users.push({ id: 'u-temp', name: 'Temp', email: 'temp@example.com', role: 'admin', phone: '', permissions: [], createdAt: new Date().toISOString(), status: 'invited', passwordHash: '' })
+    })
+    const del = await asUser(uid.admin, `delete from profiles where id = 'u-temp'`)
+    assert.equal(del.rowCount, 1)
   })
 })

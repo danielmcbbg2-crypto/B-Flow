@@ -2,7 +2,7 @@ import { useCallback, useMemo, type ReactNode } from 'react'
 import { Camera } from 'lucide-react'
 import type { MaintenanceRequest, Project } from '../lib/types'
 import { useLookup, useStore } from '../lib/store'
-import { fmtDate, fmtDateTime } from '../lib/utils'
+import { cx, fmtDate, fmtDateTime } from '../lib/utils'
 import { RequestStatusText, Urgency } from './status'
 import { Modal, PhotoStrip, Sep } from './ui'
 import type { CalEvent } from './Calendar'
@@ -69,6 +69,8 @@ export function RequestDetail({
     ['Scheduled', <span className="num">{fmtDate(r.scheduledDate)}</span>],
     ['Lodged', <span className="num">{fmtDateTime(r.createdAt)}</span>],
   ]
+  // An admin lodged it from the client's dashboard.
+  if (r.createdBy && r.createdBy !== r.clientId) rows.push(['Lodged by', lk.byName(r.createdBy)])
   return (
     <Modal open={open} onClose={onClose} title={`Work order #${r.number}`} width="max-w-2xl">
       <h3 className="text-lg font-bold">{r.title}</h3>
@@ -102,6 +104,21 @@ export function RequestDetail({
       {children && <div className="mt-5 border-t border-slate-200 pt-5">{children}</div>}
     </Modal>
   )
+}
+
+/** Says who added a project or answered its quote when that wasn't the client (an admin from their dashboard). */
+export function ProjectBy({ p, className }: { p: Project; className?: string }) {
+  const lk = useLookup()
+  const answered = p.quoteDecision && p.status !== 'quote_requested' && p.status !== 'quoted'
+  const parts = [
+    p.createdBy && p.createdBy !== p.clientId ? `Added by ${lk.byName(p.createdBy)}` : '',
+    // "Rejected" (the status's own name) covers both a declined quote and a job cancelled later.
+    answered && p.quoteDecidedBy && p.quoteDecidedBy !== p.clientId
+      ? `${p.quoteDecision === 'rejected' ? 'Rejected' : 'Quote accepted'} by ${lk.byName(p.quoteDecidedBy)}`
+      : '',
+  ].filter(Boolean)
+  if (!parts.length) return null
+  return <p className={cx('text-xs text-slate-500', className)}>{parts.join(' · ')}</p>
 }
 
 /** Builds calendar events from requests & project milestones, and writes drags back to them. */

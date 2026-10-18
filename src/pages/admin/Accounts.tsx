@@ -1,7 +1,8 @@
 import { useRef, useState } from 'react'
-import { Copy, Mail, MessageSquare, UserPlus } from 'lucide-react'
+import { Copy, LayoutDashboard, Mail, MessageSquare, UserPlus } from 'lucide-react'
 import { Field, Modal, PageHeader, Status, Tabs } from '../../components/ui'
 import { useStore } from '../../lib/store'
+import { navigate } from '../../lib/router'
 import { ALL_PERMISSIONS, DEFAULT_PERMISSIONS, TRADES, type Permission, type Role, type UserAccount } from '../../lib/types'
 import { fmtDate, generateInviteCode, uid } from '../../lib/utils'
 import { CLOUD } from '../../lib/supabase'
@@ -50,21 +51,29 @@ function ShareLink({ account, link, invite }: { account: UserAccount; link: stri
 }
 
 export function Accounts() {
-  const { data, update, user, inviteAccount, getSignInLink, deleteAccount } = useStore()
+  const { data, update, user, inviteAccount, getSignInLink, deleteAccount, startActingAs } = useStore()
   const [tab, setTab] = useState<'all' | Role>('all')
   const [editing, setEditing] = useState<UserAccount | null>(null)
   const [inviting, setInviting] = useState(false)
   const [issued, setIssued] = useState<{ account: UserAccount; code?: string; link?: string } | null>(null)
   const list = data.users.filter((u) => tab === 'all' || u.role === tab)
+  // Clients' and trades' dashboards open here for the admin to view and work in; admins have none.
+  const openDashboard = (u: UserAccount) => {
+    startActingAs(u.id)
+    navigate(`/${u.role}`)
+  }
 
   return (
     <>
       <PageHeader
         title="Accounts & permissions"
         subtitle={
-          CLOUD
-            ? 'Accounts are invite-only. Send each person an invite link by text or email; they choose their own password.'
-            : 'Accounts are invite-only. Share the invite code with the person; they activate it from Sign in.'
+          <>
+            {CLOUD
+              ? 'Accounts are invite-only. Send each person an invite link by text or email; they choose their own password.'
+              : 'Accounts are invite-only. Share the invite code with the person; they activate it from Sign in.'}{' '}
+            Open a client's or service provider's dashboard to see and work in it as they would; nothing you do there is recorded as them.
+          </>
         }
         actions={<button className="btn-primary" onClick={() => setInviting(true)}><UserPlus size={16} /> Invite account</button>}
       />
@@ -95,7 +104,13 @@ export function Accounts() {
             {list.map((u) => (
               <tr key={u.id} className="hover:bg-slate-50">
                 <td className="td">
-                  <p className="font-semibold">{u.name}</p>
+                  {u.role === 'admin' ? (
+                    <p className="font-semibold">{u.name}</p>
+                  ) : (
+                    <button className="text-left font-semibold underline-offset-2 hover:underline" onClick={() => openDashboard(u)} title={`Open ${u.name}'s dashboard`}>
+                      {u.name}
+                    </button>
+                  )}
                   <p className="text-xs text-slate-500">{u.email}</p>
                   {u.company && <p className="text-xs text-slate-500">{u.company}{u.trade ? ` · ${u.trade}` : ''}</p>}
                 </td>
@@ -109,7 +124,12 @@ export function Accounts() {
                   {!CLOUD && u.status === 'invited' && u.inviteCode && <p className="num mt-0.5 text-xs text-slate-500">{u.inviteCode}</p>}
                 </td>
                 <td className="td num whitespace-nowrap text-slate-600">{fmtDate(u.createdAt)}</td>
-                <td className="td text-right">
+                <td className="td whitespace-nowrap text-right">
+                  {u.role !== 'admin' && (
+                    <button className="btn-ghost px-3 py-1.5" onClick={() => openDashboard(u)} aria-label={`Open dashboard: ${u.name}`}>
+                      <LayoutDashboard size={15} /> Open dashboard
+                    </button>
+                  )}
                   <button className="btn-ghost px-3 py-1.5" onClick={() => setEditing(u)}>Edit</button>
                 </td>
               </tr>
@@ -360,8 +380,8 @@ function AccountEditor({
         </div>
         {confirmingDelete && (
           <p className="text-sm text-red-700 sm:col-span-2">
-            Delete {account.name}'s account and login? This can't be undone. Accounts with jobs or invoices on record can't be deleted; suspend
-            them instead.
+            Delete {account.name}'s account and login? This can't be undone. Clients with jobs or invoices, and admins who have done work
+            for other people, can't be deleted; suspend them instead. A service provider's jobs are kept, unassigned.
           </p>
         )}
         {msg && <p className={`text-sm sm:col-span-2 ${msg.ok ? 'text-emerald-700' : 'text-red-600'}`}>{msg.text}</p>}
