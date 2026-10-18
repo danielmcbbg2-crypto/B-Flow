@@ -1,11 +1,12 @@
 import { useMemo, useState, type FormEvent, type ReactNode } from 'react'
-import { CalendarDays, FolderKanban, Home, Inbox as InboxIcon, Receipt, Wrench, Check, Plus } from 'lucide-react'
+import { CalendarDays, FolderKanban, Home, Inbox as InboxIcon, Receipt, ShoppingBag, Wrench, Check, Plus } from 'lucide-react'
 import { GridTile, PortalShell, type NavItem } from '../../components/PortalShell'
 import { Calendar } from '../../components/Calendar'
 import { Empty, Field, Modal, PageHeader, PhotoInput, Sep, Status, Tabs } from '../../components/ui'
 import { ProjectStatusText } from '../../components/status'
 import { ProjectProgress, RequestDetail, RequestRow, useLinkedCalendar } from '../../components/works'
 import { doneBy, useLookup, useStore } from '../../lib/store'
+import { PortalStore } from '../store/Shop'
 import { REQUEST_STATUS_LABEL, type Expense, type RequestStatus } from '../../lib/types'
 import { cx, fmtDate, fmtDateTime, money, todayISO, uid } from '../../lib/utils'
 
@@ -19,6 +20,7 @@ export function ProviderPortal({ section }: { section: string }) {
     { key: 'projects', label: 'Projects', icon: FolderKanban },
     { key: 'calendar', label: 'Calendar', icon: CalendarDays },
     { key: 'budget', label: 'Budget & expenses', icon: Receipt },
+    { key: 'store', label: 'Store', icon: ShoppingBag },
   ]
   return (
     <PortalShell role="provider" label="Service provider portal" nav={nav} active={section}>
@@ -32,6 +34,8 @@ export function ProviderPortal({ section }: { section: string }) {
         <ProviderCalendar />
       ) : section === 'budget' ? (
         <Budget />
+      ) : section === 'store' ? (
+        <PortalStore />
       ) : (
         <Overview unread={unread} />
       )}

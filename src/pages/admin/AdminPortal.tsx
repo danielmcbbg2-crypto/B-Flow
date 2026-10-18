@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Building2, CalendarDays, FolderKanban, LayoutDashboard, MessageSquareText, Receipt, Truck, Users } from 'lucide-react'
+import { Building2, CalendarDays, FolderKanban, LayoutDashboard, MessageSquareText, Receipt, ShoppingBag, Truck, Users } from 'lucide-react'
 import { GridTile, PortalShell, type NavItem } from '../../components/PortalShell'
 import { Calendar } from '../../components/Calendar'
 import { Empty, PageHeader, Stat } from '../../components/ui'
@@ -11,12 +11,14 @@ import { AdminProjects } from './AdminProjects'
 import { Finance } from './Finance'
 import { SmsGateway } from './SmsGateway'
 import { Accounts } from './Accounts'
+import { AdminStore } from './AdminStore'
 import { PropertyCard } from '../client/ClientPortal'
 
 export function AdminPortal({ section }: { section: string }) {
   const { data, can } = useStore()
   const pending = data.requests.filter((r) => r.status === 'pending').length
   const quotes = data.projects.filter((p) => p.status === 'quote_requested').length
+  const newOrders = data.orders.filter((o) => o.status === 'new').length
   const nav: NavItem[] = [
     { key: 'home', label: 'Command centre', icon: LayoutDashboard },
     ...(can('canDispatchJobs') ? [{ key: 'dispatch', label: 'Triage & dispatch', icon: Truck, badge: pending }] : []),
@@ -24,6 +26,7 @@ export function AdminPortal({ section }: { section: string }) {
     { key: 'calendar', label: 'Calendar', icon: CalendarDays },
     ...(can('canManageInvoices') ? [{ key: 'finance', label: 'Finance', icon: Receipt }] : []),
     { key: 'properties', label: 'Properties', icon: Building2 },
+    ...(can('canManageStore') ? [{ key: 'store', label: 'Store', icon: ShoppingBag, badge: newOrders }] : []),
     { key: 'sms', label: 'SMS gateway', icon: MessageSquareText },
     ...(can('canEditPermissions') ? [{ key: 'accounts', label: 'Accounts', icon: Users }] : []),
   ]
@@ -39,6 +42,8 @@ export function AdminPortal({ section }: { section: string }) {
         return can('canManageInvoices') ? <Finance /> : <Empty title="You don't have access to finance." />
       case 'properties':
         return <AllProperties />
+      case 'store':
+        return can('canManageStore') ? <AdminStore /> : <Empty title="You don't have access to the store." />
       case 'sms':
         return <SmsGateway />
       case 'accounts':

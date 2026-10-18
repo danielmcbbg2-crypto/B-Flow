@@ -1,11 +1,25 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { RealtimeChannel, Session } from '@supabase/supabase-js'
-import type { AppData, InboxMessage, MaintenanceRequest, Permission, Project, ProjectStatus, Property, Role, UserAccount } from './types'
+import type {
+  AppData,
+  DraftListing,
+  FoundProduct,
+  InboxMessage,
+  MaintenanceRequest,
+  Permission,
+  Product,
+  Project,
+  ProjectStatus,
+  Property,
+  Role,
+  StoreOrder,
+  UserAccount,
+} from './types'
 import { BRAND } from './brand'
 import { createSeed, DATA_VERSION } from './seed'
 import { dispatchSms } from './sms'
 import { generateInviteCode, money, sha256, uid } from './utils'
-import { applyOps, diff, emptyData, fetchAll, profileRow, projectFromRow, propertyRow, requestFromRow, userFromRow } from './db'
+import { applyOps, diff, emptyData, fetchAll, productsFromRows, profileRow, projectFromRow, propertyRow, requestFromRow, userFromRow } from './db'
 import { CLOUD, DEMO, DEMO_BUILD, supabase, supabaseAdapter, uploadPhoto } from './supabase'
 
 const DATA_KEY = 'npm.data.v1'
@@ -51,14 +65,17 @@ async function invokeFunction<T = unknown>(name: string, body: Record<string, un
   const { data, error } = await supabase!.functions.invoke(name, { body })
   if (error) {
     let message = error.message
+    let code: string | undefined
     try {
       const ctx = (error as { context?: Response }).context
       const json = ctx ? await ctx.json() : null
       if (json?.error) message = json.error
+      code = json?.code
     } catch {
       /* keep the generic message */
     }
-    throw new Error(message)
+    // `code` lets the screen react to a known case (e.g. the AI assistant isn't set up yet).
+    throw Object.assign(new Error(message), { code })
   }
   return data as T
 }
@@ -66,6 +83,17 @@ async function invokeFunction<T = unknown>(name: string, body: Record<string, un
 type AuthResult = { error?: string; role?: Role }
 type NewRequest = Omit<MaintenanceRequest, 'id' | 'number' | 'createdAt' | 'status' | 'smsNotified' | 'completionPhotos' | 'notes'>
 type InboxDraft = Omit<InboxMessage, 'id' | 'createdAt' | 'read' | 'acknowledged'>
+
+/** A store order as the checkout sends it; prices are worked out by the database. */
+export interface OrderInput {
+  items: { productId: string; qty: number }[]
+  name: string
+  email: string
+  phone: string
+  delivery: StoreOrder['delivery']
+  address: string
+  notes: string
+}
 
 /** A project an admin sets up, optionally with a new client (added without a login) and property. */
 export interface NewProject {
@@ -132,6 +160,14 @@ interface StoreValue {
   submitRequest: (req: NewRequest) => Promise<MaintenanceRequest>
   requestQuote: (q: { clientId: string; propertyId: string; title: string; description: string; budget: number }) => Promise<void>
   assignRequest: (requestId: string, providerId: string, scheduledDate: string, sms: boolean) => Promise<void>
+  /** Published products for the public shop (visitors aren't signed in, so they don't have `data`). */
+  loadCatalog: () => Promise<Product[]>
+  /** Places a store order for anyone; throws with a message the customer can act on. */
+  placeOrder: (o: OrderInput) => Promise<{ number: number; total: number }>
+  /** Store managers: the AI assistant searches the web for products (sample results in demo mode). */
+  findProducts: (query: string) => Promise<{ products: FoundProduct[]; note: string }>
+  /** Store managers: the AI assistant drafts a listing from a found product, for review. */
+  draftListing: (product: FoundProduct, instructions?: string) => Promise<DraftListing>
   /** Admins: create a project, with its client and property if they're new. Throws with a message if it can't be saved. */
   createProject: (p: NewProject) => Promise<Project>
   /** Message one person's inbox (admins). */
@@ -781,6 +817,119 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [update, mergeLocal, pushInbox, user],
   )
 
+  // ───────────── store ─────────────
+
+  const loadCatalog = useCallback(async (): Promise<Product[]> => {
+    if (supabase) {
+      const { data: rows, error } = await supabase.from('products').select('*').eq('status', 'published')
+      if (error) throw new Error(error.message)
+      return productsFromRows(rows ?? [])
+    }
+    return dataRef.current.products.filter((p) => p.status === 'published')
+  }, [])
+
+  const placeOrder = useCallback(
+    async (o: OrderInput): Promise<{ number: number; total: number }> => {
+      if (supabase) {
+        const { data: res, error } = await supabase.rpc('place_order', {
+          p_items: o.items.map((i) => ({ product_id: i.productId, qty: i.qty })),
+          p_name: o.name,
+          p_email: o.email,
+          p_phone: o.phone,
+          p_delivery: o.delivery,
+          p_address: o.address,
+          p_notes: o.notes,
+        })
+        if (error) throw new Error(error.message)
+        if (user) await refresh()
+        const r = res as { number: number; total: number | string }
+        return { number: r.number, total: Number(r.total) }
+      }
+      // Demo mode follows the same rules as the database.
+      const d0 = dataRef.current
+      if (!o.name.trim()) throw new Error('Enter your name')
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(o.email.trim())) throw new Error('Enter a valid email address')
+      if (o.phone.replace(/\D/g, '').length < 8) throw new Error('Enter a phone number we can reach you on')
+      if (o.delivery === 'delivery' && !o.address.trim()) throw new Error('Enter the delivery address')
+      if (o.items.length === 0) throw new Error('Your cart is empty')
+      const trade = user?.role === 'provider' && user.status === 'active'
+      const unavailable = o.items
+        .map((i) => ({ i, p: d0.products.find((p) => p.id === i.productId) }))
+        .filter(({ p }) => !p || p.status !== 'published' || p.stock === 'out_of_stock')
+      if (unavailable.length) throw new Error(`No longer available: ${unavailable.map(({ p }) => p?.title ?? 'an item').join(', ')}`)
+      const items = o.items.map((i) => {
+        const p = d0.products.find((x) => x.id === i.productId)!
+        return { id: uid('oi'), productId: p.id, title: p.title, sku: p.sku, unitPrice: trade && p.tradePrice !== undefined ? p.tradePrice : p.price, qty: i.qty }
+      })
+      const total = items.reduce((s, i) => s + i.unitPrice * i.qty, 0)
+      const number = Math.max(5000, ...d0.orders.map((x) => x.number)) + 1
+      update((d) => {
+        d.orders.unshift({
+          id: uid('o'),
+          number,
+          customerId: user?.id,
+          name: o.name.trim(),
+          email: o.email.trim(),
+          phone: o.phone.trim(),
+          delivery: o.delivery,
+          address: o.address.trim(),
+          notes: o.notes.trim(),
+          trade,
+          total,
+          status: 'new',
+          adminNotes: '',
+          createdAt: new Date().toISOString(),
+          items,
+        })
+        for (const a of d.users.filter((u) => u.role === 'admin' && u.status === 'active')) {
+          d.inbox.unshift({
+            id: uid('n'),
+            userId: a.id,
+            title: `New store order #${number}`,
+            body: `${o.name.trim()}${trade ? ' (trade)' : ''} — ${items.reduce((s, i) => s + i.qty, 0)} item(s), ${money(total)}, ${o.delivery}`,
+            createdAt: new Date().toISOString(),
+            read: false,
+            requiresAck: false,
+            acknowledged: false,
+          })
+        }
+      })
+      return { number, total }
+    },
+    [update, refresh, user],
+  )
+
+  const findProducts = useCallback(async (query: string) => {
+    if (supabase) return invokeFunction<{ products: FoundProduct[]; note: string }>('store-assistant', { action: 'find', query })
+    await new Promise((r) => setTimeout(r, 400))
+    const q = query.trim() || 'bathroom products'
+    const sample = (n: number, brand: string, price: string): FoundProduct => ({
+      name: `${brand} ${q} (option ${n})`,
+      brand,
+      supplier: `${brand} Australia`,
+      url: `https://example.com/${brand.toLowerCase()}-${n}`,
+      price,
+      category: 'Other',
+      summary: `Sample result for “${q}”. In live mode the assistant searches the web for real products sold in Australia.`,
+    })
+    return { products: [sample(1, 'Aqualine', '$449 inc. GST'), sample(2, 'Stonebridge', '$689 inc. GST'), sample(3, 'Hydro', '')], note: 'Demo mode: these are sample results.' }
+  }, [])
+
+  const draftListing = useCallback(async (product: FoundProduct, instructions?: string): Promise<DraftListing> => {
+    if (supabase) return (await invokeFunction<{ listing: DraftListing }>('store-assistant', { action: 'draft', product, instructions })).listing
+    await new Promise((r) => setTimeout(r, 400))
+    return {
+      title: product.name,
+      description: `${product.summary}\n\nNext Phase Maintenance can supply and install it.`,
+      specs: ['Sample spec: check the supplier page'],
+      category: product.category,
+      brand: product.brand,
+      sku: '',
+      suggested_price: product.price.replace(/[^0-9.]/g, ''),
+      notes: 'Demo mode: this draft is a sample. In live mode the assistant reads the product page and writes an original description.',
+    }
+  }, [])
+
   // ───────────── accounts & files ─────────────
 
   const uploadImage = useCallback(async (dataUrl: string) => (supabase ? uploadPhoto(supabase, dataUrl) : dataUrl), [])
@@ -901,6 +1050,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     submitRequest,
     requestQuote,
     createProject,
+    loadCatalog,
+    placeOrder,
+    findProducts,
+    draftListing,
     assignRequest,
     pushInbox,
     pushAdminInbox,

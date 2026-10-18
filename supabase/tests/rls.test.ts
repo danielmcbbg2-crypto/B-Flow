@@ -628,3 +628,161 @@ describe('clients added without a login', () => {
     await assert.rejects(asUser(uid.admin, `update profiles set email = null where id = 'u-nl-1'`), /profiles_login_has_email/)
   })
 })
+
+describe('store', () => {
+  /** Runs SQL as a signed-out visitor, like the public store page does. */
+  async function asAnon<T>(sql: string, params: unknown[] = []): Promise<pg.QueryResult<T & pg.QueryResultRow>> {
+    const c = await pool.connect()
+    try {
+      await c.query('begin')
+      await c.query('set local role anon')
+      const r = await c.query<T & pg.QueryResultRow>(sql, params)
+      await c.query('commit')
+      return r
+    } catch (e) {
+      await c.query('rollback')
+      throw e
+    } finally {
+      c.release()
+    }
+  }
+  const order = (items: unknown, email: string, extra = '') =>
+    `select place_order('${JSON.stringify(items)}'::jsonb, 'Jo Buyer', '${email}', '0400 111 222', 'pickup'${extra}) as r`
+
+  before(async () => {
+    await asUser(
+      uid.admin,
+      `insert into products (id, title, category, sku, price, status, stock) values
+        ('sp-1', 'Timber vanity 900', 'Vanities', 'VAN-900', 1200, 'published', 'in_stock'),
+        ('sp-2', 'Frameless screen', 'Shower screens', 'SCR-1', 800, 'published', 'to_order'),
+        ('sp-3', 'Secret tap', 'Tapware', 'TAP-X', 300, 'draft', 'in_stock'),
+        ('sp-4', 'Sold-out mixer', 'Tapware', 'TAP-Y', 250, 'published', 'out_of_stock')`,
+    )
+    await asUser(uid.admin, `insert into product_trade_prices (id, price) values ('sp-1', 950), ('sp-3', 200)`)
+    await asUser(uid.admin, `insert into product_sources (id, supplier, cost, source_url) values ('sp-1', 'Acme Wholesale', 700, 'https://example.com/v900')`)
+    // A trade with a login, to order at trade prices.
+    await mutate(admin, (d) => {
+      d.users.push({ id: 'u-trade', name: 'Tia Trade', email: 'tia@example.com', role: 'provider', phone: '', permissions: ['canSubmitExpenses'], createdAt: new Date().toISOString(), status: 'invited', passwordHash: '' })
+    })
+    uid.tia = await createAuthUser('tia@example.com')
+    await asUser(uid.tia, 'select activate_my_account()')
+  })
+
+  test('the owner can manage the store; products record who added them', async () => {
+    const perms = await asUser<{ ok: boolean }>(uid.admin, `select has_perm('canManageStore') as ok`)
+    assert.equal(perms.rows[0].ok, true)
+    assert.equal((await pool.query(`select created_by from products where id = 'sp-1'`)).rows[0].created_by, 'u-admin')
+    await assert.rejects(asUser(uid.sarah, `insert into products (title, price) values ('x', 1)`), /row-level security/)
+  })
+
+  test('visitors and clients see published products only, and no trade prices or supplier details', async () => {
+    const pub = await asAnon<{ id: string }>(`select id from products order by id`)
+    assert.deepEqual(pub.rows.map((r) => r.id), ['sp-1', 'sp-2', 'sp-4'])
+    assert.equal((await asAnon(`select * from product_trade_prices`)).rowCount, 0)
+    assert.equal((await asAnon(`select * from product_sources`)).rowCount, 0)
+    assert.equal((await asAnon(`select * from orders`)).rowCount, 0)
+    const client = await asUser<{ id: string }>(uid.sarah, `select id from products order by id`)
+    assert.deepEqual(client.rows.map((r) => r.id), ['sp-1', 'sp-2', 'sp-4'])
+    assert.equal((await asUser(uid.sarah, `select * from product_trade_prices`)).rowCount, 0)
+    assert.equal((await asUser(uid.sarah, `select * from product_sources`)).rowCount, 0)
+  })
+
+  test('service providers see trade prices of published products only; store managers see everything', async () => {
+    const trade = await asUser<{ id: string }>(uid.tia, `select id from product_trade_prices`)
+    assert.deepEqual(trade.rows.map((r) => r.id), ['sp-1'])
+    assert.equal((await asUser(uid.tia, `select * from product_sources`)).rowCount, 0)
+    assert.equal((await asUser(uid.admin, `select * from products`)).rowCount, 4)
+    assert.equal((await asUser(uid.admin, `select * from product_sources`)).rowCount, 1)
+  })
+
+  test('anyone can order; prices come from the database (trade for service providers)', async () => {
+    const guest = await asAnon<{ r: { number: number; total: string } }>(order([{ product_id: 'sp-1', qty: 1 }, { product_id: 'sp-2', qty: 2 }, { product_id: 'sp-1', qty: 1 }], 'jo@example.com'))
+    assert.ok(guest.rows[0].r.number >= 5001)
+    assert.equal(Number(guest.rows[0].r.total), 2 * 1200 + 2 * 800)
+    const g = await pool.query(`select customer_id, trade, status from orders where number = $1`, [guest.rows[0].r.number])
+    assert.deepEqual(g.rows[0], { customer_id: null, trade: false, status: 'new' })
+    assert.equal((await pool.query(`select count(*)::int n from order_items where order_id = (select id from orders where number = $1)`, [guest.rows[0].r.number])).rows[0].n, 2)
+
+    const tia = await asUser<{ r: { number: number; total: string } }>(uid.tia, order([{ product_id: 'sp-1', qty: 2 }, { product_id: 'sp-2', qty: 1 }], 'tia@example.com'))
+    assert.equal(Number(tia.rows[0].r.total), 2 * 950 + 800)
+    const sarahOrder = await asUser<{ r: { number: number; total: string } }>(uid.sarah, order([{ product_id: 'sp-1', qty: 1 }], 'sarah@whitfieldproperty.com.au'))
+    assert.equal(Number(sarahOrder.rows[0].r.total), 1200)
+
+    // Members see their own orders and items; nobody else's.
+    const mine = await asUser<{ number: number }>(uid.sarah, `select number from orders`)
+    assert.deepEqual(mine.rows.map((r) => r.number), [sarahOrder.rows[0].r.number])
+    assert.equal((await asUser(uid.sarah, `select * from order_items`)).rowCount, 1)
+    assert.equal((await asUser(uid.tia, `select * from orders`)).rowCount, 1)
+    // Every active admin hears about it.
+    assert.ok((await asUser<{ title: string }>(uid.admin, `select title from inbox where title = 'New store order #${tia.rows[0].r.number}'`)).rowCount === 1)
+  })
+
+  test('orders are checked: drafts, sold-out items, bad details and empty carts are refused', async () => {
+    await assert.rejects(asAnon(order([{ product_id: 'sp-3', qty: 1 }], 'a@example.com')), /No longer available: Secret tap/)
+    await assert.rejects(asAnon(order([{ product_id: 'sp-4', qty: 1 }], 'a@example.com')), /No longer available: Sold-out mixer/)
+    await assert.rejects(asAnon(order([{ product_id: 'nope', qty: 1 }], 'a@example.com')), /No longer available/)
+    await assert.rejects(asAnon(order([], 'a@example.com')), /cart is empty/)
+    await assert.rejects(asAnon(order([{ product_id: 'sp-1', qty: 0 }], 'a@example.com')), /quantity from 1 to 99/)
+    await assert.rejects(asAnon(order([{ product_id: 'sp-1', qty: 1 }], 'not-an-email')), /valid email/)
+    await assert.rejects(
+      asAnon(`select place_order('[{"product_id":"sp-1","qty":1}]'::jsonb, 'Jo', 'jo2@example.com', '0400 111 222', 'delivery', '') as r`),
+      /delivery address/,
+    )
+    // Visitors can't write orders directly.
+    await assert.rejects(asAnon(`insert into orders (name, email, phone, delivery, total) values ('x', 'x@x.co', '1', 'pickup', 0)`), /permission denied|row-level security/)
+  })
+
+  test('one email can only place a few orders an hour', async () => {
+    for (let i = 0; i < 5; i++) await asAnon(order([{ product_id: 'sp-1', qty: 1 }], 'flood@example.com'))
+    await assert.rejects(asAnon(order([{ product_id: 'sp-1', qty: 1 }], 'FLOOD@example.com')), /Too many orders/)
+  })
+
+  test('store managers move orders along but cannot change what was ordered', async () => {
+    const o = (await pool.query<{ id: string }>(`select id from orders where email = 'jo@example.com'`)).rows[0]
+    const upd = await asUser(uid.admin, `update orders set status = 'confirmed', admin_notes = 'Called Jo' where id = $1 returning id`, [o.id])
+    assert.equal(upd.rowCount, 1)
+    await assert.rejects(asUser(uid.admin, `update orders set total = 1 where id = $1`, [o.id]), /Only an order's status and notes/)
+    assert.equal((await asUser(uid.sarah, `update orders set status = 'paid' where id = $1 returning id`, [o.id])).rowCount, 0)
+    assert.equal((await asUser(uid.sarah, `update orders set status = 'cancelled' returning id`)).rowCount, 0)
+  })
+})
+
+describe('store through the app', () => {
+  test('store managers edit products, trade prices and supplier details; each person loads what they may see', async () => {
+    await mutate(admin, (d) => {
+      const v = d.products.find((p) => p.id === 'sp-2')!
+      v.price = 820
+      v.tradePrice = 650
+      v.source = { supplier: 'Glass Co', url: 'https://example.com/screen', cost: 400, notes: '' }
+      d.products.push({
+        id: 'sp-new', title: 'Towel rail', description: '', category: 'Accessories', brand: '', sku: 'TR-1', price: 99,
+        images: [], status: 'published', stock: 'in_stock', createdAt: new Date().toISOString(),
+      })
+    })
+    const a = await fetchAll(admin)
+    const screen = a.products.find((p) => p.id === 'sp-2')!
+    assert.deepEqual([screen.price, screen.tradePrice, screen.source?.supplier, screen.source?.cost], [820, 650, 'Glass Co', 400])
+    assert.equal(a.products.find((p) => p.id === 'sp-new')!.createdBy, 'u-admin')
+    assert.deepEqual(diff(a, structuredClone(a)), [])
+
+    const t = await fetchAll(adapter(uid.tia))
+    assert.equal(t.products.find((p) => p.id === 'sp-2')!.tradePrice, 650)
+    assert.equal(t.products.find((p) => p.id === 'sp-2')!.source, undefined)
+    assert.equal(t.products.some((p) => p.status !== 'published'), false)
+    const c = await fetchAll(sarah)
+    assert.equal(c.products.find((p) => p.id === 'sp-2')!.tradePrice, undefined)
+    assert.ok(c.orders.length === 1 && c.orders[0].items.length === 1)
+    // A client changing an order (e.g. through the API) does nothing.
+    await assert.rejects(mutate(sarah, (d) => { d.orders[0].status = 'paid' }), /permission/)
+  })
+
+  test('store managers update an order\'s status and notes through the app', async () => {
+    await mutate(admin, (d) => {
+      const o = d.orders.find((x) => x.email === 'tia@example.com')!
+      o.status = 'paid'
+      o.adminNotes = 'Paid by transfer'
+    })
+    const o = (await fetchAll(admin)).orders.find((x) => x.email === 'tia@example.com')!
+    assert.deepEqual([o.status, o.adminNotes, o.trade], ['paid', 'Paid by transfer', true])
+  })
+})
