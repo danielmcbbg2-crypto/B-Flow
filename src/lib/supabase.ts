@@ -3,6 +3,9 @@ import type { DbAdapter, Row, TableName } from './db'
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
+/** For calls that read a server function's answer as it streams in (the AI product finder). */
+export const FUNCTIONS_URL = url ? `${url}/functions/v1` : ''
+export const ANON_KEY = anonKey ?? ''
 
 /** Null when the app runs in local demo mode (no Supabase project configured). */
 export const supabase: SupabaseClient | null = url && anonKey ? createClient(url, anonKey) : null

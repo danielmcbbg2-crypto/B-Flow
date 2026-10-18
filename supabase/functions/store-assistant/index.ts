@@ -1,14 +1,19 @@
 // Supabase Edge Function: the store's AI product assistant (store managers only).
 //
 //   { action: 'find', query }  searches the web for products matching the request that are sold in
-//       Australia, and returns up to 6 candidates with supplier links and prices.
+//       Australia, and returns up to 6 candidates with supplier links, prices and a photo from
+//       each product page.
 //   { action: 'draft', product, instructions? }  reads the product's page and drafts an original
 //       listing (title, description, specs, category, suggested price) for the admin to review.
+//
+// Both answer as lines of JSON: { type: 'progress', text } while working (what it's searching for
+// or reading), then { type: 'result', data } or { type: 'error', error }.
 //
 // Nothing is saved or published here: the app opens the draft in the product editor, and the admin
 // decides. Needs the ANTHROPIC_API_KEY secret; without it every call explains how to set it up.
 import { createClient } from 'npm:@supabase/supabase-js@2.49.4'
 import Anthropic from 'npm:@anthropic-ai/sdk@0.131.0'
+import { pagePhoto } from './photo.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -20,7 +25,9 @@ const json = (body: unknown, status = 200) =>
 
 const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 
-const MODEL = 'claude-opus-5-5'
+// Fast and well suited to web search and short writing; low effort keeps thinking (and waiting) short.
+const MODEL = 'claude-sonnet-5-5'
+const EFFORT = 'low'
 // Same list as the app's STORE_CATEGORIES.
 const CATEGORIES = ['Vanities', 'Shower screens', 'Tapware', 'Basins', 'Toilets', 'Baths', 'Mirrors & cabinets', 'Accessories', 'Hardware', 'Other']
 const MELBOURNE = { type: 'approximate' as const, city: 'Melbourne', region: 'Victoria', country: 'AU', timezone: 'Australia/Melbourne' }
@@ -31,7 +38,7 @@ const FIND_SYSTEM = `${BUSINESS}
 
 You help the owner find products to list in the store. Search the web for products that match the request and are sold in Australia by reputable suppliers, wholesalers or manufacturers, ideally with a product page that states specifications and an Australian price. Prefer a range of options (brands, price points) over several listings of the same item.
 
-When you have found up to 6 good candidates, call report_products once. Use only what the pages say: leave a field as an empty string rather than guessing, and give prices in AUD as shown (say whether GST is included if the page does). If nothing suitable turns up, call report_products with an empty list and explain why in the note.`
+Be quick: a few well-aimed searches are enough. As soon as you have 4 to 6 good candidates, call report_products once. Use only what the pages say: leave a field as an empty string rather than guessing, and give prices in AUD as shown (say whether GST is included if the page does). If nothing suitable turns up, call report_products with an empty list and explain why in the note.`
 
 const DRAFT_SYSTEM = `${BUSINESS}
 
@@ -119,13 +126,19 @@ const echo = (content: Block[]) => {
  * pauses a long search, and asks once more if the model stops without calling it (tool choice
  * can't be forced on this model). The conversation is only ever appended to, never edited.
  */
-async function run(client: Anthropic, params: Omit<Params, 'model' | 'max_tokens' | 'messages'>, prompt: string, tool: string, signal: AbortSignal) {
+async function run(
+  client: Anthropic,
+  params: Omit<Params, 'model' | 'max_tokens' | 'messages'>,
+  prompt: string,
+  tool: string,
+  signal: AbortSignal,
+  progress: (text: string) => void,
+) {
   const messages: Anthropic.Beta.Messages.BetaMessageParam[] = [{ role: 'user', content: prompt }]
   let container: string | undefined
   let nudged = false
   for (let i = 0; i < 5; i++) {
-    const message = await client.beta.messages
-      .stream(
+    const stream = client.beta.messages.stream(
         {
           model: MODEL,
           // Thinking (always on) counts towards this as well as the reply.
@@ -133,7 +146,7 @@ async function run(client: Anthropic, params: Omit<Params, 'model' | 'max_tokens
           // If a safety check declines the request, the API retries it on a suitable model.
           betas: ['server-side-fallback-2026-07-01'],
           fallbacks: 'default',
-          output_config: { effort: 'medium' },
+          output_config: { effort: EFFORT },
           // The web tools filter results with code; a resumed turn carries on in the same container.
           ...(container ? { container } : {}),
           messages,
@@ -141,7 +154,14 @@ async function run(client: Anthropic, params: Omit<Params, 'model' | 'max_tokens
         },
         { signal },
       )
-      .finalMessage()
+    // Say what it's doing as each search or page read starts.
+    stream.on('contentBlock', (block) => {
+      if (block.type !== 'server_tool_use') return
+      const input = block.input as { query?: unknown; url?: unknown }
+      if (block.name === 'web_search' && typeof input.query === 'string') progress(`Searching: ${input.query}`)
+      else if (block.name === 'web_fetch' && typeof input.url === 'string') progress(`Reading ${hostOf(input.url)}`)
+    })
+    const message = await stream.finalMessage()
     container = message.container?.id ?? container
     if (message.stop_reason === 'pause_turn') {
       messages.push({ role: 'assistant', content: echo(message.content) })
@@ -175,34 +195,52 @@ function apiError(e: unknown): string {
 }
 
 /**
- * Answers with JSON once `work` finishes. A search can take a few minutes, so spaces (which JSON
- * ignores) go out every 10 seconds meanwhile: without them Supabase closes a request that has sent
- * nothing for 150 seconds. The status is sent first, so failures come back as { error }.
+ * Answers as lines of JSON while `work` runs: progress as it goes, then the result or the error. A
+ * search can take a minute or more, and Supabase closes a request that sends nothing for 150
+ * seconds, so a blank line also goes out every 10 seconds.
  */
-function slowJson(work: (signal: AbortSignal) => Promise<unknown>): Response {
+function streamed(work: (signal: AbortSignal, progress: (text: string) => void) => Promise<unknown>): Response {
   const enc = new TextEncoder()
   const abort = new AbortController()
   const deadline = setTimeout(() => abort.abort(), DEADLINE_MS)
   const body = new ReadableStream<Uint8Array>({
     async start(out) {
-      const keepAlive = setInterval(() => out.enqueue(enc.encode(' ')), 10_000)
-      let result: unknown
+      const write = (text: string) => {
+        try {
+          out.enqueue(enc.encode(text))
+        } catch {
+          /* the app went away (Stop) */
+        }
+      }
+      const send = (msg: unknown) => write(JSON.stringify(msg) + '\n')
+      const keepAlive = setInterval(() => write('\n'), 10_000)
       try {
-        result = await work(abort.signal)
+        send({ type: 'result', data: await work(abort.signal, (text) => send({ type: 'progress', text })) })
       } catch (e) {
-        result = { error: apiError(e) }
+        send({ type: 'error', error: apiError(e) })
       } finally {
         clearInterval(keepAlive)
         clearTimeout(deadline)
       }
-      out.enqueue(enc.encode(JSON.stringify(result)))
-      out.close()
+      try {
+        out.close()
+      } catch {
+        /* already closed */
+      }
     },
     cancel() {
       abort.abort()
     },
   })
-  return new Response(body, { headers: { ...cors, 'Content-Type': 'application/json' } })
+  return new Response(body, { headers: { ...cors, 'Content-Type': 'application/x-ndjson' } })
+}
+
+const hostOf = (url: string) => {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '')
+  } catch {
+    return 'the page'
+  }
 }
 
 Deno.serve(async (req) => {
@@ -224,18 +262,24 @@ Deno.serve(async (req) => {
   if (body.action === 'find') {
     const query = String(body.query ?? '').trim().slice(0, 300)
     if (!query) return json({ error: 'Describe what you’re looking for.' }, 400)
-    return slowJson(async (signal) => {
+    return streamed(async (signal, progress) => {
+      progress('Starting the search…')
       const message = await run(
         client,
         {
           system: FIND_SYSTEM,
-          tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 6, user_location: MELBOURNE }, FIND_TOOL],
+          tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 5, user_location: MELBOURNE }, FIND_TOOL],
         },
         `Find products for our store: ${query}`,
         FIND_TOOL.name,
         signal,
+        progress,
       )
-      return toolInput<{ products: unknown[]; note: string }>(message, FIND_TOOL.name) ?? { error: 'The assistant couldn’t complete this search. Try rewording it.' }
+      const found = toolInput<{ products: { url: string }[]; note: string }>(message, FIND_TOOL.name)
+      if (!found) throw new Error('The assistant couldn’t complete this search. Try rewording it.')
+      if (found.products.length) progress(`Found ${found.products.length}. Getting photos…`)
+      const photos = await Promise.all(found.products.map((p) => pagePhoto(p.url, signal)))
+      return { ...found, products: found.products.map((p, i) => ({ ...p, image: photos[i] })) }
     })
   }
 
@@ -253,16 +297,19 @@ Deno.serve(async (req) => {
     ]
       .filter(Boolean)
       .join('\n')
-    return slowJson(async (signal) => {
+    return streamed(async (signal, progress) => {
+      progress(`Reading ${hostOf(url)}…`)
       const message = await run(
         client,
-        { system: DRAFT_SYSTEM, tools: [{ type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 3 }, DRAFT_TOOL] },
+        { system: DRAFT_SYSTEM, tools: [{ type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 2 }, DRAFT_TOOL] },
         `Draft a store listing for this product.\n\n${details}`,
         DRAFT_TOOL.name,
         signal,
+        progress,
       )
       const listing = toolInput(message, DRAFT_TOOL.name)
-      return listing ? { listing } : { error: 'The assistant couldn’t draft this listing. Try again or add it by hand.' }
+      if (!listing) throw new Error('The assistant couldn’t draft this listing. Try again or add it by hand.')
+      return { listing }
     })
   }
 

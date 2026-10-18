@@ -41,7 +41,7 @@ In **Edge Functions → Deploy a new function → Via Editor**, create these fun
 | --- | --- |
 | `send-sms` | [`supabase/functions/send-sms/index.ts`](supabase/functions/send-sms/index.ts) |
 | `invite-user` | [`supabase/functions/invite-user/index.ts`](supabase/functions/invite-user/index.ts) |
-| `store-assistant` | [`supabase/functions/store-assistant/index.ts`](supabase/functions/store-assistant/index.ts) (the store's AI product finder; optional) |
+| `store-assistant` | [`supabase/functions/store-assistant/index.ts`](supabase/functions/store-assistant/index.ts) and [`photo.ts`](supabase/functions/store-assistant/photo.ts) (the store's AI product finder; optional; add both files) |
 
 (Developers can use the CLI instead: `supabase link`, then `supabase functions deploy send-sms invite-user store-assistant`.)
 
@@ -98,7 +98,7 @@ When an update adds files to [`supabase/migrations`](supabase/migrations), run t
 - **The store:** anyone can browse at *your-site*/#/store (linked from the homepage), and clients and service providers also have a **Store** tab in their portal with their order history. Orders are placed without payment: every admin gets an inbox message, and you confirm availability and delivery, then send an invoice. Service providers with a login see and pay the trade price where you've set one.
 - **Products:** Admin → **Store** → **Add product**: title, category, price, optional trade price, description and photos, plus office-only supplier, cost (with your margin) and notes that customers never see. Drafts are only visible to admins; publish when ready, or archive to hide.
 - **Orders:** Admin → Store → Orders → **Open**: move the order through New → Confirmed → Paid → Fulfilled (or Cancelled) and keep office notes, which customers never see. Customers see the status in their portal. What was ordered and its price can't be changed after it's placed; cancel and ask them to order again instead.
-- **AI product finder:** Admin → Store → **AI product finder**: describe what you're after (e.g. "matte black basin mixers") and it searches the web for products sold in Australia, with links and prices. **Draft listing** reads the supplier's page and writes a listing in its own words, which opens in the product editor as a draft with the supplier link and anything to double-check. Nothing is published until you do it, so check prices, specs and photo rights with the supplier first.
+- **AI product finder:** Admin → Store → **AI product finder**: describe what you're after (e.g. "matte black basin mixers") and it searches the web for products sold in Australia, with photos from each supplier's page, links and prices (usually well under a minute; it shows what it's searching for as it goes, and **Stop** ends it). Click a photo for a larger preview. **Draft listing** reads the supplier's page and writes a listing in its own words, which opens in the product editor as a draft with the supplier link and anything to double-check. Nothing is published until you do it, so check prices, specs and photo rights with the supplier first.
 - **Open a client's or service provider's dashboard:** Admin → Accounts → click their name or **Open dashboard**. You see their portal as they do and can work in it: lodge a request, ask for or answer a quote, add a property, update a job, acknowledge a work order or submit an expense. Nothing you do there is recorded as them: jobs, quotes and expenses show "Lodged by" / "Added by" your name (clients and trades see "Next Phase Maintenance"), answered quotes and acknowledged work orders say who did it, and notes and office messages read "Your name for Their name", including a note on the job when you change its status or add photos. Property changes, milestone ticks and calendar moves aren't recorded against anyone, wherever they're made. An orange bar across the top shows whose dashboard you're in; **Back to accounts** (or your browser's Back button) returns you to your own portal. Your own permissions apply there, so some buttons may be missing if your admin account lacks them.
 - **Deleting accounts:** a client with jobs, projects or invoices can't be deleted, and neither can an admin recorded as doing something for someone else (lodging a job, quote request or expense in their dashboard, accepting or rejecting a quote, including in Quotes & projects, or acknowledging a work order), since that would erase the record. Suspend them instead. Deleting a service provider keeps their jobs and expenses, with the jobs unassigned.
 
@@ -124,6 +124,7 @@ npm run build      # production build (needs the Supabase settings at build time
 npm run build:demo # demo build with sample data
 npm run lint
 npm run test:db    # database access-rule tests; needs a local Postgres, e.g. PGHOST=/tmp PGPORT=5432 PGUSER=postgres
+npm run test:unit  # unit tests (e.g. finding a product's photo on a supplier page)
 ```
 
 Edit `src/lib/brand.ts` for the public phone number (hidden until set), business hours and coverage suburbs.
