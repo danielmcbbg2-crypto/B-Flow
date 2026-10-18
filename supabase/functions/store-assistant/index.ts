@@ -97,36 +97,59 @@ const DRAFT_TOOL = {
 }
 
 type Params = Anthropic.Beta.Messages.MessageCreateParamsNonStreaming
+type Block = Anthropic.Beta.Messages.BetaContentBlock
+
+// Supabase stops a function after 400 s (150 s on the free plan): give up in time to say so.
+const DEADLINE_MS = 330_000
+
+/**
+ * After a fallback to another model mid-reply, a `fallback` block marks where the new model took
+ * over: only what comes after the last one is its answer.
+ */
+const lastFallback = (content: Block[]) => content.findLastIndex((b) => (b as { type: string }).type === 'fallback')
+
+/** A reply as it can be sent back: before a fallback, only its text is kept (as the API asks). */
+const echo = (content: Block[]) => {
+  const at = lastFallback(content)
+  return content.filter((b, i) => i >= at || b.type === 'text')
+}
 
 /**
  * Runs a request that uses web tools and should end with a call to `tool`: resumes if the server
  * pauses a long search, and asks once more if the model stops without calling it (tool choice
  * can't be forced on this model). The conversation is only ever appended to, never edited.
  */
-async function run(client: Anthropic, params: Omit<Params, 'model' | 'max_tokens' | 'messages'>, prompt: string, tool: string) {
+async function run(client: Anthropic, params: Omit<Params, 'model' | 'max_tokens' | 'messages'>, prompt: string, tool: string, signal: AbortSignal) {
   const messages: Anthropic.Beta.Messages.BetaMessageParam[] = [{ role: 'user', content: prompt }]
+  let container: string | undefined
   let nudged = false
   for (let i = 0; i < 5; i++) {
     const message = await client.beta.messages
-      .stream({
-        model: MODEL,
-        // Thinking (always on) counts towards this as well as the reply.
-        max_tokens: 32000,
-        // If a safety check declines the request, the API retries it on a suitable model.
-        betas: ['server-side-fallback-2026-07-01'],
-        fallbacks: 'default',
-        output_config: { effort: 'medium' },
-        messages,
-        ...params,
-      })
+      .stream(
+        {
+          model: MODEL,
+          // Thinking (always on) counts towards this as well as the reply.
+          max_tokens: 32000,
+          // If a safety check declines the request, the API retries it on a suitable model.
+          betas: ['server-side-fallback-2026-07-01'],
+          fallbacks: 'default',
+          output_config: { effort: 'medium' },
+          // The web tools filter results with code; a resumed turn carries on in the same container.
+          ...(container ? { container } : {}),
+          messages,
+          ...params,
+        },
+        { signal },
+      )
       .finalMessage()
+    container = message.container?.id ?? container
     if (message.stop_reason === 'pause_turn') {
-      messages.push({ role: 'assistant', content: message.content })
+      messages.push({ role: 'assistant', content: echo(message.content) })
       continue
     }
-    if (message.stop_reason === 'end_turn' && !nudged && !toolInput(message, tool)) {
+    if (message.stop_reason === 'end_turn' && !nudged) {
       nudged = true
-      messages.push({ role: 'assistant', content: message.content }, { role: 'user', content: `Call ${tool} now with what you have.` })
+      messages.push({ role: 'assistant', content: echo(message.content) }, { role: 'user', content: `Call ${tool} now with what you have.` })
       continue
     }
     return message
@@ -134,18 +157,52 @@ async function run(client: Anthropic, params: Omit<Params, 'model' | 'max_tokens
   throw new Error('The search took too long. Try a more specific request.')
 }
 
+/** The finished call to `name`, if the reply ended with one (not cut off, not declined). */
 function toolInput<T>(message: Anthropic.Beta.Messages.BetaMessage, name: string): T | null {
-  if (message.stop_reason === 'refusal') return null
-  for (const block of message.content) if (block.type === 'tool_use' && block.name === name) return block.input as T
+  if (message.stop_reason !== 'tool_use') return null
+  const at = lastFallback(message.content)
+  for (const block of message.content.slice(at + 1)) if (block.type === 'tool_use' && block.name === name) return block.input as T
   return null
 }
 
-function apiError(e: unknown): Response {
-  if (e instanceof Anthropic.AuthenticationError) return json({ error: 'The Anthropic API key was rejected. Check the ANTHROPIC_API_KEY secret.' }, 502)
-  if (e instanceof Anthropic.PermissionDeniedError) return json({ error: 'The Anthropic account doesn’t allow this request. Check its settings and credit.' }, 502)
-  if (e instanceof Anthropic.RateLimitError) return json({ error: 'The AI service is busy. Try again in a minute.' }, 429)
-  if (e instanceof Anthropic.APIError) return json({ error: `The AI service returned an error (${e.status ?? 'network'}). Try again shortly.` }, 502)
-  return json({ error: (e as Error).message }, 500)
+function apiError(e: unknown): string {
+  if (e instanceof Anthropic.APIUserAbortError) return 'The search took too long. Try a more specific request.'
+  if (e instanceof Anthropic.AuthenticationError) return 'The Anthropic API key was rejected. Check the ANTHROPIC_API_KEY secret.'
+  if (e instanceof Anthropic.PermissionDeniedError) return 'The Anthropic account doesn’t allow this request. Check its settings and credit.'
+  if (e instanceof Anthropic.RateLimitError) return 'The AI service is busy. Try again in a minute.'
+  if (e instanceof Anthropic.APIError) return `The AI service returned an error (${e.status ?? 'network'}). Try again shortly.`
+  return (e as Error).message
+}
+
+/**
+ * Answers with JSON once `work` finishes. A search can take a few minutes, so spaces (which JSON
+ * ignores) go out every 10 seconds meanwhile: without them Supabase closes a request that has sent
+ * nothing for 150 seconds. The status is sent first, so failures come back as { error }.
+ */
+function slowJson(work: (signal: AbortSignal) => Promise<unknown>): Response {
+  const enc = new TextEncoder()
+  const abort = new AbortController()
+  const deadline = setTimeout(() => abort.abort(), DEADLINE_MS)
+  const body = new ReadableStream<Uint8Array>({
+    async start(out) {
+      const keepAlive = setInterval(() => out.enqueue(enc.encode(' ')), 10_000)
+      let result: unknown
+      try {
+        result = await work(abort.signal)
+      } catch (e) {
+        result = { error: apiError(e) }
+      } finally {
+        clearInterval(keepAlive)
+        clearTimeout(deadline)
+      }
+      out.enqueue(enc.encode(JSON.stringify(result)))
+      out.close()
+    },
+    cancel() {
+      abort.abort()
+    },
+  })
+  return new Response(body, { headers: { ...cors, 'Content-Type': 'application/json' } })
 }
 
 Deno.serve(async (req) => {
@@ -164,10 +221,10 @@ Deno.serve(async (req) => {
   const client = new Anthropic()
   const body = await req.json().catch(() => ({}))
 
-  try {
-    if (body.action === 'find') {
-      const query = String(body.query ?? '').trim().slice(0, 300)
-      if (!query) return json({ error: 'Describe what you’re looking for.' }, 400)
+  if (body.action === 'find') {
+    const query = String(body.query ?? '').trim().slice(0, 300)
+    if (!query) return json({ error: 'Describe what you’re looking for.' }, 400)
+    return slowJson(async (signal) => {
       const message = await run(
         client,
         {
@@ -176,39 +233,38 @@ Deno.serve(async (req) => {
         },
         `Find products for our store: ${query}`,
         FIND_TOOL.name,
+        signal,
       )
-      const found = toolInput<{ products: unknown[]; note: string }>(message, FIND_TOOL.name)
-      if (!found) return json({ error: 'The assistant couldn’t complete this search. Try rewording it.' }, 422)
-      return json(found)
-    }
+      return toolInput<{ products: unknown[]; note: string }>(message, FIND_TOOL.name) ?? { error: 'The assistant couldn’t complete this search. Try rewording it.' }
+    })
+  }
 
-    if (body.action === 'draft') {
-      const p = body.product ?? {}
-      const url = String(p.url ?? '')
-      if (!/^https?:\/\/\S+$/.test(url)) return json({ error: 'The product needs a web link to draft from.' }, 400)
-      const details = [
-        `Product: ${String(p.name ?? '').slice(0, 200)}`,
-        `Brand: ${String(p.brand ?? '').slice(0, 100)}`,
-        `Supplier: ${String(p.supplier ?? '').slice(0, 100)}`,
-        `Price shown: ${String(p.price ?? '').slice(0, 60)}`,
-        `Product page: ${url}`,
-        String(body.instructions ?? '').trim() ? `Owner's instructions: ${String(body.instructions).slice(0, 1000)}` : '',
-      ]
-        .filter(Boolean)
-        .join('\n')
+  if (body.action === 'draft') {
+    const p = body.product ?? {}
+    const url = String(p.url ?? '')
+    if (!/^https?:\/\/\S+$/.test(url)) return json({ error: 'The product needs a web link to draft from.' }, 400)
+    const details = [
+      `Product: ${String(p.name ?? '').slice(0, 200)}`,
+      `Brand: ${String(p.brand ?? '').slice(0, 100)}`,
+      `Supplier: ${String(p.supplier ?? '').slice(0, 100)}`,
+      `Price shown: ${String(p.price ?? '').slice(0, 60)}`,
+      `Product page: ${url}`,
+      String(body.instructions ?? '').trim() ? `Owner's instructions: ${String(body.instructions).slice(0, 1000)}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n')
+    return slowJson(async (signal) => {
       const message = await run(
         client,
         { system: DRAFT_SYSTEM, tools: [{ type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 3 }, DRAFT_TOOL] },
         `Draft a store listing for this product.\n\n${details}`,
         DRAFT_TOOL.name,
+        signal,
       )
       const listing = toolInput(message, DRAFT_TOOL.name)
-      if (!listing) return json({ error: 'The assistant couldn’t draft this listing. Try again or add it by hand.' }, 422)
-      return json({ listing })
-    }
-
-    return json({ error: 'Unknown action' }, 400)
-  } catch (e) {
-    return apiError(e)
+      return listing ? { listing } : { error: 'The assistant couldn’t draft this listing. Try again or add it by hand.' }
+    })
   }
+
+  return json({ error: 'Unknown action' }, 400)
 })

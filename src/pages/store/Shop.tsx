@@ -122,12 +122,12 @@ export function Shop({ portal }: { portal?: boolean }) {
   return (
     <>
       {header}
-      {view === 'cart' ? (
-        <Checkout cart={cart} products={products} portal={portal} acting={!!actingAs} onPlaced={(r) => { cart.clear(); setPlaced(r) }} />
-      ) : loading ? (
+      {loading ? (
         <p className="text-sm text-slate-500">Loading products…</p>
       ) : error ? (
         <Empty title="The shop couldn't load">{error}</Empty>
+      ) : view === 'cart' ? (
+        <Checkout cart={cart} products={products} portal={portal} acting={!!actingAs} onPlaced={(r) => { cart.clear(); setPlaced(r) }} />
       ) : shown.length === 0 ? (
         <Empty title={products.length ? 'Nothing matches' : 'No products yet'}>{products.length ? 'Try another search or category.' : 'Check back soon.'}</Empty>
       ) : (
@@ -216,6 +216,7 @@ function Checkout({
     .sort((a, b) => (a.p?.title ?? '').localeCompare(b.p?.title ?? ''))
   const total = lines.reduce((s, l) => s + (l.p ? unitPrice(l.p, user) * l.qty : 0), 0)
   const missing = lines.filter((l) => !l.p)
+  const tooMany = lines.length - missing.length > 30
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -257,6 +258,7 @@ function Checkout({
           <span className="num text-lg font-bold">{money(total)}</span>
         </div>
         {missing.length > 0 && <p className="p-4 text-sm text-red-600">Some items are no longer available; remove them to continue.</p>}
+        {tooMany && <p className="p-4 text-sm text-red-600">Up to 30 different products per order. Please split it into two orders.</p>}
       </section>
       <form className="card space-y-4 p-5" onSubmit={submit}>
         <h2 className="font-bold">Your details</h2>
@@ -288,7 +290,7 @@ function Checkout({
         </p>
         {acting && <p className="text-sm text-red-600">Orders can't be placed from someone else's dashboard.</p>}
         {error && <p className="text-sm text-red-600">{error}</p>}
-        <button className="btn-primary w-full" disabled={busy || acting || missing.length > 0}>
+        <button className="btn-primary w-full" disabled={busy || acting || missing.length > 0 || tooMany}>
           {busy ? 'Placing order…' : `Place order · ${money(total)}`}
         </button>
         {!portal && !user && <p className="text-xs text-slate-500">Already a client or trade? Sign in to see your orders and trade prices.</p>}
@@ -338,7 +340,8 @@ export function PortalStore() {
 
 /** The public store page, open to anyone from the home page. */
 export function StorePage() {
-  const { user } = useStore()
+  const { user, can } = useStore()
+  const manage = user?.role === 'admin' && can('canManageStore')
   const [signIn, setSignIn] = useState(false)
   return (
     <div className="min-h-screen bg-slate-50">
@@ -346,8 +349,11 @@ export function StorePage() {
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6">
           <Logo sub="Store" />
           {user ? (
-            <button className="btn-accent text-[15px] font-normal" onClick={() => navigate(user.role === 'admin' ? '/admin/store' : `/${user.role}/store`)}>
-              {user.role === 'admin' ? 'Manage store' : 'Your portal'}
+            <button
+              className="btn-accent text-[15px] font-normal"
+              onClick={() => navigate(manage ? '/admin/store' : user.role === 'admin' ? '/admin' : `/${user.role}/store`)}
+            >
+              {manage ? 'Manage store' : 'Your portal'}
             </button>
           ) : (
             <button className="btn-accent text-[15px] font-normal" onClick={() => setSignIn(true)}>Sign in</button>

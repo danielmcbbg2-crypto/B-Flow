@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 const CART_KEY = 'npm.cart.v1'
 
@@ -18,18 +18,26 @@ function read(): CartLine[] {
 
 /**
  * The shopping cart, kept in this browser so it survives a reload or signing in. Every open copy
- * of the shop shares it (the storage event keeps other tabs in step).
+ * of the shop shares it (the storage event keeps other tabs in step). Changes build on `current`,
+ * which is up to date straight away (two quick clicks add two), and also works when the browser
+ * won't let the site store anything.
  */
 export function useCart() {
   const [lines, setLines] = useState<CartLine[]>(read)
+  const current = useRef(lines)
 
   useEffect(() => {
-    const onStorage = (e: StorageEvent) => e.key === CART_KEY && setLines(read())
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== CART_KEY) return
+      current.current = read()
+      setLines(current.current)
+    }
     window.addEventListener('storage', onStorage)
     return () => window.removeEventListener('storage', onStorage)
   }, [])
 
   const save = useCallback((next: CartLine[]) => {
+    current.current = next
     setLines(next)
     try {
       localStorage.setItem(CART_KEY, JSON.stringify(next))
@@ -41,13 +49,13 @@ export function useCart() {
   const setQty = useCallback(
     (productId: string, qty: number) => {
       const q = Math.max(0, Math.min(99, Math.floor(qty) || 0))
-      const rest = read().filter((l) => l.productId !== productId)
+      const rest = current.current.filter((l) => l.productId !== productId)
       save(q > 0 ? [...rest, { productId, qty: q }] : rest)
     },
     [save],
   )
   const add = useCallback(
-    (productId: string, qty = 1) => setQty(productId, (read().find((l) => l.productId === productId)?.qty ?? 0) + qty),
+    (productId: string, qty = 1) => setQty(productId, (current.current.find((l) => l.productId === productId)?.qty ?? 0) + qty),
     [setQty],
   )
   const clear = useCallback(() => save([]), [save])

@@ -16,12 +16,19 @@ export const CLOUD = supabase !== null
 export const DEMO_BUILD = import.meta.env.DEV || import.meta.env.VITE_DEMO === 'true'
 export const DEMO = !CLOUD && DEMO_BUILD
 
+const PAGE = 1000
+
 export function supabaseAdapter(client: SupabaseClient): DbAdapter {
   return {
     async select(table: TableName) {
-      const { data, error } = await client.from(table).select('*')
-      if (error) throw new Error(`${table}: ${error.message}`)
-      return (data ?? []) as Row[]
+      // The API returns at most 1,000 rows per request, so read in pages until a short one.
+      const rows: Row[] = []
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await client.from(table).select('*').order('id').range(from, from + PAGE - 1)
+        if (error) throw new Error(`${table}: ${error.message}`)
+        rows.push(...((data ?? []) as Row[]))
+        if (!data || data.length < PAGE) return rows
+      }
     },
     async insert(table: TableName, rows: Row[]) {
       const { error } = await client.from(table).insert(rows)

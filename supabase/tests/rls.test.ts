@@ -650,15 +650,27 @@ describe('clients added without a login', () => {
     // An account with a login always keeps an email (even for the server).
     await assert.rejects(pool.query(`update profiles set email = null where id = 'u-nl-1'`), /profiles_login_has_email/)
   })
+
+  test('deleting a login in Supabase withdraws the invite, so a sign-up with that email is refused', async () => {
+    await pool.query(`delete from auth.users where id = $1`, [uid.olive])
+    const p = await pool.query<{ auth_id: string | null; login_invited: boolean }>(`select auth_id, login_invited from profiles where id = 'u-nl-1'`)
+    assert.deepEqual(p.rows[0], { auth_id: null, login_invited: false })
+    await assert.rejects(createAuthUser('olive@example.com'), /No Next Phase Maintenance invitation/)
+    // A fresh invite from the app gives her a login again.
+    uid.olive = await inviteAuthUser('olive@example.com')
+    assert.equal((await fetchAll(admin)).users.find((u) => u.id === 'u-nl-1')!.hasLogin, true)
+  })
 })
 
 describe('store', () => {
   /** Runs SQL as a signed-out visitor, like the public store page does. */
-  async function asAnon<T>(sql: string, params: unknown[] = []): Promise<pg.QueryResult<T & pg.QueryResultRow>> {
+  async function asAnon<T>(sql: string, params: unknown[] = [], ip?: string): Promise<pg.QueryResult<T & pg.QueryResultRow>> {
     const c = await pool.connect()
     try {
       await c.query('begin')
       await c.query('set local role anon')
+      // PostgREST passes the request's headers; Cloudflare sets cf-connecting-ip to the visitor's address.
+      if (ip) await c.query(`select set_config('request.headers', $1, true)`, [JSON.stringify({ 'cf-connecting-ip': ip })])
       const r = await c.query<T & pg.QueryResultRow>(sql, params)
       await c.query('commit')
       return r
@@ -758,6 +770,30 @@ describe('store', () => {
   test('one email can only place a few orders an hour', async () => {
     for (let i = 0; i < 5; i++) await asAnon(order([{ product_id: 'sp-1', qty: 1 }], 'flood@example.com'))
     await assert.rejects(asAnon(order([{ product_id: 'sp-1', qty: 1 }], 'FLOOD@example.com')), /Too many orders/)
+  })
+
+  test('limits are per visitor: one flooding the form doesn’t block anyone else', async () => {
+    const one = [{ product_id: 'sp-1', qty: 1 }]
+    for (let i = 0; i < 5; i++) await asAnon(order(one, `bot${i}@example.com`), [], '203.0.113.7')
+    await assert.rejects(asAnon(order(one, 'bot9@example.com'), [], '203.0.113.7'), /Too many orders/)
+    await asAnon(order(one, 'real@example.com'), [], '198.51.100.2')
+    // Visitors using a member's email don't stop the member ordering when signed in.
+    for (let i = 0; i < 5; i++) await asAnon(order(one, 'tia@example.com'), [], `192.0.2.${i}`)
+    await asUser(uid.tia, order(one, 'tia@example.com', ", '', 'member-test'"))
+    // Where visitors' orders came from can't be read through the API, even by admins.
+    await assert.rejects(asAnon('select * from order_attempts'), /permission denied/)
+    await assert.rejects(asUser(uid.admin, 'select * from order_attempts'), /permission denied/)
+    // A backstop on all visitors' orders together still holds.
+    const recent = Number((await pool.query(`select count(*) from orders where customer_id is null and created_at > now() - interval '10 minutes'`)).rows[0].count)
+    for (let i = recent; i < 100; i++) await asAnon(order(one, `cap${i}@example.com`), [], `10.9.${Math.floor(i / 250)}.${i % 250}`)
+    await assert.rejects(asAnon(order(one, 'late@example.com'), [], '10.10.0.1'), /Too many orders/)
+    await pool.query(`delete from orders where email like 'cap%@example.com' or email like 'bot%@example.com' or email = 'real@example.com' or (email = 'tia@example.com' and (customer_id is null or notes = 'member-test'))`)
+  })
+
+  test('a cart over 30 different products says so', async () => {
+    const many = Array.from({ length: 31 }, (_, i) => ({ product_id: `x${i}`, qty: 1 }))
+    await assert.rejects(asAnon(order(many, 'many@example.com')), /Up to 30 different products/)
+    await assert.rejects(asAnon(order([], 'none@example.com')), /Your cart is empty/)
   })
 
   test('store managers move orders along but cannot change what was ordered', async () => {

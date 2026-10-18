@@ -341,7 +341,7 @@ function NewProjectForm({ onClose, onCreated }: { onClose: () => void; onCreated
         <Field label="Assigned trade" className="sm:col-span-2">
           <select className="input" value={p.assignedProviderId} onChange={(e) => setP({ ...p, assignedProviderId: e.target.value })}>
             <option value="">Unassigned</option>
-            {lk.providers.map((u) => <option key={u.id} value={u.id}>{u.name}{u.trade ? ` (${u.trade})` : ''}{hasNoLogin(u) ? ' (no login)' : ''}</option>)}
+            {lk.providers.map((u) => <option key={u.id} value={u.id}>{u.name}{u.trade ? ` (${u.trade})` : ''}{hasNoLogin(u) ? ' (no login)' : u.status === 'invited' ? ' (invite pending)' : ''}</option>)}
           </select>
         </Field>
         <Field label="Scope of works" className="sm:col-span-2">
@@ -391,7 +391,7 @@ function ProjectEditor({ project, onClose, onSave }: { project: Project; onClose
         <Field label="Assigned trade">
           <select className="input" value={p.assignedProviderId ?? ''} onChange={(e) => set({ assignedProviderId: e.target.value || undefined })}>
             <option value="">Unassigned</option>
-            {lk.providers.map((u) => <option key={u.id} value={u.id}>{u.name}{u.trade ? ` (${u.trade})` : ''}{hasNoLogin(u) ? ' (no login)' : ''}</option>)}
+            {lk.providers.map((u) => <option key={u.id} value={u.id}>{u.name}{u.trade ? ` (${u.trade})` : ''}{hasNoLogin(u) ? ' (no login)' : u.status === 'invited' ? ' (invite pending)' : ''}</option>)}
           </select>
         </Field>
         <Field label="Budget (AUD)">
