@@ -39,10 +39,10 @@ function Working({ text, onStop }: { text: string; onStop: () => void }) {
     return () => clearInterval(t)
   }, [])
   return (
-    <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600" role="status">
+    <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600">
       <span className="h-2 w-2 animate-pulse rounded-full bg-accent" aria-hidden="true" />
-      <span className="min-w-0 flex-1 truncate">{text}</span>
-      <span className="num text-slate-400">{seconds} s</span>
+      <span className="min-w-0 flex-1 truncate" role="status">{text}</span>
+      <span className="num text-slate-400" aria-hidden="true">{seconds} s</span>
       <button type="button" className="btn-ghost px-3 py-1" onClick={onStop}>
         <Square size={12} /> Stop
       </button>

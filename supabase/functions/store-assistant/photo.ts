@@ -3,16 +3,43 @@
 
 /** Only public web addresses: no IP addresses, local names or logins in the link. */
 export function fetchable(url: URL): boolean {
-  const host = url.hostname.toLowerCase()
+  const host = url.hostname.toLowerCase().replace(/\.+$/, '')
   return (
+    host.length > 0 &&
     (url.protocol === 'https:' || url.protocol === 'http:') &&
     !url.username &&
     !url.password &&
     host.includes('.') &&
     !host.includes(':') &&
     !/^[\d.]+$/.test(host) &&
-    !/(^|\.)(localhost|local|internal|lan|home|arpa)$/.test(host)
+    !/(^|\.)(localhost|localdomain|local|internal|lan|home|arpa)$/.test(host)
   )
+}
+
+/** A private, local or reserved address (IPv4 or IPv6, including IPv4 inside IPv6). */
+export function privateAddress(ip: string): boolean {
+  const a = ip.toLowerCase().replace(/^\[|\]$/g, '')
+  const v4 = a.match(/(?:^|:)(\d+)\.(\d+)\.(\d+)\.(\d+)$/)
+  if (v4) {
+    const [b0, b1] = [Number(v4[1]), Number(v4[2])]
+    return (
+      b0 === 0 || b0 === 10 || b0 === 127 || b0 >= 224 ||
+      (b0 === 100 && b1 >= 64 && b1 <= 127) ||
+      (b0 === 169 && b1 === 254) ||
+      (b0 === 172 && b1 >= 16 && b1 <= 31) ||
+      (b0 === 192 && b1 === 168) ||
+      (b0 === 198 && (b1 === 18 || b1 === 19))
+    )
+  }
+  return a === '::' || a === '::1' || /^f[cd]/.test(a) || /^fe[89ab]/.test(a) || a.startsWith('::ffff:')
+}
+
+/** Where a name really points: refuses names that lead to private addresses (or can't be looked up). */
+async function resolvesPublic(host: string): Promise<boolean> {
+  const dns = (globalThis as { Deno?: { resolveDns?: (h: string, t: 'A' | 'AAAA') => Promise<string[]> } }).Deno?.resolveDns
+  if (!dns) return true // not available here: the name checks still apply
+  const found = (await Promise.all([dns(host, 'A').catch(() => []), dns(host, 'AAAA').catch(() => [])])).flat()
+  return found.length > 0 && !found.some(privateAddress)
 }
 
 const decodeEntities = (s: string) =>
@@ -36,7 +63,13 @@ export function findImage(html: string, base: string): string {
   }
   // Product details for search engines (JSON-LD) often list the photo too.
   const ld = html.match(/"image"\s*:\s*(?:\[\s*)?(?:\{[^{}]*?"(?:url|contentUrl)"\s*:\s*)?"([^"]+)"/)
-  if (ld) candidates.push(ld[1].replace(/\\\//g, '/'))
+  if (ld) {
+    try {
+      candidates.push(JSON.parse(`"${ld[1]}"`))
+    } catch {
+      /* not a usable value */
+    }
+  }
   for (const c of candidates) {
     try {
       const url = new URL(decodeEntities(c.trim()), base)
@@ -54,7 +87,7 @@ export async function pagePhoto(pageUrl: string, signal: AbortSignal): Promise<s
     let url = new URL(pageUrl)
     const timeout = AbortSignal.any([signal, AbortSignal.timeout(6000)])
     for (let hop = 0; hop < 4; hop++) {
-      if (!fetchable(url)) return ''
+      if (!fetchable(url) || !(await resolvesPublic(url.hostname.replace(/\.+$/, '')))) return ''
       const res = await fetch(url, {
         signal: timeout,
         redirect: 'manual',
