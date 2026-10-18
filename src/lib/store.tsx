@@ -743,6 +743,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const d0 = dataRef.current
       const client = newClient && !d0.users.some((u) => u.id === newClient.id) ? newClient : undefined
       const property = newProperty && !d0.properties.some((x) => x.id === newProperty.id) ? newProperty : undefined
+      const owner = property?.clientId ?? d0.properties.find((x) => x.id === p.propertyId)?.clientId
+      if (owner !== p.clientId) throw new Error('That property belongs to another client. Choose one of theirs or add a new one.')
       const notify = (saved: Project) => {
         if (saved.assignedProviderId) {
           pushInbox({ userId: saved.assignedProviderId, title: `Assigned to project P-${saved.number}`, body: saved.title, requiresAck: true, projectId: saved.id })
@@ -1085,9 +1087,12 @@ export function ActingAsProvider({ children }: { children: ReactNode }) {
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>
 }
 
-/** Added without a login and not invited yet (live mode: no login created; demo mode: no invite code). */
+/**
+ * Added without a login and not invited yet (live mode: no login created; demo mode: no invite code).
+ * Live mode only counts a known "no login": if the database doesn't say, the email stays locked.
+ */
 export function hasNoLogin(u: UserAccount): boolean {
-  return u.status === 'invited' && (CLOUD ? !u.hasLogin : !u.inviteCode)
+  return u.status === 'invited' && (CLOUD ? u.hasLogin === false : !u.inviteCode)
 }
 
 /** Names who did something: the person themselves, or "Admin for Person" from a dashboard an admin opened. */
@@ -1135,7 +1140,8 @@ export function useLookup() {
       property: (id?: string) => data.properties.find((p) => p.id === id),
       request: (id?: string) => data.requests.find((r) => r.id === id),
       project: (id?: string) => data.projects.find((p) => p.id === id),
-      providers: data.users.filter((u) => u.role === 'provider' && u.status === 'active'),
+      // Who admins can assign work to: active trades, and trades added without a login yet.
+      providers: data.users.filter((u) => u.role === 'provider' && (u.status === 'active' || hasNoLogin(u))),
       clients: data.users.filter((u) => u.role === 'client'),
     }),
     [data, actor],

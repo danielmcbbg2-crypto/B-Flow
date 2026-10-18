@@ -49,8 +49,14 @@ create table public.orders (
   trade       boolean not null default false,
   total       numeric(12, 2) not null,
   status      text not null default 'new' check (status in ('new', 'confirmed', 'paid', 'fulfilled', 'cancelled')),
-  admin_notes text not null default '',
   created_at  timestamptz not null default now()
+);
+
+-- The office's notes on an order, kept apart so the customer (who can read their order) never sees
+-- them. Keyed by the order's id.
+create table public.order_notes (
+  id    text primary key references public.orders (id) on delete cascade,
+  notes text not null default ''
 );
 
 create table public.order_items (
@@ -72,6 +78,7 @@ alter table public.product_trade_prices enable row level security;
 alter table public.product_sources enable row level security;
 alter table public.orders enable row level security;
 alter table public.order_items enable row level security;
+alter table public.order_notes enable row level security;
 
 -- Who can manage the store. Granted to the admins who can already manage accounts (the owner).
 update public.profiles set permissions = array_append(permissions, 'canManageStore')
@@ -105,15 +112,19 @@ create policy orders_select on public.orders for select to authenticated
 create policy orders_update on public.orders for update to authenticated using (has_perm('canManageStore'));
 create policy order_items_select on public.order_items for select to authenticated
   using (exists (select 1 from public.orders o where o.id = order_id));
+create policy order_notes_select on public.order_notes for select to authenticated using (has_perm('canManageStore'));
+create policy order_notes_insert on public.order_notes for insert to authenticated with check (has_perm('canManageStore'));
+create policy order_notes_update on public.order_notes for update to authenticated using (has_perm('canManageStore'));
+create policy order_notes_delete on public.order_notes for delete to authenticated using (has_perm('canManageStore'));
 
--- Store managers may only change an order's progress and their own notes; what was ordered, by
--- whom and for how much stays as placed.
+-- Store managers may only change an order's progress (their notes are in order_notes); what was
+-- ordered, by whom and for how much stays as placed.
 create function public.guard_order_update() returns trigger
 language plpgsql set search_path = '' as $$
 begin
   if not public.is_api_user() then return new; end if;
-  if (to_jsonb(new) - array['status', 'admin_notes']) is distinct from (to_jsonb(old) - array['status', 'admin_notes']) then
-    raise exception 'Only an order''s status and notes can be changed';
+  if (to_jsonb(new) - 'status') is distinct from (to_jsonb(old) - 'status') then
+    raise exception 'Only an order''s status can be changed';
   end if;
   return new;
 end;
@@ -207,4 +218,4 @@ grant execute on function public.place_order(jsonb, text, text, text, text, text
 revoke execute on function public.guard_order_update() from public, anon;
 
 alter publication supabase_realtime add table
-  public.products, public.product_trade_prices, public.product_sources, public.orders, public.order_items;
+  public.products, public.product_trade_prices, public.product_sources, public.orders, public.order_items, public.order_notes;

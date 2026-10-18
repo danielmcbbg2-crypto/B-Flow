@@ -148,7 +148,7 @@ function NewProjectForm({ onClose, onCreated }: { onClose: () => void; onCreated
   const { data, can, createProject } = useStore()
   const lk = useLookup()
   // Ids are made once, so saving again after an error doesn't add the client or property twice.
-  const [ids] = useState(() => ({ client: uid('u'), property: uid('p') }))
+  const [ids, setIds] = useState(() => ({ client: uid('u'), property: uid('p') }))
   const canAddClient = can('canEditPermissions')
   const clients = [...lk.clients].sort((a, b) => a.name.localeCompare(b.name))
   const [clientId, setClientId] = useState(canAddClient && clients.length === 0 ? NEW : '')
@@ -172,9 +172,13 @@ function NewProjectForm({ onClose, onCreated }: { onClose: () => void; onCreated
   const newClient = clientId === NEW && !data.users.some((u) => u.id === ids.client)
   const effectiveClientId = clientId === NEW ? ids.client : clientId
   const properties = data.properties.filter((x) => x.clientId === effectiveClientId)
-  const newProperty = propertyId === NEW || (!!effectiveClientId && properties.length === 0)
   // After an attempt that saved the new property but not the project, carry on with that property.
-  const chosenProperty = propertyId || (properties.some((x) => x.id === ids.property) ? ids.property : '')
+  const savedProperty = data.properties.find((x) => x.id === ids.property)
+  const reuseSaved = !!savedProperty && savedProperty.clientId === effectiveClientId && (!propertyId || propertyId === NEW)
+  const newProperty = !reuseSaved && (propertyId === NEW || (!!effectiveClientId && properties.length === 0))
+  const chosenProperty = reuseSaved ? ids.property : propertyId === NEW ? '' : propertyId
+  // A new property for another client (or a second one) can't reuse the saved property's id.
+  const freshPropertyId = () => savedProperty && setIds((i) => ({ ...i, property: uid('p') }))
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -250,6 +254,7 @@ function NewProjectForm({ onClose, onCreated }: { onClose: () => void; onCreated
             onChange={(e) => {
               setClientId(e.target.value)
               setPropertyId('')
+              freshPropertyId()
             }}
           >
             <option value="">Choose a client…</option>
@@ -279,7 +284,15 @@ function NewProjectForm({ onClose, onCreated }: { onClose: () => void; onCreated
         )}
         {effectiveClientId && properties.length > 0 && (
           <Field label="Property" className="sm:col-span-2">
-            <select className="input" required value={chosenProperty} onChange={(e) => setPropertyId(e.target.value)}>
+            <select
+              className="input"
+              required
+              value={newProperty ? NEW : chosenProperty}
+              onChange={(e) => {
+                setPropertyId(e.target.value)
+                if (e.target.value === NEW) freshPropertyId()
+              }}
+            >
               <option value="">Choose a property…</option>
               {properties.map((x) => (
                 <option key={x.id} value={x.id}>{x.address}, {x.suburb}</option>
@@ -328,7 +341,7 @@ function NewProjectForm({ onClose, onCreated }: { onClose: () => void; onCreated
         <Field label="Assigned trade" className="sm:col-span-2">
           <select className="input" value={p.assignedProviderId} onChange={(e) => setP({ ...p, assignedProviderId: e.target.value })}>
             <option value="">Unassigned</option>
-            {lk.providers.map((u) => <option key={u.id} value={u.id}>{u.name}{u.trade ? ` (${u.trade})` : ''}</option>)}
+            {lk.providers.map((u) => <option key={u.id} value={u.id}>{u.name}{u.trade ? ` (${u.trade})` : ''}{hasNoLogin(u) ? ' (no login)' : ''}</option>)}
           </select>
         </Field>
         <Field label="Scope of works" className="sm:col-span-2">
@@ -378,7 +391,7 @@ function ProjectEditor({ project, onClose, onSave }: { project: Project; onClose
         <Field label="Assigned trade">
           <select className="input" value={p.assignedProviderId ?? ''} onChange={(e) => set({ assignedProviderId: e.target.value || undefined })}>
             <option value="">Unassigned</option>
-            {lk.providers.map((u) => <option key={u.id} value={u.id}>{u.name}{u.trade ? ` (${u.trade})` : ''}</option>)}
+            {lk.providers.map((u) => <option key={u.id} value={u.id}>{u.name}{u.trade ? ` (${u.trade})` : ''}{hasNoLogin(u) ? ' (no login)' : ''}</option>)}
           </select>
         </Field>
         <Field label="Budget (AUD)">

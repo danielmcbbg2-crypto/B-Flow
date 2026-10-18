@@ -12,9 +12,9 @@ import { cx, fmtDate, money } from '../../lib/utils'
 const STOCK_TONE: Record<Product['stock'], Tone> = { in_stock: 'green', to_order: 'outline', out_of_stock: 'red' }
 const ORDER_TONE: Record<OrderStatus, Tone> = { new: 'orange', confirmed: 'outline', paid: 'dark', fulfilled: 'green', cancelled: 'red' }
 
-/** Signed-in service providers pay the trade price where one is set. */
+/** Active service providers pay the trade price where one is set (place_order applies the same rule). */
 export function unitPrice(p: Product, user: UserAccount | null): number {
-  return user?.role === 'provider' && p.tradePrice !== undefined ? p.tradePrice : p.price
+  return user?.role === 'provider' && user.status === 'active' && p.tradePrice !== undefined ? p.tradePrice : p.price
 }
 
 /** Published products: from the signed-in person's data, or loaded for a visitor. */
@@ -284,7 +284,7 @@ function Checkout({
         </Field>
         <p className="text-xs text-slate-500">
           No payment now. We'll confirm availability{form.delivery === 'delivery' ? ' and delivery cost' : ''}, then send an invoice to pay by bank transfer.
-          {user?.role === 'provider' && ' Trade prices apply to your account.'}
+          {user?.role === 'provider' && user.status === 'active' && ' Trade prices apply to your account.'}
         </p>
         {acting && <p className="text-sm text-red-600">Orders can't be placed from someone else's dashboard.</p>}
         {error && <p className="text-sm text-red-600">{error}</p>}

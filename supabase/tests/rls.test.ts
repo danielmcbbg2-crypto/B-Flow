@@ -71,6 +71,12 @@ async function createAuthUser(email: string): Promise<string> {
   }
 }
 
+/** What the invite-user function does: allow a login for the account, then create it. */
+async function inviteAuthUser(email: string): Promise<string> {
+  await pool.query('update public.profiles set login_invited = true where lower(email) = lower($1)', [email])
+  return createAuthUser(email)
+}
+
 async function mutate(db: DbAdapter, fn: (d: AppData) => void) {
   const prev = await fetchAll(db)
   const next = structuredClone(prev)
@@ -101,7 +107,7 @@ before(async () => {
     ['marcus', 'marcus.lee@example.com.au'],
     ['dan', 'dan@kowalskicarpentry.com.au'],
   ]) {
-    uid[key] = await createAuthUser(email)
+    uid[key] = await inviteAuthUser(email)
     await asUser(uid[key], 'select activate_my_account()')
   }
   sarah = adapter(uid.sarah)
@@ -337,7 +343,7 @@ describe('granular permissions', () => {
         passwordHash: '',
       })
     })
-    uid.office = await createAuthUser('office@nextphasemaintenance.com.au')
+    uid.office = await inviteAuthUser('office@nextphasemaintenance.com.au')
     await asUser(uid.office, 'select activate_my_account()')
     const office = adapter(uid.office)
     const d = await fetchAll(office)
@@ -612,20 +618,37 @@ describe('clients added without a login', () => {
     assert.deepEqual(diff(d, structuredClone(d)), [])
   })
 
-  test("nobody can sign up as them until an admin adds their email; then they see what was recorded", async () => {
+  test("nobody can sign up as them, even once their email is saved; an admin's invite links the login", async () => {
     await assert.rejects(createAuthUser('olive@example.com'), /No Next Phase Maintenance invitation/)
     await mutate(admin, (d) => {
       d.users.find((u) => u.id === 'u-nl-1')!.email = 'olive@example.com'
     })
+    // A sign-up with the right email isn't enough: someone who knows it can't claim the account.
+    await assert.rejects(createAuthUser('olive@example.com'), /No Next Phase Maintenance invitation/)
+    // Only the invite-user function (service role) can allow a login; the app can't.
+    await asUser(uid.admin, `update profiles set login_invited = true where id = 'u-nl-1'`)
+    await asUser(uid.admin, `insert into profiles (id, name, email, role, login_invited) values ('u-nl-3', 'Sneaky', 'sneaky@example.com', 'client', true)`)
+    const flags = await pool.query<{ id: string; login_invited: boolean }>(`select id, login_invited from profiles where id in ('u-nl-1', 'u-nl-3') order by id`)
+    assert.deepEqual(flags.rows.map((r) => r.login_invited), [false, false])
+    await assert.rejects(createAuthUser('sneaky@example.com'), /No Next Phase Maintenance invitation/)
+    // Changing the email before the login exists withdraws an invite.
+    await pool.query(`update profiles set login_invited = true where id = 'u-nl-3'`)
+    await asUser(uid.admin, `update profiles set email = 'sneaky2@example.com' where id = 'u-nl-3'`)
+    assert.equal((await pool.query(`select login_invited from profiles where id = 'u-nl-3'`)).rows[0].login_invited, false)
+
     // Inviting creates the login, which is linked to the account by email.
-    uid.olive = await createAuthUser('olive@example.com')
+    uid.olive = await inviteAuthUser('olive@example.com')
     assert.equal((await fetchAll(admin)).users.find((u) => u.id === 'u-nl-1')!.hasLogin, true)
     await asUser(uid.olive, 'select activate_my_account()')
     const mine = await fetchAll(adapter(uid.olive))
     assert.deepEqual(mine.properties.map((p) => p.id), ['p-nl-1'])
     assert.deepEqual(mine.projects.map((p) => p.title), ['Deck rebuild'])
-    // An account with a login always keeps an email.
-    await assert.rejects(asUser(uid.admin, `update profiles set email = null where id = 'u-nl-1'`), /profiles_login_has_email/)
+    // Once there's a login, the email it signs in with can't be changed or cleared through the app.
+    await assert.rejects(asUser(uid.admin, `update profiles set email = 'olive.new@example.com' where id = 'u-nl-1'`), /can’t change once the account has a login/)
+    await assert.rejects(asUser(uid.admin, `update profiles set email = null where id = 'u-nl-1'`), /can’t change once the account has a login/)
+    await asUser(uid.admin, `update profiles set name = 'Olive N.' where id = 'u-nl-1'`)
+    // An account with a login always keeps an email (even for the server).
+    await assert.rejects(pool.query(`update profiles set email = null where id = 'u-nl-1'`), /profiles_login_has_email/)
   })
 })
 
@@ -664,7 +687,7 @@ describe('store', () => {
     await mutate(admin, (d) => {
       d.users.push({ id: 'u-trade', name: 'Tia Trade', email: 'tia@example.com', role: 'provider', phone: '', permissions: ['canSubmitExpenses'], createdAt: new Date().toISOString(), status: 'invited', passwordHash: '' })
     })
-    uid.tia = await createAuthUser('tia@example.com')
+    uid.tia = await inviteAuthUser('tia@example.com')
     await asUser(uid.tia, 'select activate_my_account()')
   })
 
@@ -739,9 +762,10 @@ describe('store', () => {
 
   test('store managers move orders along but cannot change what was ordered', async () => {
     const o = (await pool.query<{ id: string }>(`select id from orders where email = 'jo@example.com'`)).rows[0]
-    const upd = await asUser(uid.admin, `update orders set status = 'confirmed', admin_notes = 'Called Jo' where id = $1 returning id`, [o.id])
+    const upd = await asUser(uid.admin, `update orders set status = 'confirmed' where id = $1 returning id`, [o.id])
     assert.equal(upd.rowCount, 1)
-    await assert.rejects(asUser(uid.admin, `update orders set total = 1 where id = $1`, [o.id]), /Only an order's status and notes/)
+    await asUser(uid.admin, `insert into order_notes (id, notes) values ($1, 'Called Jo')`, [o.id])
+    await assert.rejects(asUser(uid.admin, `update orders set total = 1 where id = $1`, [o.id]), /Only an order's status can be changed/)
     assert.equal((await asUser(uid.sarah, `update orders set status = 'paid' where id = $1 returning id`, [o.id])).rowCount, 0)
     assert.equal((await asUser(uid.sarah, `update orders set status = 'cancelled' returning id`)).rowCount, 0)
   })
@@ -784,5 +808,14 @@ describe('store through the app', () => {
     })
     const o = (await fetchAll(admin)).orders.find((x) => x.email === 'tia@example.com')!
     assert.deepEqual([o.status, o.adminNotes, o.trade], ['paid', 'Paid by transfer', true])
+    // The customer sees the new status but never the office's notes, even reading the tables directly.
+    const mine = (await fetchAll(adapter(uid.tia))).orders.find((x) => x.id === o.id)!
+    assert.deepEqual([mine.status, mine.adminNotes], ['paid', ''])
+    assert.equal((await asUser(uid.tia, `select * from order_notes`)).rowCount, 0)
+    assert.ok(!JSON.stringify((await asUser(uid.tia, `select to_jsonb(o) j from orders o`)).rows).includes('Paid by transfer'))
+    assert.equal((await asUser(uid.tia, `insert into order_notes (id, notes) select id, 'mine' from orders returning id`).catch(() => ({ rowCount: 0 }))).rowCount, 0)
+    // Clearing the note removes it.
+    await mutate(admin, (d) => { d.orders.find((x) => x.id === o.id)!.adminNotes = '' })
+    assert.equal((await pool.query(`select count(*)::int n from order_notes where id = $1`, [o.id])).rows[0].n, 0)
   })
 })

@@ -98,14 +98,20 @@ const DRAFT_TOOL = {
 
 type Params = Anthropic.Beta.Messages.MessageCreateParamsNonStreaming
 
-/** Runs a request that uses web tools, resuming if the server pauses a long search. */
-async function run(client: Anthropic, params: Omit<Params, 'model' | 'max_tokens' | 'messages'>, prompt: string) {
+/**
+ * Runs a request that uses web tools and should end with a call to `tool`: resumes if the server
+ * pauses a long search, and asks once more if the model stops without calling it (tool choice
+ * can't be forced on this model). The conversation is only ever appended to, never edited.
+ */
+async function run(client: Anthropic, params: Omit<Params, 'model' | 'max_tokens' | 'messages'>, prompt: string, tool: string) {
   const messages: Anthropic.Beta.Messages.BetaMessageParam[] = [{ role: 'user', content: prompt }]
-  for (let i = 0; i < 4; i++) {
+  let nudged = false
+  for (let i = 0; i < 5; i++) {
     const message = await client.beta.messages
       .stream({
         model: MODEL,
-        max_tokens: 16000,
+        // Thinking (always on) counts towards this as well as the reply.
+        max_tokens: 32000,
         // If a safety check declines the request, the API retries it on a suitable model.
         betas: ['server-side-fallback-2026-07-01'],
         fallbacks: 'default',
@@ -114,8 +120,16 @@ async function run(client: Anthropic, params: Omit<Params, 'model' | 'max_tokens
         ...params,
       })
       .finalMessage()
-    if (message.stop_reason !== 'pause_turn') return message
-    messages.push({ role: 'assistant', content: message.content })
+    if (message.stop_reason === 'pause_turn') {
+      messages.push({ role: 'assistant', content: message.content })
+      continue
+    }
+    if (message.stop_reason === 'end_turn' && !nudged && !toolInput(message, tool)) {
+      nudged = true
+      messages.push({ role: 'assistant', content: message.content }, { role: 'user', content: `Call ${tool} now with what you have.` })
+      continue
+    }
+    return message
   }
   throw new Error('The search took too long. Try a more specific request.')
 }
@@ -161,6 +175,7 @@ Deno.serve(async (req) => {
           tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 6, user_location: MELBOURNE }, FIND_TOOL],
         },
         `Find products for our store: ${query}`,
+        FIND_TOOL.name,
       )
       const found = toolInput<{ products: unknown[]; note: string }>(message, FIND_TOOL.name)
       if (!found) return json({ error: 'The assistant couldn’t complete this search. Try rewording it.' }, 422)
@@ -185,6 +200,7 @@ Deno.serve(async (req) => {
         client,
         { system: DRAFT_SYSTEM, tools: [{ type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 3 }, DRAFT_TOOL] },
         `Draft a store listing for this product.\n\n${details}`,
+        DRAFT_TOOL.name,
       )
       const listing = toolInput(message, DRAFT_TOOL.name)
       if (!listing) return json({ error: 'The assistant couldn’t draft this listing. Try again or add it by hand.' }, 422)

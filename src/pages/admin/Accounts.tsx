@@ -147,10 +147,14 @@ export function Accounts() {
           onClose={() => setEditing(null)}
           onGetLink={CLOUD && !(editing.id === MASTER_ID || editing.id === user?.id) ? () => getSignInLink(editing.id) : undefined}
           onSave={(a) => {
+            // Checked against the account as saved now: a link made from the open form may have
+            // created their login since it opened.
+            const saved = data.users.find((u) => u.id === a.id) ?? a
             const email = a.email.trim().toLowerCase()
             if (email && data.users.some((u) => u.id !== a.id && u.email.toLowerCase() === email)) return 'Another account already uses this email.'
-            if (!email && !noLogin(a)) return 'Add their email address: they sign in with it.'
-            update((d) => { d.users = d.users.map((x) => (x.id === a.id ? { ...a, email: a.email.trim() } : x)) })
+            if (!email && !noLogin(saved)) return 'Add their email address: they sign in with it.'
+            if (CLOUD && !noLogin(saved) && email !== saved.email.trim().toLowerCase()) return 'The email can’t change once they have a login.'
+            update((d) => { d.users = d.users.map((x) => (x.id === a.id ? { ...a, email: a.email.trim(), hasLogin: x.hasLogin } : x)) })
             setEditing(null)
             return null
           }}
@@ -199,8 +203,9 @@ export function Accounts() {
           <p className="text-sm text-slate-600">
             <span className="font-semibold text-slate-900">{issued.account.name}</span> has been added without a login, and nothing has been sent to
             them. You can add {issued.account.role === 'client' ? 'their properties, projects and jobs' : 'them to jobs and projects'} now (Quotes &
-            projects → New project, or Open dashboard). To give them access later, open their account, make sure their email is there and choose
-            “Create invite link”: they'll see everything already recorded for them.
+            projects → New project, or Open dashboard). To give them access later, open their account,{' '}
+            {CLOUD ? 'make sure their email is there and choose “Create invite link”' : 'add their email, choose “Create invite code”, save, and send them the code'}:
+            they'll see everything already recorded for them.
           </p>
         )}
         {issued?.link && (
@@ -333,14 +338,19 @@ function AccountEditor({
   onDelete?: () => Promise<string | null>
   onGetLink?: () => Promise<{ error?: string; link?: string }>
 }) {
-  const { sendPasswordEmail } = useStore()
+  const { sendPasswordEmail, data } = useStore()
   const [a, setA] = useState(account)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [shared, setShared] = useState<string | null>(null)
   const [linkBusy, setLinkBusy] = useState(false)
-  // Based on the saved account, not unsaved edits in this form.
-  const invitePending = account.status === 'invited'
-  const withoutLogin = noLogin(account)
+  // Based on the account as saved now (a link made here can create their login), not on unsaved
+  // edits in this form.
+  const saved = data.users.find((u) => u.id === account.id) ?? account
+  const invitePending = saved.status === 'invited'
+  const withoutLogin = noLogin(saved)
+  const emailUnsaved = a.email.trim() !== saved.email
+  // Reactivating puts an account that never signed in back to waiting for its invite.
+  const reactivateAs = account.status === 'invited' || (CLOUD ? saved.hasLogin === false : !saved.passwordHash) ? 'invited' : 'active'
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const set = (patch: Partial<UserAccount>) => setA({ ...a, ...patch })
   return (
@@ -359,9 +369,9 @@ function AccountEditor({
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-4 sm:col-span-2">
           <div className="flex flex-wrap gap-2">
-            {!locked && a.status !== 'invited' && (
-              <button type="button" className="btn-ghost" onClick={() => set({ status: a.status === 'active' ? 'suspended' : 'active' })}>
-                {a.status === 'active' ? 'Suspend' : 'Reactivate'}
+            {!locked && (
+              <button type="button" className="btn-ghost" onClick={() => set({ status: a.status === 'suspended' ? reactivateAs : 'suspended' })}>
+                {a.status === 'suspended' ? 'Reactivate' : 'Suspend'}
               </button>
             )}
             {!locked &&
@@ -383,19 +393,22 @@ function AccountEditor({
                   {withoutLogin ? 'Create invite code' : 'Reset & re-invite'}
                 </button>
               ))}
-            {onGetLink && account.status !== 'suspended' && (
+            {onGetLink && saved.status !== 'suspended' && (
               <button
                 type="button"
                 className="btn-ghost"
-                disabled={linkBusy || (withoutLogin && !account.email)}
-                title={withoutLogin && !account.email ? 'Add their email and save it first' : undefined}
+                disabled={linkBusy || (withoutLogin && (!saved.email || emailUnsaved))}
+                title={withoutLogin && (!saved.email || emailUnsaved) ? 'Save their email first' : undefined}
                 onClick={async () => {
                   setLinkBusy(true)
                   setMsg(null)
                   const res = await onGetLink()
                   setLinkBusy(false)
-                  if (res.link) setShared(res.link)
-                  else setMsg({ ok: false, text: res.error ?? 'Could not create the link.' })
+                  if (res.link) {
+                    // The login now exists and is tied to the saved email.
+                    setA((cur) => ({ ...cur, email: saved.email, hasLogin: true }))
+                    setShared(res.link)
+                  } else setMsg({ ok: false, text: res.error ?? 'Could not create the link.' })
                 }}
               >
                 <Copy size={15} />{' '}
@@ -438,7 +451,7 @@ function AccountEditor({
           <p className="text-sm text-slate-600 sm:col-span-2">
             No login yet: nothing has been sent to {account.name}.{' '}
             {CLOUD
-              ? account.email
+              ? saved.email && !emailUnsaved
                 ? 'To give them access, choose “Create invite link” and send it to them.'
                 : 'To give them access, add their email and save, then open their account again and choose “Create invite link”.'
               : 'To give them access, choose “Create invite code”, save, and send them the code.'}{' '}

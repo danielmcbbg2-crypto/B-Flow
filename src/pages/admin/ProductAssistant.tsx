@@ -109,7 +109,7 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product) => void })
           <div className="card space-y-2 border-accent p-5 text-sm">
             <p className="font-semibold">The AI assistant isn't set up yet</p>
             <ol className="list-decimal space-y-1 pl-5 text-slate-700">
-              <li>Create an API key at console.anthropic.com (Settings → API keys) and add some credit. Each search usually costs a few cents.</li>
+              <li>Create an API key at console.anthropic.com (Settings → API keys), add some credit and set a monthly spend limit. Each search or draft usually costs well under a dollar.</li>
               <li>In Supabase, open your project → Edge Functions → Secrets, and add <code className="font-mono">ANTHROPIC_API_KEY</code> with that key.</li>
               <li>Come back here and search again.</li>
             </ol>

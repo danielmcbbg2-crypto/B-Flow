@@ -9,7 +9,8 @@ It combines the public website with three role-based portals:
 | **Public homepage** | Services, how it works, Melbourne coverage, contact & hours, top-right **Sign in** |
 | **Client** | Maintenance requests with photos (urgent jobs SMS the office), Maintenance Hub (live / completed / schedule), renovation quote requests & project tracking, property registry (paint colours, skirting, cladding, access, floor plan) |
 | **Service provider** | Inbox with work-order acknowledgement, live works with status updates & completion photos, project milestones, drag-to-reschedule calendar linked to work orders, budget & expense submission |
-| **Admin (ops command centre)** | Triage & dispatch with provider assignment and SMS, quotes & projects (scope, milestones, expense approval), QuickBooks invoice ledger with bank-transfer settlement, SMS gateway settings & logs, invite-only accounts with granular permissions |
+| **Admin (ops command centre)** | Triage & dispatch with provider assignment and SMS, quotes & projects (scope, milestones, expense approval), QuickBooks invoice ledger with bank-transfer settlement, SMS gateway settings & logs, invite-only accounts with granular permissions, online store orders & products with an AI product finder |
+| **Store** | Vanities, shower screens, tapware and more, open to anyone from the homepage and in the client and service provider portals. Order now, pay by invoice; service providers see trade prices |
 
 ## Two modes
 
@@ -29,19 +30,22 @@ You need a free [Supabase](https://supabase.com) account. Everything below happe
 
 ### 2. Lock down sign-ups and create your admin login
 
-1. **Authentication → Sign In / Providers → Email**: turn **off** "Allow new users to sign up". New people can then only join through an invite from the app. (The database blocks uninvited sign-ups as well.)
+1. **Authentication → Sign In / Providers → Email**: turn **off** "Allow new users to sign up". New people can then only join through an invite from the app. (The database blocks uninvited sign-ups as well: a login is only linked to an account an admin has invited.)
 2. **Authentication → Users → Add user → Create new user**: enter `admin@nextphasemaintenance.com.au`, choose a strong password and tick **Auto Confirm User**. The login links to the admin profile automatically.
 
-### 3. Add the two server functions
+### 3. Add the server functions
 
-In **Edge Functions → Deploy a new function → Via Editor**, create two functions. For each one, use the name shown, replace the editor contents with the file and click **Deploy**:
+In **Edge Functions → Deploy a new function → Via Editor**, create these functions. For each one, use the name shown, replace the editor contents with the file and click **Deploy**:
 
 | Name | File |
 | --- | --- |
 | `send-sms` | [`supabase/functions/send-sms/index.ts`](supabase/functions/send-sms/index.ts) |
 | `invite-user` | [`supabase/functions/invite-user/index.ts`](supabase/functions/invite-user/index.ts) |
+| `store-assistant` | [`supabase/functions/store-assistant/index.ts`](supabase/functions/store-assistant/index.ts) (the store's AI product finder; optional) |
 
-(Developers can use the CLI instead: `supabase link`, then `supabase functions deploy send-sms invite-user`.)
+(Developers can use the CLI instead: `supabase link`, then `supabase functions deploy send-sms invite-user store-assistant`.)
+
+**AI product finder (optional).** The store's assistant uses Claude, from Anthropic. Create an API key at [console.anthropic.com](https://console.anthropic.com) (Settings → API keys), add some credit and set a monthly spend limit there, then add it under **Edge Functions → Secrets** as `ANTHROPIC_API_KEY`. Each search or draft searches or reads the web and usually costs well under a dollar. Without the key the rest of the store works and the finder shows these steps instead.
 
 ### 4. SMS credentials (kept secret on the server)
 
@@ -79,13 +83,22 @@ Microsoft 365, Google Workspace or Postmark work the same way with their own SMT
 
 Sign-in links (emailed or copied) last one hour by default. To give people a full day, set **Email OTP Expiration** to `86400` under **Authentication → Sign In / Providers → Email**.
 
+### Updating an existing install
+
+When an update adds files to [`supabase/migrations`](supabase/migrations), run the new ones (oldest first) in **SQL Editor** and redeploy any changed server functions **before** merging the update into `main`: the database changes work with the current website, but the new website needs them.
+
 ### Day-to-day
 
 - **Invite people:** Admin → Accounts → Invite account → **Create invite link**, then **Text it**, **Email it** or **Copy message** to send it yourself. Or use **Email the invite** once email delivery is set up (step 6). They open the link, press Continue, choose a password and land in their portal. Each link works once; if one expires, open the account and choose **Create new invite link**.
 - **Forgotten passwords:** Admin → Accounts → Edit → **Create password link** and send it to them. Once email delivery is set up, they can also use Sign in → "Forgot password?", or you can use "Email password link".
 - **Change your own password:** the key icon in the portal header.
 - **Clients without a login:** Admin → Accounts → Invite account → fill in their details (email optional) → **Add without login**. Nothing is sent to them; they show as "No login". You can record their properties, projects and jobs straight away: Admin → Quotes & projects → **New project** (you can also add a brand-new client and property right in that form), or open their dashboard. When they need access, open their account, make sure their email is there (save it first), and choose **Create invite link**: once they set a password they see everything already recorded for them.
+- **Service providers without a login:** add them the same way. They can be assigned jobs and projects straight away (shown as "(no login)"); the job details go to their mobile by SMS if that's switched on, and their work orders wait in their inbox until you invite them. Accounts without a login can be suspended, and go back to "No login" when reactivated.
 - **New projects:** Admin → Quotes & projects → **New project**: pick the client (or add one without a login), their property (or add one), and set the title, status, budget, quote and trade. Assigned trades get a work-order message; a project created as "Quote issued" tells the client their quote is ready.
+- **The store:** anyone can browse at *your-site*/#/store (linked from the homepage), and clients and service providers also have a **Store** tab in their portal with their order history. Orders are placed without payment: every admin gets an inbox message, and you confirm availability and delivery, then send an invoice. Service providers with a login see and pay the trade price where you've set one.
+- **Products:** Admin → **Store** → **Add product**: title, category, price, optional trade price, description and photos, plus office-only supplier, cost (with your margin) and notes that customers never see. Drafts are only visible to admins; publish when ready, or archive to hide.
+- **Orders:** Admin → Store → Orders → **Open**: move the order through New → Confirmed → Paid → Fulfilled (or Cancelled) and keep office notes, which customers never see. Customers see the status in their portal. What was ordered and its price can't be changed after it's placed; cancel and ask them to order again instead.
+- **AI product finder:** Admin → Store → **AI product finder**: describe what you're after (e.g. "matte black basin mixers") and it searches the web for products sold in Australia, with links and prices. **Draft listing** reads the supplier's page and writes a listing in its own words, which opens in the product editor as a draft with the supplier link and anything to double-check. Nothing is published until you do it, so check prices, specs and photo rights with the supplier first.
 - **Open a client's or service provider's dashboard:** Admin → Accounts → click their name or **Open dashboard**. You see their portal as they do and can work in it: lodge a request, ask for or answer a quote, add a property, update a job, acknowledge a work order or submit an expense. Nothing you do there is recorded as them: jobs, quotes and expenses show "Lodged by" / "Added by" your name (clients and trades see "Next Phase Maintenance"), answered quotes and acknowledged work orders say who did it, and notes and office messages read "Your name for Their name", including a note on the job when you change its status or add photos. Property changes, milestone ticks and calendar moves aren't recorded against anyone, wherever they're made. An orange bar across the top shows whose dashboard you're in; **Back to accounts** (or your browser's Back button) returns you to your own portal. Your own permissions apply there, so some buttons may be missing if your admin account lacks them.
 - **Deleting accounts:** a client with jobs, projects or invoices can't be deleted, and neither can an admin recorded as doing something for someone else (lodging a job, quote request or expense in their dashboard, accepting or rejecting a quote, including in Quotes & projects, or acknowledging a work order), since that would erase the record. Suspend them instead. Deleting a service provider keeps their jobs and expenses, with the jobs unassigned.
 
@@ -97,6 +110,8 @@ The rules live in the database (row-level security), so they apply even if someo
 - **Service providers** see only the jobs and projects assigned to them, plus the related property and client. They can update status, notes, schedule dates, completion photos and milestones, and submit expenses. They can't change anything else or approve their own expenses.
 - **Admins** see everything. Finance requires the "Manage invoices" permission, and accounts require "Edit accounts & permissions". Working in someone else's dashboard uses the admin's own permissions ("Dispatch & assign jobs" to lodge or update jobs, "Manage projects & quotes" for quotes, milestones and expenses). The database records the signed-in admin as the person who created each job, quote and expense, last accepted or rejected each quote, and acknowledged each work order. The app can't change that, and an account with such records can't be deleted.
 - **SMS** can only be sent through the server function. Clients can trigger the office alert for their own new request, once. Only admins can text other numbers.
+- **Sign-ups:** a login is only ever linked to an account an admin has invited (through the app's invite), so knowing a client's email isn't enough to claim their account. Once an account has a login, its email can't be changed.
+- **Store:** visitors see published products only. Trade prices are visible only to service providers with a login and to admins with "Manage store & orders"; supplier details, costs and office notes on orders only to those admins. Orders are priced by the database from the current catalogue (whatever the browser sends), only published items that aren’t out of stock can be ordered, and visitors are limited to a few orders per email per hour. Customers see only their own orders and can't change them; admins can only change an order's status and notes. The AI product finder can only be used by admins with "Manage store & orders".
 
 Photo links use long random names that can't be guessed, but anyone who has a link can open it. Avoid photographing anything highly sensitive, such as alarm codes.
 
@@ -117,9 +132,9 @@ Edit `src/lib/brand.ts` for the public phone number (hidden until set), business
 src/
   lib/          types, store (state, auth, sync), db (Supabase table mapping), supabase client, seed data, router, utils, brand
   components/   UI primitives, portal shell, sign-in, calendar, shared work-order views
-  pages/        PublicHome, client/, provider/, admin/
+  pages/        PublicHome, client/, provider/, admin/, store/
 supabase/
   migrations/   database schema + access rules
-  functions/    send-sms, invite-user (server functions)
+  functions/    send-sms, invite-user, store-assistant (server functions)
   tests/        access-rule tests that run against a real Postgres
 ```

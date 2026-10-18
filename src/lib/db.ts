@@ -42,6 +42,7 @@ export const TABLES = [
   'product_sources',
   'orders',
   'order_items',
+  'order_notes',
 ] as const
 export type TableName = (typeof TABLES)[number]
 
@@ -231,7 +232,6 @@ const orderRow = (o: StoreOrder): Row => ({
   trade: o.trade,
   total: o.total,
   status: o.status,
-  admin_notes: o.adminNotes,
   created_at: o.createdAt,
 })
 
@@ -279,9 +279,11 @@ const SPECS: Spec[] = [
         .filter((p) => p.source)
         .map((p) => ({ id: p.id, supplier: p.source!.supplier, source_url: p.source!.url, cost: nul(p.source!.cost), notes: p.source!.notes })),
   },
-  // Orders are placed by the database (place_order); store managers only change status and notes.
+  // Orders are placed by the database (place_order); store managers only change the status, and
+  // keep their notes in order_notes (keyed by the order's id), which customers can't read.
   { table: 'orders', rows: (d) => d.orders.map(orderRow), readonly: ['number'] },
   { table: 'order_items', rows: (d) => d.orders.flatMap((o) => o.items.map((i) => orderItemRow(o.id, i))) },
+  { table: 'order_notes', rows: (d) => d.orders.filter((o) => o.adminNotes).map((o) => ({ id: o.id, notes: o.adminNotes })) },
 ]
 
 const strip = (row: Row, cols: string[] = []) => {
@@ -481,7 +483,8 @@ export const productsFromRows = (products: Row[], tradePrices: Row[] = [], sourc
     })
 }
 
-const ordersFromRows = (orders: Row[], items: Row[]): StoreOrder[] => {
+const ordersFromRows = (orders: Row[], items: Row[], notes: Row[]): StoreOrder[] => {
+  const noteFor = new Map(notes.map((r) => [r.id as string, r.notes as string]))
   const byOrder = new Map<string, OrderItem[]>()
   for (const i of items) {
     const list = byOrder.get(i.order_id as string) ?? []
@@ -508,14 +511,14 @@ const ordersFromRows = (orders: Row[], items: Row[]): StoreOrder[] => {
     trade: r.trade as boolean,
     total: num(r.total),
     status: r.status as StoreOrder['status'],
-    adminNotes: r.admin_notes as string,
+    adminNotes: noteFor.get(r.id as string) ?? '',
     createdAt: r.created_at as string,
     items: (byOrder.get(r.id as string) ?? []).sort((a, b) => a.title.localeCompare(b.title)),
   }))
 }
 
 export async function fetchAll(db: DbAdapter): Promise<AppData> {
-  const [profiles, properties, projects, requests, milestones, expenses, invoices, inbox, sms, settings, products, tradePrices, sources, orders, orderItems] =
+  const [profiles, properties, projects, requests, milestones, expenses, invoices, inbox, sms, settings, products, tradePrices, sources, orders, orderItems, orderNotes] =
     await Promise.all(TABLES.map((t) => db.select(t)))
   const byProject = (rows: Row[]) => {
     const m = new Map<string, Row[]>()
@@ -537,7 +540,7 @@ export async function fetchAll(db: DbAdapter): Promise<AppData> {
     smsSettings: { ...DEFAULT_SMS, ...(s?.sms ?? {}) },
     bank: s?.bank ?? { accountName: 'Next Phase Maintenance', bsb: '', accountNumber: '' },
     products: productsFromRows(products, tradePrices, sources),
-    orders: ordersFromRows(orders, orderItems),
+    orders: ordersFromRows(orders, orderItems, orderNotes),
   }
 }
 
