@@ -38,7 +38,7 @@ const FIND_SYSTEM = `${BUSINESS}
 
 You help the owner find products to list in the store. Search the web for products that match the request and are sold in Australia by reputable suppliers, wholesalers or manufacturers, ideally with a product page that states specifications and an Australian price. Prefer a range of options (brands, price points) over several listings of the same item.
 
-Be quick: a few well-aimed searches are enough. As soon as you have 4 to 6 good candidates, call report_products once. Use only what the pages say: leave a field as an empty string rather than guessing, and give prices in AUD as shown (say whether GST is included if the page does). If nothing suitable turns up, call report_products with an empty list and explain why in the note.`
+Be quick: a few well-aimed searches are usually enough, and you have at most 8. As soon as you have 4 to 6 good candidates, or when a search says the limit is reached, stop searching and call report_products once with what you have. Use only what the pages say: leave a field as an empty string rather than guessing, and give prices in AUD as shown (say whether GST is included if the page does). If nothing suitable turns up, call report_products with an empty list and explain why in the note.`
 
 const DRAFT_SYSTEM = `${BUSINESS}
 
@@ -169,7 +169,7 @@ async function run(
     }
     if (message.stop_reason === 'end_turn' && !nudged) {
       nudged = true
-      messages.push({ role: 'assistant', content: echo(message.content) }, { role: 'user', content: `Call ${tool} now with what you have.` })
+      messages.push({ role: 'assistant', content: echo(message.content) }, { role: 'user', content: `Don't search any more. Call ${tool} now with what you have found so far (an empty list is fine).` })
       continue
     }
     return message
@@ -268,7 +268,7 @@ Deno.serve(async (req) => {
         client,
         {
           system: FIND_SYSTEM,
-          tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 5, user_location: MELBOURNE }, FIND_TOOL],
+          tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 8, user_location: MELBOURNE }, FIND_TOOL],
         },
         `Find products for our store: ${query}`,
         FIND_TOOL.name,
