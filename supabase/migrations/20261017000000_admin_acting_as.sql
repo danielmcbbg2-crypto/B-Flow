@@ -37,22 +37,18 @@ update public.project_expenses set created_by = provider_id where created_by is 
 -- orders for them (the column guard still limits changes to read / acknowledged). Only service
 -- providers' inboxes: no dashboard shows anyone else's, and loading every admin's copy of every
 -- office notification would soon run into the API's row limit.
-drop policy inbox_select on public.inbox;
 -- Written as one list of allowed inboxes, worked out once per query, so reads use the user_id index
 -- instead of calling the helper functions for every row.
-create policy inbox_select on public.inbox for select to authenticated using (
+alter policy inbox_select on public.inbox using (
   user_id = any (array(
-    select public.current_profile_id()
-    union all
-    select p.id from public.profiles p where p.role = 'provider' and (select public.is_admin())
+    select p.id from public.profiles p
+    where p.id = (select public.current_profile_id()) or (p.role = 'provider' and (select public.is_admin()))
   ))
 );
-drop policy inbox_update on public.inbox;
-create policy inbox_update on public.inbox for update to authenticated using (
+alter policy inbox_update on public.inbox using (
   user_id = any (array(
-    select public.current_profile_id()
-    union all
-    select p.id from public.profiles p where p.role = 'provider' and (select public.is_admin())
+    select p.id from public.profiles p
+    where p.id = (select public.current_profile_id()) or (p.role = 'provider' and (select public.is_admin()))
   ))
 );
 
