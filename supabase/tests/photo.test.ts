@@ -4,7 +4,7 @@
  */
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { fetchable, findImage } from '../functions/store-assistant/photo.ts'
+import { fetchable, findImage, privateAddress } from '../functions/store-assistant/photo.ts'
 
 const page = 'https://shop.example.com.au/products/matte-black-mixer'
 
@@ -34,6 +34,8 @@ describe('findImage', () => {
     assert.equal(findImage(ld, page), 'https://cdn.example.com/ld.jpg')
     const ldObj = `<script type="application/ld+json">{"@type":"Product","image":{"@type":"ImageObject","url":"https://cdn.example.com/obj.jpg"}}</script>`
     assert.equal(findImage(ldObj, page), 'https://cdn.example.com/obj.jpg')
+    const ldEscaped = `<script type="application/ld+json">{"image":"https:\\u002F\\u002Fcdn.example.com\\u002Fu.jpg"}</script>`
+    assert.equal(findImage(ldEscaped, page), 'https://cdn.example.com/u.jpg')
   })
 
   test('returns nothing when there is no usable photo', () => {
@@ -41,6 +43,14 @@ describe('findImage', () => {
     assert.equal(findImage(`<meta property="og:image" content="javascript:alert(1)">`, page), '')
     assert.equal(findImage(`<meta property="og:image" content="data:image/png;base64,AAAA">`, page), '')
     assert.equal(findImage(`<meta property="og:image" content="http://192.168.1.10/p.jpg">`, page), '')
+  })
+})
+
+describe('privateAddress', () => {
+  test('flags private, local and reserved addresses', () => {
+    for (const ip of ['127.0.0.1', '10.1.2.3', '172.20.0.1', '192.168.0.9', '169.254.169.254', '100.64.0.1', '0.0.0.0', '::1', '::', 'fd00::1', 'fe80::1', '::ffff:127.0.0.1'])
+      assert.ok(privateAddress(ip), ip)
+    for (const ip of ['104.16.1.1', '203.4.5.6', '2606:4700::1']) assert.ok(!privateAddress(ip), ip)
   })
 })
 
@@ -57,6 +67,8 @@ describe('fetchable', () => {
       'http://db.internal/',
       'https://user:pass@example.com/',
       'ftp://example.com/file',
+      'http://localhost./',
+      'http://db.internal./',
     ]) assert.ok(!fetchable(new URL(bad)), bad)
   })
 })
