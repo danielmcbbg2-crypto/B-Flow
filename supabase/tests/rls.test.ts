@@ -170,7 +170,7 @@ describe('client visibility & actions', () => {
     assert.deepEqual(d.properties.map((p) => p.id).sort(), ['p-1', 'p-2'])
     assert.deepEqual(d.requests.map((r) => r.id).sort(), ['r-1', 'r-3', 'r-4', 'r-5'])
     assert.deepEqual(d.projects.map((p) => p.id), ['pr-1'])
-    assert.equal(d.invoices.length, 2)
+    assert.equal(d.invoices.length, 3)
     assert.deepEqual(d.users.map((u) => u.id).sort(), ['u-client-1', 'u-prov-1', 'u-prov-2', 'u-prov-3'])
     assert.equal(d.sms.length, 0)
     assert.equal(d.smsSettings.recipients.length, 0)
@@ -247,6 +247,9 @@ describe('service provider visibility & actions', () => {
     assert.deepEqual(d.users.map((u) => u.id).sort(), ['u-client-1', 'u-client-2', 'u-prov-1'])
     assert.equal(d.invoices.length, 0)
     assert.equal(d.projects[0].milestones.length, 5)
+    // The quote, variations, payments and costs are between the office and the client.
+    const p = d.projects[0]
+    assert.equal(p.quoteItems.length + p.variations.length + p.payments.length + p.costs.length, 0)
   })
 
   test('can update status, notes, schedule and completion photos', async () => {
@@ -853,5 +856,127 @@ describe('store through the app', () => {
     // Clearing the note removes it.
     await mutate(admin, (d) => { d.orders.find((x) => x.id === o.id)!.adminNotes = '' })
     assert.equal((await pool.query(`select count(*)::int n from order_notes where id = $1`, [o.id])).rows[0].n, 0)
+  })
+})
+
+describe('construction: quotes, variations, payments and costs', () => {
+  test('the office loads the itemised quote, variations, payment schedule and costs', async () => {
+    const p = (await fetchAll(admin)).projects.find((x) => x.id === 'pr-1')!
+    assert.equal(p.quoteItems.length, 17)
+    // Added variations always start as proposed; the office can record the client's answer.
+    assert.deepEqual(p.variations.map((v) => [v.number, v.status]), [[1, 'proposed'], [2, 'proposed']])
+    await mutate(admin, (d) => {
+      d.projects.find((x) => x.id === 'pr-1')!.variations.find((x) => x.id === 'v-1')!.status = 'approved'
+    })
+    const v1 = (await fetchAll(admin)).projects.find((x) => x.id === 'pr-1')!.variations.find((x) => x.id === 'v-1')!
+    assert.equal(v1.status, 'approved')
+    assert.equal(v1.decidedBy, 'u-admin')
+    assert.equal(p.payments.length, 4)
+    assert.equal(p.payments[0].invoiceId, 'i-3')
+    assert.equal(p.costs.length, 2)
+    assert.ok(p.quoteInclusions)
+  })
+
+  test('the client sees their quote, variations and payments but not costs', async () => {
+    const mine = (await fetchAll(sarah)).projects.find((x) => x.id === 'pr-1')!
+    assert.equal(mine.quoteItems.length, 17)
+    assert.equal(mine.variations.length, 2)
+    assert.equal(mine.payments.length, 4)
+    assert.equal(mine.costs.length, 0)
+  })
+
+  test("a quote's lines stay hidden from the client until it's issued", async () => {
+    await mutate(admin, (d) => {
+      d.projects.find((x) => x.id === 'pr-2')!.quoteItems.push({ id: 'qi-pr2', section: 'Deck', description: 'Merbau decking', kind: 'materials', qty: 20, unit: 'm²', rate: 140 })
+    })
+    const before = (await fetchAll(marcus)).projects.find((x) => x.id === 'pr-2')!
+    assert.equal(before.quoteItems.length, 0)
+    await mutate(admin, (d) => {
+      const p = d.projects.find((x) => x.id === 'pr-2')!
+      p.status = 'quoted'
+      p.quoteAmount = 3080
+    })
+    const after = (await fetchAll(marcus)).projects.find((x) => x.id === 'pr-2')!
+    assert.equal(after.quoteItems.length, 1)
+  })
+
+  test('clients cannot price or add anything', async () => {
+    await assert.rejects(
+      asUser(uid.sarah, `insert into project_variations (project_id, number, title, amount) values ('pr-1', 9, 'Free upgrade', -5000)`),
+      /row-level security/,
+    )
+    await assert.rejects(asUser(uid.sarah, `insert into project_costs (project_id, date, description, amount) values ('pr-1', current_date, 'x', 1)`), /row-level security/)
+    await assert.rejects(
+      mutate(sarah, (d) => {
+        d.projects.find((x) => x.id === 'pr-1')!.quoteItems[0].rate = 1
+      }),
+      /permission/,
+    )
+    await assert.rejects(
+      mutate(sarah, (d) => {
+        d.projects.find((x) => x.id === 'pr-1')!.payments[2].value = 1
+      }),
+      /permission/,
+    )
+  })
+
+  test('the client approves a proposed variation (recorded as them), but cannot change its price or a decided one', async () => {
+    await assert.rejects(
+      mutate(sarah, (d) => {
+        const v = d.projects.find((x) => x.id === 'pr-1')!.variations.find((x) => x.id === 'v-2')!
+        v.status = 'approved'
+        v.amount = 1
+      }),
+      /only approve or decline/,
+    )
+    await assert.rejects(
+      mutate(sarah, (d) => {
+        d.projects.find((x) => x.id === 'pr-1')!.variations.find((x) => x.id === 'v-1')!.status = 'rejected'
+      }),
+      /only approve or decline/,
+    )
+    await mutate(sarah, (d) => {
+      d.projects.find((x) => x.id === 'pr-1')!.variations.find((x) => x.id === 'v-2')!.status = 'approved'
+    })
+    const v = (await fetchAll(admin)).projects.find((x) => x.id === 'pr-1')!.variations.find((x) => x.id === 'v-2')!
+    assert.equal(v.status, 'approved')
+    assert.equal(v.decidedBy, 'u-client-1')
+    assert.ok(v.decidedAt)
+  })
+
+  test("the office proposes variations as itself; a decided one can't be changed or removed", async () => {
+    await mutate(admin, (d) => {
+      d.projects.find((x) => x.id === 'pr-1')!.variations.push({ id: 'v-3', number: 3, title: 'Extra power point', description: '', amount: 180, status: 'approved', createdAt: new Date().toISOString() })
+    })
+    const v3 = (await fetchAll(admin)).projects.find((x) => x.id === 'pr-1')!.variations.find((x) => x.id === 'v-3')!
+    assert.equal(v3.status, 'proposed')
+    assert.equal(v3.createdBy, 'u-admin')
+    await assert.rejects(
+      mutate(admin, (d) => {
+        d.projects.find((x) => x.id === 'pr-1')!.variations.find((x) => x.id === 'v-1')!.amount = 10
+      }),
+      /can’t be changed/,
+    )
+    const r = await asUser(uid.admin, `delete from project_variations where id = 'v-1'`)
+    assert.equal(r.rowCount, 0)
+  })
+
+  test("a claimed payment stage keeps its amount and can't be removed; unclaimed ones can change", async () => {
+    await assert.rejects(
+      mutate(admin, (d) => {
+        d.projects.find((x) => x.id === 'pr-1')!.payments.find((s) => s.id === 'ps-1')!.value = 50
+      }),
+      /has been claimed/,
+    )
+    const r = await asUser(uid.admin, `delete from project_payments where id = 'ps-1'`)
+    assert.equal(r.rowCount, 0)
+    await mutate(admin, (d) => {
+      const p = d.projects.find((x) => x.id === 'pr-1')!
+      p.payments.find((s) => s.id === 'ps-1')!.title = 'Deposit on signing'
+      p.payments.find((s) => s.id === 'ps-3')!.value = 35
+    })
+    const p = (await fetchAll(admin)).projects.find((x) => x.id === 'pr-1')!
+    assert.equal(p.payments.find((s) => s.id === 'ps-1')!.title, 'Deposit on signing')
+    assert.equal(p.payments.find((s) => s.id === 'ps-3')!.value, 35)
   })
 })

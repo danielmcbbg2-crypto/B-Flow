@@ -138,6 +138,67 @@ export interface Expense {
   createdBy?: string
 }
 
+export type QuoteItemKind = 'labour' | 'materials' | 'subcontract' | 'hire' | 'other'
+export const QUOTE_ITEM_KIND_LABEL: Record<QuoteItemKind, string> = {
+  labour: 'Labour',
+  materials: 'Materials',
+  subcontract: 'Subcontract',
+  hire: 'Hire',
+  other: 'Other',
+}
+
+/** One line of an itemised quote. Rates exclude GST. */
+export interface QuoteItem {
+  id: string
+  /** Stage or trade the line belongs to, e.g. "Demolition" or "Plumbing". */
+  section: string
+  description: string
+  kind: QuoteItemKind
+  qty: number
+  unit: string
+  rate: number
+}
+
+export type VariationStatus = 'proposed' | 'approved' | 'rejected'
+
+/** A priced change after the quote (amount excludes GST; negative for a credit). */
+export interface Variation {
+  id: string
+  number: number
+  title: string
+  description: string
+  amount: number
+  status: VariationStatus
+  createdAt: string
+  /** Set by the database: who proposed it and who approved or declined it. */
+  createdBy?: string
+  decidedBy?: string
+  decidedAt?: string
+}
+
+/** A progress payment: deposit, stage claim or final balance. Claimed by raising an invoice. */
+export interface PaymentStage {
+  id: string
+  title: string
+  /** percent of the quoted total; a fixed amount inc. GST; or the balance of the contract. */
+  basis: 'percent' | 'amount' | 'balance'
+  value: number
+  milestoneId?: string
+  invoiceId?: string
+}
+
+export const COST_CATEGORIES = ['Materials', 'Labour', 'Subcontractor', 'Equipment hire', 'Permits & fees', 'Waste & disposal', 'Other'] as const
+
+/** A project cost besides trades' expenses (office only). Amount excludes GST. */
+export interface ProjectCost {
+  id: string
+  date: string
+  description: string
+  category: string
+  supplier: string
+  amount: number
+}
+
 export interface Project {
   id: string
   number: number
@@ -159,6 +220,15 @@ export interface Project {
   /** Who last accepted or declined the quote, and which (set by the database; cleared when it's issued again). */
   quoteDecidedBy?: string
   quoteDecision?: 'approved' | 'rejected'
+  /** Itemised quote (empty for a quote given as a single amount). */
+  quoteItems: QuoteItem[]
+  quoteInclusions: string
+  quoteExclusions: string
+  quoteValidUntil?: string
+  variations: Variation[]
+  payments: PaymentStage[]
+  /** Office only: not loaded for clients. */
+  costs: ProjectCost[]
 }
 
 export type InvoiceStatus = 'draft' | 'sent' | 'paid'

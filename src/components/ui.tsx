@@ -54,6 +54,7 @@ export function Tabs<T extends string>({
       {tabs.map((t) => (
         <button
           key={t.value}
+          type="button"
           onClick={() => onChange(t.value)}
           className={cx(
             '-mb-px whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-semibold transition-colors focus-visible:outline-offset-[-2px]',
@@ -98,8 +99,9 @@ export function Modal({
   }, [open, onClose])
   if (!open) return null
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4 sm:items-center" onMouseDown={onClose}>
-      <div className={cx('card w-full shadow-xl', width)} onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={title}>
+    // Auto margins centre the dialog but, unlike align-items: center, keep its top reachable when it's taller than the screen.
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4" onMouseDown={onClose}>
+      <div className={cx('card w-full shadow-xl sm:my-auto', width)} onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={title}>
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3.5">
           <h2 className="text-base font-bold">{title}</h2>
           <button onClick={onClose} className="rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700" aria-label="Close">

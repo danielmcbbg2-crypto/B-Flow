@@ -5,8 +5,10 @@ import { ProjectBy, ProjectProgress } from '../../components/works'
 import { ProjectStatusText } from '../../components/status'
 import { ExpenseTable } from '../provider/ProviderPortal'
 import { hasNoLogin, stampQuoteDecision, useLookup, useStore, type NewProject } from '../../lib/store'
-import { DEFAULT_PERMISSIONS, PROJECT_STATUS_LABEL, type Project, type ProjectStatus, type Property, type UserAccount } from '../../lib/types'
-import { money, todayISO, uid } from '../../lib/utils'
+import { DEFAULT_PERMISSIONS, PROJECT_STATUS_LABEL, type PaymentStage, type Project, type ProjectStatus, type Property, type UserAccount } from '../../lib/types'
+import { contractTotal, nextInvoiceNumber, quoteTotal, withGst } from '../../lib/quote'
+import { money, toISODate, todayISO, uid } from '../../lib/utils'
+import { CostsPanel, PaymentsPanel, QuoteBuilder, VariationsPanel } from './ProjectCommercials'
 
 export function AdminProjects() {
   const { data, user, update, pushInbox } = useStore()
@@ -39,6 +41,16 @@ export function AdminProjects() {
     }
     if (before && p.status === 'quoted' && before.status !== 'quoted') {
       pushInbox({ userId: p.clientId, title: `Quote ready: ${p.title}`, body: `Quoted at ${money(p.quoteAmount ?? 0)}. Review it under Projects.`, requiresAck: false, projectId: p.id })
+    }
+    const added = p.variations.filter((v) => v.status === 'proposed' && !before?.variations.some((x) => x.id === v.id))
+    if (before && added.length) {
+      pushInbox({
+        userId: p.clientId,
+        title: added.length === 1 ? `Variation V${added[0].number} for approval: ${p.title}` : `${added.length} variations for approval: ${p.title}`,
+        body: added.map((v) => `V${v.number} ${v.title}: ${money(withGst(v.amount))} inc GST`).join('\n') + '\nApprove or decline under Projects.',
+        requiresAck: false,
+        projectId: p.id,
+      })
     }
     setEditing(null)
   }
@@ -113,7 +125,11 @@ export function AdminProjects() {
                       {p.budget ? money(p.budget) : '—'}
                       {spent > 0 && <p className="text-xs text-slate-500">spent {money(spent)}</p>}
                     </td>
-                    <td className="td num text-right">{p.quoteAmount ? money(p.quoteAmount) : '—'}</td>
+                    <td className="td num text-right">
+                      {p.quoteAmount || p.quoteItems.length ? money(contractTotal(p)) : '—'}
+                      {p.variations.some((v) => v.status === 'approved') && <p className="text-xs text-slate-500">incl. variations</p>}
+                      {p.variations.some((v) => v.status === 'proposed') && <p className="text-xs text-amber-700">variation pending</p>}
+                    </td>
                     <td className="td"><ProjectProgress p={p} /></td>
                     <td className="td text-right"><button className="btn-ghost px-3 py-1.5" onClick={() => setEditing(p)}>{p.status === 'quote_requested' ? 'Prepare quote' : 'Manage'}</button></td>
                   </tr>
@@ -356,92 +372,167 @@ function NewProjectForm({ onClose, onCreated }: { onClose: () => void; onCreated
   )
 }
 
+type EditorTab = 'overview' | 'quote' | 'variations' | 'payments' | 'costs'
+
 function ProjectEditor({ project, onClose, onSave }: { project: Project; onClose: () => void; onSave: (p: Project) => void }) {
+  const { data, can, update } = useStore()
   const lk = useLookup()
   const [p, setP] = useState<Project>(project)
+  // What's stored now: a claim raised here saves straight away.
+  const [saved, setSaved] = useState<Project>(project)
+  const [tab, setTab] = useState<EditorTab>('overview')
   const [ms, setMs] = useState({ title: '', date: todayISO() })
   const [error, setError] = useState<string | null>(null)
-  const set = (patch: Partial<Project>) => setP({ ...p, ...patch })
+  const set = (patch: Partial<Project>) => setP((cur) => ({ ...cur, ...patch }))
   const prop = lk.property(p.propertyId)
-  const trySave = (next: Project) => {
-    if (next.status === 'quoted' && !((next.quoteAmount ?? 0) > 0)) return setError('Enter the quote amount before issuing the quote.')
+  const dirty = JSON.stringify(p) !== JSON.stringify(saved)
+  const itemised = p.quoteItems.length > 0
+
+  const trySave = (draft: Project) => {
+    // An itemised quote's amount is its total with GST.
+    const next = itemised ? { ...draft, quoteAmount: quoteTotal(draft) } : draft
+    if (next.quoteItems.some((i) => !i.description.trim())) {
+      setTab('quote')
+      return setError('Every quote line needs a description.')
+    }
+    if (next.payments.some((s) => !s.title.trim())) {
+      setTab('payments')
+      return setError('Every payment stage needs a name.')
+    }
+    if (next.status === 'quoted' && !((next.quoteAmount ?? 0) > 0)) return setError('Price the quote before issuing it.')
     setError(null)
     onSave(next)
   }
+
+  const claim = (stage: PaymentStage, amount: number) => {
+    const due = new Date()
+    due.setDate(due.getDate() + 14)
+    const invoiceId = uid('i')
+    const next = { ...p, payments: p.payments.map((s) => (s.id === stage.id ? { ...s, invoiceId } : s)) }
+    update((d) => {
+      d.invoices.unshift({
+        id: invoiceId,
+        projectId: p.id,
+        clientId: p.clientId,
+        qbInvoiceNumber: nextInvoiceNumber(d.invoices),
+        amount,
+        status: 'draft',
+        bankTransferRef: '',
+        dueDate: toISODate(due),
+        createdAt: new Date().toISOString(),
+      })
+      d.projects = d.projects.map((x) => (x.id === p.id ? structuredClone(next) : x))
+    })
+    setP(next)
+    setSaved(next)
+  }
+
+  const pendingVariations = p.variations.filter((v) => v.status === 'proposed').length
   return (
-    <Modal open onClose={onClose} title={`P-${p.number} · ${p.title}`} width="max-w-3xl">
+    <Modal open onClose={onClose} title={`P-${p.number} · ${p.title}`} width="max-w-5xl">
       <p className="text-sm text-slate-600">
         {lk.user(p.clientId)?.name}
         <Sep />
         {prop?.address}, {prop?.suburb}
+        <Sep />
+        <ProjectStatusText s={p.status} />
       </p>
-      <p className="mt-2 rounded-md bg-slate-50 p-3 text-sm text-slate-700">{p.description}</p>
+      <p className="mb-4 mt-2 rounded-md bg-slate-50 p-3 text-sm text-slate-700">{p.description}</p>
+      <Tabs
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { value: 'overview', label: 'Overview' },
+          { value: 'quote', label: 'Quote', count: p.quoteItems.length || undefined },
+          { value: 'variations', label: 'Variations', count: pendingVariations || undefined },
+          { value: 'payments', label: 'Payments', count: p.payments.length || undefined },
+          { value: 'costs', label: 'Costs & margin' },
+        ]}
+      />
       <form
-        className="mt-5 grid gap-4 sm:grid-cols-2"
         onSubmit={(e) => {
           e.preventDefault()
           trySave(p)
         }}
       >
-        <Field label="Status">
-          <select className="input" value={p.status} onChange={(e) => set({ status: e.target.value as ProjectStatus })}>
-            {(Object.keys(PROJECT_STATUS_LABEL) as ProjectStatus[]).map((s) => <option key={s} value={s}>{PROJECT_STATUS_LABEL[s]}</option>)}
-          </select>
-        </Field>
-        <Field label="Assigned trade">
-          <select className="input" value={p.assignedProviderId ?? ''} onChange={(e) => set({ assignedProviderId: e.target.value || undefined })}>
-            <option value="">Unassigned</option>
-            {lk.providers.map((u) => <option key={u.id} value={u.id}>{u.name}{u.trade ? ` (${u.trade})` : ''}{hasNoLogin(u) ? ' (no login)' : u.status === 'invited' ? ' (invite pending)' : ''}</option>)}
-          </select>
-        </Field>
-        <Field label="Budget (AUD)">
-          <input type="number" min="0" step="100" className="input num" value={p.budget || ''} onChange={(e) => set({ budget: Number(e.target.value) || 0 })} />
-        </Field>
-        <Field label="Quote amount (AUD, inc. GST)">
-          <input type="number" min="0" step="0.01" className="input num" value={p.quoteAmount ?? ''} onChange={(e) => set({ quoteAmount: e.target.value ? Number(e.target.value) : undefined })} />
-        </Field>
-        <Field label="Scope of works" className="sm:col-span-2">
-          <textarea className="input min-h-[100px]" value={p.scopeOfWorks} onChange={(e) => set({ scopeOfWorks: e.target.value })} />
-        </Field>
-        <div className="sm:col-span-2">
-          <span className="label">Milestones</span>
-          <ul className="divide-y divide-slate-100 rounded-md border border-slate-200">
-            {p.milestones.map((m) => (
-              <li key={m.id} className="flex items-center gap-3 px-3 py-2 text-sm">
-                <input type="checkbox" className="h-4 w-4 accent-slate-900" checked={m.done} onChange={() => set({ milestones: p.milestones.map((x) => (x.id === m.id ? { ...x, done: !x.done } : x)) })} />
-                <span className="flex-1">{m.title}</span>
-                <input type="date" className="input num w-auto py-1" value={m.date} onChange={(e) => set({ milestones: p.milestones.map((x) => (x.id === m.id ? { ...x, date: e.target.value } : x)) })} />
-                <button type="button" className="text-slate-500 hover:text-red-600" onClick={() => set({ milestones: p.milestones.filter((x) => x.id !== m.id) })} aria-label="Remove milestone">
-                  <Trash2 size={15} />
-                </button>
-              </li>
-            ))}
-            <li className="flex flex-wrap items-center gap-2 px-3 py-2">
-              <input className="input flex-1 py-1" placeholder="New milestone" value={ms.title} onChange={(e) => setMs({ ...ms, title: e.target.value })} />
-              <input type="date" className="input num w-auto py-1" value={ms.date} onChange={(e) => setMs({ ...ms, date: e.target.value })} />
-              <button
-                type="button"
-                className="btn-ghost px-2.5 py-1"
-                disabled={!ms.title.trim()}
-                onClick={() => {
-                  set({ milestones: [...p.milestones, { id: uid('m'), title: ms.title.trim(), date: ms.date, done: false }].sort((a, b) => a.date.localeCompare(b.date)) })
-                  setMs({ title: '', date: ms.date })
-                }}
-              >
-                <Plus size={15} /> Add
-              </button>
-            </li>
-          </ul>
-        </div>
-        <div className="flex flex-wrap justify-end gap-2 sm:col-span-2">
+        {tab === 'overview' && (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Status">
+              <select className="input" value={p.status} onChange={(e) => set({ status: e.target.value as ProjectStatus })}>
+                {(Object.keys(PROJECT_STATUS_LABEL) as ProjectStatus[]).map((s) => <option key={s} value={s}>{PROJECT_STATUS_LABEL[s]}</option>)}
+              </select>
+            </Field>
+            <Field label="Assigned trade">
+              <select className="input" value={p.assignedProviderId ?? ''} onChange={(e) => set({ assignedProviderId: e.target.value || undefined })}>
+                <option value="">Unassigned</option>
+                {lk.providers.map((u) => <option key={u.id} value={u.id}>{u.name}{u.trade ? ` (${u.trade})` : ''}{hasNoLogin(u) ? ' (no login)' : u.status === 'invited' ? ' (invite pending)' : ''}</option>)}
+              </select>
+            </Field>
+            <Field label="Budget (AUD)">
+              <input type="number" min="0" step="100" className="input num" value={p.budget || ''} onChange={(e) => set({ budget: Number(e.target.value) || 0 })} />
+            </Field>
+            {itemised ? (
+              <div>
+                <span className="label">Quote (inc. GST)</span>
+                <p className="num py-2 font-semibold">
+                  {money(quoteTotal(p))}
+                  <button type="button" className="ml-2 text-xs font-normal text-slate-500 underline" onClick={() => setTab('quote')}>{p.quoteItems.length} lines</button>
+                </p>
+              </div>
+            ) : (
+              <Field label="Quote amount (AUD, inc. GST)">
+                <input type="number" min="0" step="0.01" className="input num" value={p.quoteAmount ?? ''} onChange={(e) => set({ quoteAmount: e.target.value ? Number(e.target.value) : undefined })} />
+              </Field>
+            )}
+            <Field label="Scope of works" className="sm:col-span-2">
+              <textarea className="input min-h-[100px]" value={p.scopeOfWorks} onChange={(e) => set({ scopeOfWorks: e.target.value })} />
+            </Field>
+            <div className="sm:col-span-2">
+              <span className="label">Milestones</span>
+              <ul className="divide-y divide-slate-100 rounded-md border border-slate-200">
+                {p.milestones.map((m) => (
+                  <li key={m.id} className="flex items-center gap-3 px-3 py-2 text-sm">
+                    <input type="checkbox" className="h-4 w-4 accent-slate-900" checked={m.done} onChange={() => set({ milestones: p.milestones.map((x) => (x.id === m.id ? { ...x, done: !x.done } : x)) })} />
+                    <span className="flex-1">{m.title}</span>
+                    <input type="date" className="input num w-auto py-1" value={m.date} onChange={(e) => set({ milestones: p.milestones.map((x) => (x.id === m.id ? { ...x, date: e.target.value } : x)) })} />
+                    <button type="button" className="text-slate-500 hover:text-red-600" onClick={() => set({ milestones: p.milestones.filter((x) => x.id !== m.id) })} aria-label="Remove milestone">
+                      <Trash2 size={15} />
+                    </button>
+                  </li>
+                ))}
+                <li className="flex flex-wrap items-center gap-2 px-3 py-2">
+                  <input className="input flex-1 py-1" placeholder="New milestone" value={ms.title} onChange={(e) => setMs({ ...ms, title: e.target.value })} />
+                  <input type="date" className="input num w-auto py-1" value={ms.date} onChange={(e) => setMs({ ...ms, date: e.target.value })} />
+                  <button
+                    type="button"
+                    className="btn-ghost px-2.5 py-1"
+                    disabled={!ms.title.trim()}
+                    onClick={() => {
+                      set({ milestones: [...p.milestones, { id: uid('m'), title: ms.title.trim(), date: ms.date, done: false }].sort((a, b) => a.date.localeCompare(b.date)) })
+                      setMs({ title: '', date: ms.date })
+                    }}
+                  >
+                    <Plus size={15} /> Add
+                  </button>
+                </li>
+              </ul>
+            </div>
+          </div>
+        )}
+        {tab === 'quote' && <QuoteBuilder p={p} set={set} />}
+        {tab === 'variations' && <VariationsPanel p={p} set={set} original={saved} />}
+        {tab === 'payments' && <PaymentsPanel p={p} set={set} invoices={data.invoices} dirty={dirty} canInvoice={can('canManageInvoices')} onClaim={claim} />}
+        {tab === 'costs' && <CostsPanel p={p} set={set} invoices={data.invoices} />}
+        {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
+        <div className="mt-5 flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 pt-4">
+          {dirty && <span className="mr-auto text-xs text-slate-500">Unsaved changes</span>}
           {p.status === 'quote_requested' && (
-            <button type="button" className="btn-accent" disabled={!p.quoteAmount} onClick={() => trySave({ ...p, status: 'quoted' })}>
+            <button type="button" className="btn-accent" disabled={!(itemised ? quoteTotal(p) > 0 : p.quoteAmount)} onClick={() => trySave({ ...p, status: 'quoted' })}>
               Issue quote to client
             </button>
           )}
           <button className="btn-primary">Save project</button>
         </div>
-        {error && <p className="text-sm text-red-600 sm:col-span-2">{error}</p>}
       </form>
     </Modal>
   )

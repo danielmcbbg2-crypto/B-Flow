@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Plus } from 'lucide-react'
 import { Empty, Field, Modal, PageHeader, Stat, Tabs } from '../../components/ui'
 import { InvoiceStatusText } from '../../components/status'
+import { nextInvoiceNumber } from '../../lib/quote'
 import { useLookup, useStore } from '../../lib/store'
 import type { InvoiceStatus, QuickBooksInvoice } from '../../lib/types'
 import { fmtDate, money, toISODate, todayISO, uid } from '../../lib/utils'
@@ -127,13 +128,9 @@ function InvoiceForm({ onClose }: { onClose: () => void }) {
         return { key: `p:${p.id}`, label: `P-${p.number} ${p.title}${note}`, clientId: p.clientId, done: false }
       }),
   ]
-  const nextNum = () => {
-    const nums = data.invoices.map((i) => parseInt(i.qbInvoiceNumber.replace(/\D/g, ''), 10)).filter((n) => !Number.isNaN(n))
-    return `INV-${nums.length ? Math.max(...nums) + 1 : 1001}`
-  }
   const due = new Date()
   due.setDate(due.getDate() + 14)
-  const [f, setF] = useState({ link: options.find((o) => !o.done)?.key ?? '', qb: nextNum(), amount: '', due: toISODate(due), status: 'sent' as InvoiceStatus })
+  const [f, setF] = useState({ link: options.find((o) => !o.done)?.key ?? '', qb: nextInvoiceNumber(data.invoices), amount: '', due: toISODate(due), status: 'sent' as InvoiceStatus })
   const opt = options.find((o) => o.key === f.link)
 
   return (
