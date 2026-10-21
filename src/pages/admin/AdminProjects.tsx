@@ -380,7 +380,7 @@ function ProjectEditor({ project, onClose, onSave }: { project: Project; onClose
   const [p, setP] = useState<Project>(project)
   // What's stored now: a claim raised here saves straight away.
   const [saved, setSaved] = useState<Project>(project)
-  const [tab, setTab] = useState<EditorTab>(project.status === 'quote_requested' ? 'quote' : 'overview')
+  const [tab, setTab] = useState<EditorTab>('overview')
   const [ms, setMs] = useState({ title: '', date: todayISO() })
   const [error, setError] = useState<string | null>(null)
   const set = (patch: Partial<Project>) => setP((cur) => ({ ...cur, ...patch }))
