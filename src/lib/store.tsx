@@ -16,6 +16,7 @@ import type {
   UserAccount,
 } from './types'
 import { BRAND } from './brand'
+import { blankCommercials } from './quote'
 import { createSeed, DATA_VERSION } from './seed'
 import { dispatchSms } from './sms'
 import { generateInviteCode, money, sha256, uid } from './utils'
@@ -740,6 +741,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const id = uid('pr')
       update((d) => {
         d.projects.unshift({
+          ...blankCommercials(),
           id,
           number,
           clientId: q.clientId,
@@ -864,6 +866,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         ...p,
         id: uid('pr'),
         number: Math.max(200, ...d0.projects.map((x) => x.number)) + 1,
+        ...blankCommercials(),
         milestones: [],
         expenses: [],
         createdAt: new Date().toISOString(),

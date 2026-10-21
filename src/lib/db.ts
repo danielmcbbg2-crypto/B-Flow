@@ -13,14 +13,18 @@ import type {
   MaintenanceRequest,
   Milestone,
   OrderItem,
+  PaymentStage,
   Product,
   Project,
+  ProjectCost,
   Property,
   QuickBooksInvoice,
+  QuoteItem,
   SmsNotification,
   SmsSettings,
   StoreOrder,
   UserAccount,
+  Variation,
 } from './types'
 import { DATA_VERSION } from './seed'
 
@@ -33,6 +37,10 @@ export const TABLES = [
   'requests',
   'project_milestones',
   'project_expenses',
+  'project_quote_items',
+  'project_variations',
+  'project_payments',
+  'project_costs',
   'invoices',
   'inbox',
   'sms_log',
@@ -139,6 +147,56 @@ const projectRow = (p: Project): Row => ({
   created_by: nul(p.createdBy),
   quote_decided_by: nul(p.quoteDecidedBy),
   quote_decision: nul(p.quoteDecision),
+  quote_inclusions: p.quoteInclusions,
+  quote_exclusions: p.quoteExclusions,
+  quote_valid_until: nul(p.quoteValidUntil),
+})
+
+const quoteItemRow = (projectId: string, i: QuoteItem, position: number): Row => ({
+  id: i.id,
+  project_id: projectId,
+  position,
+  section: i.section,
+  description: i.description,
+  kind: i.kind,
+  qty: i.qty,
+  unit: i.unit,
+  rate: i.rate,
+})
+
+const variationRow = (projectId: string, v: Variation): Row => ({
+  id: v.id,
+  project_id: projectId,
+  number: v.number,
+  title: v.title,
+  description: v.description,
+  amount: v.amount,
+  status: v.status,
+  created_at: v.createdAt,
+  created_by: nul(v.createdBy),
+  decided_by: nul(v.decidedBy),
+  decided_at: nul(v.decidedAt),
+})
+
+const paymentRow = (projectId: string, s: PaymentStage, position: number): Row => ({
+  id: s.id,
+  project_id: projectId,
+  position,
+  title: s.title,
+  basis: s.basis,
+  value: s.value,
+  milestone_id: nul(s.milestoneId),
+  invoice_id: nul(s.invoiceId),
+})
+
+const costRow = (projectId: string, c: ProjectCost): Row => ({
+  id: c.id,
+  project_id: projectId,
+  date: c.date,
+  description: c.description,
+  category: c.category,
+  supplier: c.supplier,
+  amount: c.amount,
 })
 
 const milestoneRow = (projectId: string, m: Milestone): Row => ({ id: m.id, project_id: projectId, title: m.title, date: m.date, done: m.done })
@@ -262,7 +320,13 @@ const SPECS: Spec[] = [
   { table: 'requests', rows: (d) => d.requests.map(requestRow), readonly: ['number', 'created_by'] },
   { table: 'project_milestones', rows: (d) => d.projects.flatMap((p) => p.milestones.map((m) => milestoneRow(p.id, m))) },
   { table: 'project_expenses', rows: (d) => d.projects.flatMap((p) => p.expenses.map((e) => expenseRow(p.id, e))), readonly: ['created_by'] },
+  { table: 'project_quote_items', rows: (d) => d.projects.flatMap((p) => p.quoteItems.map((i, n) => quoteItemRow(p.id, i, n))) },
+  // Who proposed and who decided each variation (and when) is set by the database.
+  { table: 'project_variations', rows: (d) => d.projects.flatMap((p) => p.variations.map((v) => variationRow(p.id, v))), readonly: ['created_by', 'decided_by', 'decided_at'] },
+  { table: 'project_costs', rows: (d) => d.projects.flatMap((p) => p.costs.map((c) => costRow(p.id, c))) },
   { table: 'invoices', rows: (d) => d.invoices.map(invoiceRow) },
+  // After invoices: a claimed payment refers to its invoice.
+  { table: 'project_payments', rows: (d) => d.projects.flatMap((p) => p.payments.map((s, n) => paymentRow(p.id, s, n))) },
   { table: 'inbox', rows: (d) => d.inbox.map(inboxRow), readonly: ['acknowledged_by'] },
   { table: 'sms_log', rows: (d) => d.sms.map(smsRow) },
   { table: 'settings', rows: (d) => [settingsRow(d)] },
@@ -380,7 +444,16 @@ export const requestFromRow = (r: Row): MaintenanceRequest => ({
   createdBy: opt(r.created_by as string | null),
 })
 
-export const projectFromRow = (r: Row, milestones: Row[] = [], expenses: Row[] = []): Project => ({
+/** Rows of a project's quote items, variations, payments and costs. */
+interface ProjectChildren {
+  items?: Row[]
+  variations?: Row[]
+  payments?: Row[]
+  costs?: Row[]
+}
+const byPosition = (a: Row, b: Row) => num(a.position) - num(b.position)
+
+export const projectFromRow = (r: Row, milestones: Row[] = [], expenses: Row[] = [], more: ProjectChildren = {}): Project => ({
   id: r.id as string,
   number: num(r.number),
   clientId: r.client_id as string,
@@ -397,6 +470,50 @@ export const projectFromRow = (r: Row, milestones: Row[] = [], expenses: Row[] =
   createdBy: opt(r.created_by as string | null),
   quoteDecidedBy: opt(r.quote_decided_by as string | null),
   quoteDecision: opt(r.quote_decision as Project['quoteDecision'] | null),
+  quoteInclusions: (r.quote_inclusions as string | undefined) ?? '',
+  quoteExclusions: (r.quote_exclusions as string | undefined) ?? '',
+  quoteValidUntil: opt(r.quote_valid_until as string | null | undefined),
+  quoteItems: [...(more.items ?? [])].sort(byPosition).map((i) => ({
+    id: i.id as string,
+    section: i.section as string,
+    description: i.description as string,
+    kind: i.kind as QuoteItem['kind'],
+    qty: num(i.qty),
+    unit: i.unit as string,
+    rate: num(i.rate),
+  })),
+  variations: (more.variations ?? [])
+    .map((v) => ({
+      id: v.id as string,
+      number: num(v.number),
+      title: v.title as string,
+      description: v.description as string,
+      amount: num(v.amount),
+      status: v.status as Variation['status'],
+      createdAt: v.created_at as string,
+      createdBy: opt(v.created_by as string | null),
+      decidedBy: opt(v.decided_by as string | null),
+      decidedAt: opt(v.decided_at as string | null),
+    }))
+    .sort((a, b) => a.number - b.number),
+  payments: [...(more.payments ?? [])].sort(byPosition).map((s) => ({
+    id: s.id as string,
+    title: s.title as string,
+    basis: s.basis as PaymentStage['basis'],
+    value: num(s.value),
+    milestoneId: opt(s.milestone_id as string | null),
+    invoiceId: opt(s.invoice_id as string | null),
+  })),
+  costs: (more.costs ?? [])
+    .map((c) => ({
+      id: c.id as string,
+      date: c.date as string,
+      description: c.description as string,
+      category: c.category as string,
+      supplier: c.supplier as string,
+      amount: num(c.amount),
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date)),
   milestones: milestones
     .map((m) => ({ id: m.id as string, title: m.title as string, date: m.date as string, done: m.done as boolean }))
     .sort((a, b) => a.date.localeCompare(b.date)),
@@ -518,7 +635,7 @@ const ordersFromRows = (orders: Row[], items: Row[], notes: Row[]): StoreOrder[]
 }
 
 export async function fetchAll(db: DbAdapter): Promise<AppData> {
-  const [profiles, properties, projects, requests, milestones, expenses, invoices, inbox, sms, settings, products, tradePrices, sources, orders, orderItems, orderNotes] =
+  const [profiles, properties, projects, requests, milestones, expenses, quoteItems, variations, payments, costs, invoices, inbox, sms, settings, products, tradePrices, sources, orders, orderItems, orderNotes] =
     await Promise.all(TABLES.map((t) => db.select(t)))
   const byProject = (rows: Row[]) => {
     const m = new Map<string, Row[]>()
@@ -527,13 +644,20 @@ export async function fetchAll(db: DbAdapter): Promise<AppData> {
   }
   const ms = byProject(milestones)
   const ex = byProject(expenses)
+  const qi = byProject(quoteItems)
+  const va = byProject(variations)
+  const pa = byProject(payments)
+  const co = byProject(costs)
   const s = settings[0] as { sms?: Partial<SmsSettings>; bank?: AppData['bank'] } | undefined
   return {
     version: DATA_VERSION,
     users: profiles.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at))).map(userFromRow),
     properties: properties.sort((a, b) => String(a.address).localeCompare(String(b.address))).map(propertyFromRow),
     requests: requests.sort(newestFirst('created_at')).map(requestFromRow),
-    projects: projects.sort(newestFirst('created_at')).map((p) => projectFromRow(p, ms.get(p.id as string), ex.get(p.id as string))),
+    projects: projects.sort(newestFirst('created_at')).map((p) => {
+      const id = p.id as string
+      return projectFromRow(p, ms.get(id), ex.get(id), { items: qi.get(id), variations: va.get(id), payments: pa.get(id), costs: co.get(id) })
+    }),
     invoices: invoices.sort(newestFirst('created_at')).map(invoiceFromRow),
     sms: sms.sort(newestFirst('sent_at')).map(smsFromRow),
     inbox: inbox.sort(newestFirst('created_at')).map(inboxFromRow),

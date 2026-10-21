@@ -4,8 +4,10 @@ import { GridTile, PortalShell, type NavItem } from '../../components/PortalShel
 import { Calendar } from '../../components/Calendar'
 import { Empty, Field, Modal, PageHeader, PhotoInput, Sep, Tabs } from '../../components/ui'
 import { ProjectStatusText } from '../../components/status'
+import { PaymentSchedule, QuoteBreakdown } from '../../components/quote'
 import { ProjectBy, ProjectProgress, RequestDetail, RequestRow, useLinkedCalendar } from '../../components/works'
 import { stampQuoteDecision, useLookup, useStore } from '../../lib/store'
+import { contractTotal, quoteTotal, withGst } from '../../lib/quote'
 import { navigate } from '../../lib/router'
 import { PortalStore } from '../store/Shop'
 import { TRADES, type Property, type Trade } from '../../lib/types'
@@ -292,7 +294,7 @@ function Hub() {
 }
 
 function Projects() {
-  const { user, actor, update, requestQuote, canAct } = useStore()
+  const { user, actor, update, requestQuote, canAct, pushAdminInbox } = useStore()
   const lk = useLookup()
   const mine = useMine()
   const [quoteOpen, setQuoteOpen] = useState(false)
@@ -324,6 +326,19 @@ function Projects() {
       p.status = approve ? 'approved' : 'rejected'
       stampQuoteDecision(p, before, actor?.id)
     })
+  const decideVariation = (pid: string, vid: string, approve: boolean) => {
+    const p = mine.projects.find((x) => x.id === pid)
+    const v = p?.variations.find((x) => x.id === vid)
+    if (!p || !v || v.status !== 'proposed') return
+    update((d) => {
+      const x = d.projects.find((y) => y.id === pid)?.variations.find((y) => y.id === vid)
+      if (x) {
+        x.status = approve ? 'approved' : 'rejected'
+        x.decidedAt = new Date().toISOString()
+      }
+    })
+    void pushAdminInbox(`Variation V${v.number} ${approve ? 'approved' : 'declined'}: P-${p.number}`, `${v.title}: ${money(withGst(v.amount))} inc GST`, { projectId: pid })
+  }
   // An admin in this client's dashboard asks for and answers quotes with their own project permission.
   const canQuote = canAct('canManageProjects')
 
@@ -349,6 +364,7 @@ function Projects() {
         <div className="grid gap-4 lg:grid-cols-2">
           {mine.projects.map((p) => {
             const prop = lk.property(p.propertyId)
+            const approvedVariations = p.variations.filter((v) => v.status === 'approved').length
             return (
               <div key={p.id} className="card p-5">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -365,10 +381,51 @@ function Projects() {
                     <dd className="num">{p.budget ? money(p.budget) : '—'}</dd>
                   </div>
                   <div>
-                    <dt className="text-xs text-slate-500">Quoted</dt>
-                    <dd className="num">{p.quoteAmount ? money(p.quoteAmount) : 'Pending'}</dd>
+                    <dt className="text-xs text-slate-500">{approvedVariations ? 'Contract total' : 'Quoted'}</dt>
+                    <dd className="num">{p.quoteAmount || p.quoteItems.length ? money(contractTotal(p)) : 'Pending'}</dd>
+                    {approvedVariations > 0 && <dd className="num text-xs text-slate-500">quote {money(quoteTotal(p))} + {approvedVariations} variation{approvedVariations > 1 ? 's' : ''}</dd>}
                   </div>
                 </dl>
+                {(p.quoteItems.length > 0 || p.quoteInclusions || p.quoteExclusions) && (
+                  <details className="mt-3 border-t border-slate-100 pt-3" open={p.status === 'quoted'}>
+                    <summary className="cursor-pointer text-sm font-semibold">Quote breakdown</summary>
+                    <div className="mt-3"><QuoteBreakdown p={p} /></div>
+                  </details>
+                )}
+                {p.variations.length > 0 && (
+                  <div className="mt-3 border-t border-slate-100 pt-3">
+                    <p className="text-sm font-semibold">Variations</p>
+                    <ul className="mt-2 space-y-2">
+                      {p.variations.map((v) => (
+                        <li key={v.id} className={`rounded-md border p-3 text-sm ${v.status === 'proposed' ? 'border-accent' : 'border-slate-200'}`}>
+                          <div className="flex justify-between gap-3">
+                            <p className="font-medium"><span className="num text-slate-500">V{v.number}</span> · {v.title}</p>
+                            <p className={`num whitespace-nowrap font-semibold ${v.status === 'rejected' ? 'text-slate-400 line-through' : ''}`}>
+                              {v.amount < 0 ? '−' : ''}{money(Math.abs(withGst(v.amount)))}
+                            </p>
+                          </div>
+                          {v.description && <p className="mt-1 whitespace-pre-wrap text-slate-600">{v.description}</p>}
+                          <p className="mt-1 text-xs text-slate-500">
+                            {v.amount < 0 ? 'Credit, inc GST' : 'Inc GST'} · {v.status === 'proposed' ? 'Awaiting your approval' : v.status === 'approved' ? 'Approved' : 'Declined'}
+                            {v.decidedAt ? ` ${fmtDate(v.decidedAt.slice(0, 10))}` : ''}
+                          </p>
+                          {v.status === 'proposed' && canQuote && (
+                            <div className="mt-2 flex gap-2">
+                              <button className="btn-primary px-3 py-1.5" onClick={() => decideVariation(p.id, v.id, true)}>Approve</button>
+                              <button className="btn-ghost px-3 py-1.5" onClick={() => decideVariation(p.id, v.id, false)}>Decline</button>
+                            </div>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {p.payments.length > 0 && (
+                  <div className="mt-3 border-t border-slate-100 pt-3">
+                    <p className="mb-2 text-sm font-semibold">Payment schedule</p>
+                    <PaymentSchedule p={p} invoices={mine.invoices} />
+                  </div>
+                )}
                 {p.scopeOfWorks && (
                   <div className="mt-3">
                     <p className="text-xs text-slate-500">Scope of works</p>
@@ -388,7 +445,7 @@ function Projects() {
                     </ol>
                   </div>
                 )}
-                {p.status === 'quoted' && !!p.quoteAmount && canQuote && (
+                {p.status === 'quoted' && quoteTotal(p) > 0 && canQuote && (
                   <div className="mt-4 flex gap-2 border-t border-slate-100 pt-4">
                     <button className="btn-primary" onClick={() => respond(p.id, true)}>Accept quote</button>
                     <button className="btn-ghost" onClick={() => respond(p.id, false)}>Decline</button>

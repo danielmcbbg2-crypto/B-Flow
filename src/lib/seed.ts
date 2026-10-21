@@ -1,3 +1,4 @@
+import { blankCommercials } from './quote'
 import type { AppData } from './types'
 import { toISODate } from './utils'
 import { DEFAULT_PERMISSIONS } from './types'
@@ -21,7 +22,7 @@ function stamp(offsetDays: number, hour = 9): string {
 const DEMO_HASH = '0ead2060b65992dca4769af601a1b3a35ef38cfad2c2c465bb160ea764157c5d'
 
 // Bumped when the stored demo data changes; older saved demo data is replaced.
-export const DATA_VERSION = 4
+export const DATA_VERSION = 5
 
 export function createSeed(): AppData {
   return {
@@ -240,7 +241,7 @@ export function createSeed(): AppData {
         description: 'Full strip-out, waterproofing, new vanity, floor-to-ceiling tiles, frameless shower screen.',
         type: 'renovation',
         budget: 38500,
-        quoteAmount: 36800,
+        quoteAmount: 36795,
         scopeOfWorks: 'Demolition & disposal; rough-in plumbing & electrical; waterproofing to AS 3740; tiling; fit-off; final clean.',
         status: 'in_progress',
         assignedProviderId: 'u-prov-1',
@@ -255,6 +256,43 @@ export function createSeed(): AppData {
           { id: 'e-1', providerId: 'u-prov-1', date: day(-6), description: 'Skip bin hire (6 m³)', category: 'Equipment hire', amount: 520, status: 'approved' },
           { id: 'e-2', providerId: 'u-prov-1', date: day(-2), description: 'PEX fittings & mixer valves', category: 'Materials', amount: 1185.4, status: 'approved' },
           { id: 'e-3', providerId: 'u-prov-1', date: day(-1), description: 'Waterproofing membrane & primer', category: 'Materials', amount: 412.9, status: 'submitted' },
+        ],
+        // Itemised quote: 33,450 ex GST = 36,795 inc GST.
+        quoteItems: [
+          { id: 'qi-1', section: 'Demolition', description: 'Strip-out of existing bathroom', kind: 'labour', qty: 2, unit: 'day', rate: 980 },
+          { id: 'qi-2', section: 'Demolition', description: 'Skip bin (6 m³)', kind: 'hire', qty: 1, unit: 'item', rate: 480 },
+          { id: 'qi-3', section: 'Services', description: 'Plumbing rough-in and fit-off', kind: 'subcontract', qty: 1, unit: 'job', rate: 4850 },
+          { id: 'qi-4', section: 'Services', description: 'Electrical rough-in and fit-off', kind: 'subcontract', qty: 1, unit: 'job', rate: 2600 },
+          { id: 'qi-5', section: 'Carpentry', description: 'Wall framing and shower niche', kind: 'labour', qty: 1, unit: 'job', rate: 2550 },
+          { id: 'qi-6', section: 'Waterproofing', description: 'Membrane system to AS 3740', kind: 'subcontract', qty: 9.5, unit: 'm²', rate: 95 },
+          { id: 'qi-7', section: 'Waterproofing', description: 'Inspection and certificate', kind: 'other', qty: 1, unit: 'item', rate: 450 },
+          { id: 'qi-8', section: 'Tiling', description: 'Wall and floor tiling', kind: 'labour', qty: 32, unit: 'm²', rate: 145 },
+          { id: 'qi-9', section: 'Tiling', description: 'Tiles, adhesive and grout', kind: 'materials', qty: 34, unit: 'm²', rate: 89 },
+          { id: 'qi-10', section: 'Fixtures', description: 'Timber-look wall-hung vanity, 900 mm', kind: 'materials', qty: 1, unit: 'item', rate: 1249 },
+          { id: 'qi-11', section: 'Fixtures', description: 'Frameless shower screen', kind: 'materials', qty: 1, unit: 'item', rate: 1450 },
+          { id: 'qi-12', section: 'Fixtures', description: 'Tapware package', kind: 'materials', qty: 1, unit: 'set', rate: 980 },
+          { id: 'qi-13', section: 'Fixtures', description: 'Wall-faced toilet suite', kind: 'materials', qty: 1, unit: 'item', rate: 760 },
+          { id: 'qi-14', section: 'Finishing', description: 'Ceiling, LED downlights and exhaust fan', kind: 'labour', qty: 1, unit: 'job', rate: 1402.5 },
+          { id: 'qi-15', section: 'Finishing', description: 'Plaster patching and paint', kind: 'labour', qty: 1, unit: 'job', rate: 2450 },
+          { id: 'qi-16', section: 'Project management', description: 'Site supervision and coordination', kind: 'labour', qty: 1, unit: 'job', rate: 3200 },
+          { id: 'qi-17', section: 'Project management', description: 'Final builder’s clean', kind: 'labour', qty: 1, unit: 'item', rate: 500 },
+        ],
+        quoteInclusions: 'All labour, materials and fixtures listed; waste removal; waterproofing certificate; final clean.',
+        quoteExclusions: 'Structural repairs found after strip-out (quoted as a variation); asbestos removal; painting outside the bathroom.',
+        quoteValidUntil: day(-20),
+        variations: [
+          { id: 'v-1', number: 1, title: 'Heated towel rail', description: 'Supply and install a 600 mm heated towel rail on its own switch.', amount: 680, status: 'approved', createdAt: stamp(-12), createdBy: 'u-admin', decidedBy: 'u-client-1', decidedAt: stamp(-11) },
+          { id: 'v-2', number: 2, title: 'Herringbone floor tiles', description: 'Change the floor tiles to a herringbone layout (extra labour and wastage).', amount: 1240, status: 'proposed', createdAt: stamp(-1), createdBy: 'u-admin' },
+        ],
+        payments: [
+          { id: 'ps-1', title: 'Deposit', basis: 'percent', value: 10, invoiceId: 'i-3' },
+          { id: 'ps-2', title: 'Rough-in complete', basis: 'percent', value: 30, milestoneId: 'm-2', invoiceId: 'i-2' },
+          { id: 'ps-3', title: 'Waterproofing and tiling complete', basis: 'percent', value: 40, milestoneId: 'm-4' },
+          { id: 'ps-4', title: 'Practical completion', basis: 'balance', value: 0, milestoneId: 'm-5' },
+        ],
+        costs: [
+          { id: 'c-1', date: day(-5), description: 'Plumber: rough-in', category: 'Subcontractor', supplier: 'Gallagher Plumbing', amount: 2400 },
+          { id: 'c-2', date: day(-3), description: 'Tiles and adhesive', category: 'Materials', supplier: 'Tile Depot', amount: 2210 },
         ],
         createdAt: stamp(-30),
       },
@@ -271,6 +309,7 @@ export function createSeed(): AppData {
         status: 'quote_requested',
         milestones: [],
         expenses: [],
+        ...blankCommercials(),
         createdAt: stamp(-3),
       },
     ],
@@ -292,11 +331,23 @@ export function createSeed(): AppData {
         projectId: 'pr-1',
         clientId: 'u-client-1',
         qbInvoiceNumber: 'INV-2052',
-        amount: 11040,
+        amount: 11038.5,
         status: 'sent',
         bankTransferRef: '',
         dueDate: day(7),
         createdAt: stamp(-6),
+      },
+      {
+        id: 'i-3',
+        projectId: 'pr-1',
+        clientId: 'u-client-1',
+        qbInvoiceNumber: 'INV-2049',
+        amount: 3679.5,
+        status: 'paid',
+        bankTransferRef: 'WHITFIELD DEP',
+        paidDate: day(-25),
+        dueDate: day(-23),
+        createdAt: stamp(-28),
       },
     ],
     sms: [
