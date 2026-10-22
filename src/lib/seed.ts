@@ -22,7 +22,7 @@ function stamp(offsetDays: number, hour = 9): string {
 const DEMO_HASH = '0ead2060b65992dca4769af601a1b3a35ef38cfad2c2c465bb160ea764157c5d'
 
 // Bumped when the stored demo data changes; older saved demo data is replaced.
-export const DATA_VERSION = 5
+export const DATA_VERSION = 6
 
 export function createSeed(): AppData {
   return {
@@ -491,6 +491,40 @@ export function createSeed(): AppData {
           { id: 'oi-1', productId: 'sp-1', title: 'Timber-look wall-hung vanity, 900 mm', sku: 'VAN-900-OAK', unitPrice: 1249, qty: 1 },
           { id: 'oi-2', productId: 'sp-3', title: 'Matte black basin mixer', sku: 'TAP-MIX-BLK', unitPrice: 189, qty: 1 },
         ],
+      },
+    ],
+    leads: [
+      {
+        id: 'l-1',
+        number: 3002,
+        name: 'Priya Natarajan',
+        email: 'priya.n@example.com.au',
+        phone: '0421 774 210',
+        company: '',
+        suburb: 'Brunswick',
+        services: ['Plumbing Services', 'Carpentry Services'],
+        urgency: 'soon',
+        contactBy: 'phone',
+        message: 'Laundry renovation in a 1920s weatherboard: move the trough, new cabinetry and benchtop. Happy to send photos.',
+        status: 'new',
+        notes: '',
+        createdAt: stamp(0, 8),
+      },
+      {
+        id: 'l-2',
+        number: 3001,
+        name: 'Tom Becker',
+        email: 'tom@beckerstrata.com.au',
+        phone: '0399 812 400',
+        company: 'Becker Strata',
+        suburb: 'Richmond',
+        services: ['Subscription Packages'],
+        urgency: 'flexible',
+        contactBy: 'email',
+        message: 'We manage 14 small apartment blocks and are looking for a maintenance subscription. Can you send pricing?',
+        status: 'contacted',
+        notes: 'Called 21 Oct, sending a proposal for quarterly inspections.',
+        createdAt: stamp(-2, 14),
       },
     ],
   }

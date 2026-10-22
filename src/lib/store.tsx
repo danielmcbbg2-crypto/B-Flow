@@ -5,6 +5,7 @@ import type {
   DraftListing,
   FoundProduct,
   InboxMessage,
+  Lead,
   MaintenanceRequest,
   Permission,
   Product,
@@ -154,6 +155,9 @@ export interface OrderInput {
   notes: string
 }
 
+/** An enquiry from the website's quote form. */
+export type LeadInput = Pick<Lead, 'name' | 'email' | 'phone' | 'company' | 'suburb' | 'services' | 'urgency' | 'contactBy' | 'message'>
+
 /** A project an admin sets up, optionally with a new client (added without a login) and property. */
 export interface NewProject {
   newClient?: UserAccount
@@ -223,6 +227,8 @@ interface StoreValue {
   loadCatalog: () => Promise<Product[]>
   /** Places a store order for anyone; throws with a message the customer can act on. */
   placeOrder: (o: OrderInput) => Promise<{ number: number; total: number }>
+  /** Anyone, signed in or not: send an enquiry to the office. */
+  submitLead: (l: LeadInput) => Promise<{ number: number }>
   /**
    * Store managers: the AI assistant searches the web for products (sample results in demo mode).
    * `onProgress` hears what it's doing as it goes; aborting `signal` stops it.
@@ -970,6 +976,69 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [update, refresh, user],
   )
 
+  const submitLead = useCallback(
+    async (l: LeadInput): Promise<{ number: number }> => {
+      if (supabase) {
+        const { data: res, error } = await supabase.rpc('submit_lead', {
+          p_name: l.name,
+          p_email: l.email,
+          p_phone: l.phone,
+          p_suburb: l.suburb,
+          p_services: l.services,
+          p_urgency: l.urgency,
+          p_contact_by: l.contactBy,
+          p_message: l.message,
+          p_company: l.company,
+        })
+        if (error) throw new Error(error.message)
+        return { number: (res as { number: number }).number }
+      }
+      // Demo mode follows the same rules as the database.
+      const email = l.email.trim()
+      const phone = l.phone.trim()
+      if (!l.name.trim()) throw new Error('Enter your name')
+      if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error('Enter a valid email address')
+      if (phone && phone.replace(/\D/g, '').length < 8) throw new Error('Enter a valid phone number')
+      if (!email && !phone) throw new Error('Leave a phone number or email so we can reply')
+      const contactBy = l.contactBy === 'phone' ? (phone ? 'phone' : 'email') : email ? 'email' : 'phone'
+      const number = Math.max(3000, ...dataRef.current.leads.map((x) => x.number)) + 1
+      const services = [...new Set(l.services.map((x) => x.trim()).filter(Boolean))]
+      update((d) => {
+        d.leads.unshift({
+          id: uid('l'),
+          number,
+          name: l.name.trim(),
+          email,
+          phone,
+          company: l.company.trim(),
+          suburb: l.suburb.trim(),
+          services,
+          urgency: l.urgency,
+          contactBy,
+          message: l.message.trim(),
+          status: 'new',
+          notes: '',
+          createdAt: new Date().toISOString(),
+        })
+        const office = d.users.filter((u) => u.role === 'admin' && u.status === 'active' && (u.permissions.includes('canManageProjects') || u.permissions.includes('canDispatchJobs')))
+        for (const a of office) {
+          d.inbox.unshift({
+            id: uid('n'),
+            userId: a.id,
+            title: `${l.urgency === 'urgent' ? 'Urgent enquiry' : 'New enquiry'} #${number}: ${l.name.trim()}`,
+            body: [services.join(', '), l.suburb.trim(), contactBy === 'phone' ? `call ${phone}` : `email ${email}`].filter(Boolean).join(' · '),
+            createdAt: new Date().toISOString(),
+            read: false,
+            requiresAck: false,
+            acknowledged: false,
+          })
+        }
+      })
+      return { number }
+    },
+    [update],
+  )
+
   const findProducts = useCallback(async (query: string, onProgress?: (text: string) => void, signal?: AbortSignal) => {
     if (supabase) return streamFunction<{ products: FoundProduct[]; note: string }>('store-assistant', { action: 'find', query }, onProgress, signal)
     const q = query.trim() || 'bathroom products'
@@ -1136,6 +1205,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     createProject,
     loadCatalog,
     placeOrder,
+    submitLead,
     findProducts,
     draftListing,
     assignRequest,

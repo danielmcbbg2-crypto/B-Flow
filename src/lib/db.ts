@@ -10,6 +10,7 @@ import type {
   AppData,
   Expense,
   InboxMessage,
+  Lead,
   MaintenanceRequest,
   Milestone,
   OrderItem,
@@ -51,6 +52,7 @@ export const TABLES = [
   'orders',
   'order_items',
   'order_notes',
+  'leads',
 ] as const
 export type TableName = (typeof TABLES)[number]
 
@@ -293,6 +295,24 @@ const orderRow = (o: StoreOrder): Row => ({
   created_at: o.createdAt,
 })
 
+const leadRow = (l: Lead): Row => ({
+  id: l.id,
+  number: l.number,
+  name: l.name,
+  email: l.email,
+  phone: l.phone,
+  company: l.company,
+  suburb: l.suburb,
+  services: l.services,
+  urgency: l.urgency,
+  contact_by: l.contactBy,
+  message: l.message,
+  status: l.status,
+  notes: l.notes,
+  client_id: nul(l.clientId),
+  created_at: l.createdAt,
+})
+
 const orderItemRow = (orderId: string, i: OrderItem): Row => ({
   id: i.id,
   order_id: orderId,
@@ -348,6 +368,8 @@ const SPECS: Spec[] = [
   { table: 'orders', rows: (d) => d.orders.map(orderRow), readonly: ['number'] },
   { table: 'order_items', rows: (d) => d.orders.flatMap((o) => o.items.map((i) => orderItemRow(o.id, i))) },
   { table: 'order_notes', rows: (d) => d.orders.filter((o) => o.adminNotes).map((o) => ({ id: o.id, notes: o.adminNotes })) },
+  // Leads only arrive through submit_lead; the office changes their status and notes.
+  { table: 'leads', rows: (d) => d.leads.map(leadRow), readonly: ['number'] },
 ]
 
 const strip = (row: Row, cols: string[] = []) => {
@@ -635,7 +657,7 @@ const ordersFromRows = (orders: Row[], items: Row[], notes: Row[]): StoreOrder[]
 }
 
 export async function fetchAll(db: DbAdapter): Promise<AppData> {
-  const [profiles, properties, projects, requests, milestones, expenses, quoteItems, variations, payments, costs, invoices, inbox, sms, settings, products, tradePrices, sources, orders, orderItems, orderNotes] =
+  const [profiles, properties, projects, requests, milestones, expenses, quoteItems, variations, payments, costs, invoices, inbox, sms, settings, products, tradePrices, sources, orders, orderItems, orderNotes, leads] =
     await Promise.all(TABLES.map((t) => db.select(t)))
   const byProject = (rows: Row[]) => {
     const m = new Map<string, Row[]>()
@@ -665,6 +687,23 @@ export async function fetchAll(db: DbAdapter): Promise<AppData> {
     bank: s?.bank ?? { accountName: 'Next Phase Maintenance', bsb: '', accountNumber: '' },
     products: productsFromRows(products, tradePrices, sources),
     orders: ordersFromRows(orders, orderItems, orderNotes),
+    leads: leads.sort(newestFirst('created_at')).map((r) => ({
+      id: r.id as string,
+      number: num(r.number),
+      name: r.name as string,
+      email: r.email as string,
+      phone: r.phone as string,
+      company: r.company as string,
+      suburb: r.suburb as string,
+      services: (r.services as string[]) ?? [],
+      urgency: r.urgency as Lead['urgency'],
+      contactBy: r.contact_by as Lead['contactBy'],
+      message: r.message as string,
+      status: r.status as Lead['status'],
+      notes: r.notes as string,
+      clientId: opt(r.client_id as string | null),
+      createdAt: r.created_at as string,
+    })),
   }
 }
 
@@ -682,5 +721,6 @@ export function emptyData(): AppData {
     bank: { accountName: 'Next Phase Maintenance', bsb: '', accountNumber: '' },
     products: [],
     orders: [],
+    leads: [],
   }
 }

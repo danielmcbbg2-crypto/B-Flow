@@ -18,6 +18,7 @@ import { Trowel, TwinGears, Worker } from '../components/ServiceIcons'
 import { BRAND, SITE_COPY, SITE_SERVICES } from '../lib/brand'
 import { useStore } from '../lib/store'
 import { navigate } from '../lib/router'
+import { LeadCapture } from './LeadCapture'
 import interiorPhoto from '../assets/photos/interior.webp'
 import residentialPhoto from '../assets/photos/residential.webp'
 import commercialPhoto from '../assets/photos/commercial.webp'
@@ -48,6 +49,7 @@ function jump(id: string) {
 const NAV = [
   ['about', 'About'],
   ['services', 'Services'],
+  ['quote', 'Get a quote'],
   ['portal', 'Client portal'],
   ['coverage', 'Coverage'],
   ['contact', 'Contact'],
@@ -161,11 +163,11 @@ export function PublicHome() {
               Learn More About Us
             </a>
             <a
-              href="#contact"
-              onClick={jump('contact')}
+              href="#quote"
+              onClick={jump('quote')}
               className="btn w-full border border-white px-6 py-3.5 text-base font-normal text-white hover:bg-white hover:text-slate-900 sm:w-52"
             >
-              Get in Touch
+              Get a Free Quote
             </a>
           </div>
           <p className="mt-10 text-sm text-white/80">
@@ -196,7 +198,11 @@ export function PublicHome() {
               <h2 className="mt-2 text-4xl font-bold leading-[1.15] text-accent-heading sm:text-[42px] sm:leading-[1.2]">{SITE_COPY.servicesTitle}</h2>
               <p className="mt-6 max-w-lg text-base font-light leading-[1.8]">{SITE_COPY.servicesIntro}</p>
             </div>
-            <button className="btn-accent shrink-0 self-start px-7 py-3.5 text-base font-normal" onClick={openPortal}>
+            {/* Signed-in clients lodge it in their portal; everyone else sends an enquiry. */}
+            <button
+              className="btn-accent shrink-0 self-start px-7 py-3.5 text-base font-normal"
+              onClick={() => (user ? navigate(`/${user.role}`) : document.getElementById('quote')?.scrollIntoView({ behavior: 'smooth' }))}
+            >
               Request a Service
             </button>
           </div>
@@ -213,6 +219,8 @@ export function PublicHome() {
           </ul>
         </div>
       </section>
+
+      <LeadCapture onSignIn={() => setSignIn(true)} />
 
       <section id="portal" className="scroll-mt-16 bg-white">
         <div className="mx-auto grid max-w-7xl gap-12 px-4 py-20 sm:px-6 sm:py-24 lg:grid-cols-3">

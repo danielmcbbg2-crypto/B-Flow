@@ -408,6 +408,32 @@ export interface DraftListing {
   notes: string
 }
 
+export type LeadStatus = 'new' | 'contacted' | 'won' | 'lost'
+export const LEAD_STATUS_LABEL: Record<LeadStatus, string> = { new: 'New', contacted: 'Contacted', won: 'Won', lost: 'Not going ahead' }
+export type LeadUrgency = 'urgent' | 'soon' | 'flexible'
+export const LEAD_URGENCY_LABEL: Record<LeadUrgency, string> = { urgent: 'Urgent', soon: 'Within a few weeks', flexible: 'Flexible / planning' }
+
+/** An enquiry from the website from someone without an account. */
+export interface Lead {
+  id: string
+  number: number
+  name: string
+  email: string
+  phone: string
+  company: string
+  suburb: string
+  services: string[]
+  urgency: LeadUrgency
+  contactBy: 'phone' | 'email'
+  message: string
+  status: LeadStatus
+  /** Office notes. */
+  notes: string
+  /** The client account made from this lead. */
+  clientId?: string
+  createdAt: string
+}
+
 export interface AppData {
   version: number
   users: UserAccount[]
@@ -421,4 +447,5 @@ export interface AppData {
   inbox: InboxMessage[]
   products: Product[]
   orders: StoreOrder[]
+  leads: Lead[]
 }

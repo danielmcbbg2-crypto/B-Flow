@@ -665,25 +665,26 @@ describe('clients added without a login', () => {
   })
 })
 
-describe('store', () => {
-  /** Runs SQL as a signed-out visitor, like the public store page does. */
-  async function asAnon<T>(sql: string, params: unknown[] = [], ip?: string): Promise<pg.QueryResult<T & pg.QueryResultRow>> {
-    const c = await pool.connect()
-    try {
-      await c.query('begin')
-      await c.query('set local role anon')
-      // PostgREST passes the request's headers; Cloudflare sets cf-connecting-ip to the visitor's address.
-      if (ip) await c.query(`select set_config('request.headers', $1, true)`, [JSON.stringify({ 'cf-connecting-ip': ip })])
-      const r = await c.query<T & pg.QueryResultRow>(sql, params)
-      await c.query('commit')
-      return r
-    } catch (e) {
-      await c.query('rollback')
-      throw e
-    } finally {
-      c.release()
-    }
+/** Runs SQL as a signed-out visitor, like the public store page does. */
+async function asAnon<T>(sql: string, params: unknown[] = [], ip?: string): Promise<pg.QueryResult<T & pg.QueryResultRow>> {
+  const c = await pool.connect()
+  try {
+    await c.query('begin')
+    await c.query('set local role anon')
+    // PostgREST passes the request's headers; Cloudflare sets cf-connecting-ip to the visitor's address.
+    if (ip) await c.query(`select set_config('request.headers', $1, true)`, [JSON.stringify({ 'cf-connecting-ip': ip })])
+    const r = await c.query<T & pg.QueryResultRow>(sql, params)
+    await c.query('commit')
+    return r
+  } catch (e) {
+    await c.query('rollback')
+    throw e
+  } finally {
+    c.release()
   }
+}
+
+describe('store', () => {
   const order = (items: unknown, email: string, extra = '') =>
     `select place_order('${JSON.stringify(items)}'::jsonb, 'Jo Buyer', '${email}', '0400 111 222', 'pickup'${extra}) as r`
 
@@ -978,5 +979,66 @@ describe('construction: quotes, variations, payments and costs', () => {
     const p = (await fetchAll(admin)).projects.find((x) => x.id === 'pr-1')!
     assert.equal(p.payments.find((s) => s.id === 'ps-1')!.title, 'Deposit on signing')
     assert.equal(p.payments.find((s) => s.id === 'ps-3')!.value, 35)
+  })
+})
+
+describe('website enquiries', () => {
+  const lead = (name: string, email: string, phone = '0400 222 333', urgency = 'soon') =>
+    asAnon<{ r: { number: number } }>(
+      `select submit_lead($1, $2, $3, 'Carlton', '["Plumbing Services", "Plumbing Services", " "]', $4, 'phone', 'Leaking shower') as r`,
+      [name, email, phone, urgency],
+      '203.0.113.9',
+    )
+
+  test('a visitor sends an enquiry; the office is told and sees it, nobody else does', async () => {
+    const r = await lead('Jo Visitor', 'jo@example.com', '0400 222 333', 'urgent')
+    assert.ok(r.rows[0].r.number >= 3001)
+    const d = await fetchAll(admin)
+    const l = d.leads.find((x) => x.number === r.rows[0].r.number)!
+    assert.deepEqual(l.services, ['Plumbing Services'])
+    assert.equal(l.status, 'new')
+    assert.ok(d.inbox.some((m) => m.title === `Urgent enquiry #${l.number}: Jo Visitor`))
+    assert.equal((await fetchAll(sarah)).leads.length, 0)
+    assert.equal((await asAnon('select count(*)::int as n from leads').catch(() => ({ rows: [{ n: 0 }] }))).rows[0].n, 0)
+  })
+
+  test('visitors cannot add or read enquiries directly', async () => {
+    await assert.rejects(asAnon(`insert into leads (name) values ('x')`), /permission denied|row-level security/)
+    await assert.rejects(asUser(uid.sarah, `insert into leads (name) values ('x')`), /row-level security/)
+    await assert.rejects(asAnon('select * from lead_attempts'), /permission denied/)
+  })
+
+  test('enquiries are checked: a name and a way to reply are needed', async () => {
+    await assert.rejects(lead('', 'a@example.com'), /Enter your name/)
+    await assert.rejects(lead('Al', 'not-an-email'), /valid email/)
+    await assert.rejects(lead('Al', '', ''), /phone number or email/)
+    await assert.rejects(lead('Al', '', '12'), /valid phone/)
+  })
+
+  test('one person can only send a few an hour', async () => {
+    for (let i = 0; i < 3; i++) {
+      await asAnon(`select submit_lead('Flo', 'flood@example.com', '', '', '[]', 'soon', 'email', 'hi')`, [], `198.51.100.${i}`)
+    }
+    await assert.rejects(asAnon(`select submit_lead('Flo', 'flood@example.com', '', '', '[]', 'soon', 'email', 'hi')`, [], '198.51.100.50'), /already got your enquiry/)
+    // Another visitor isn't affected.
+    await asAnon(`select submit_lead('Kim', 'kim@example.com', '', '', '[]', 'soon', 'email', 'hi')`, [], '198.51.100.60')
+  })
+
+  test('the office updates status, notes and the linked client, but not what was sent', async () => {
+    const id = (await fetchAll(admin)).leads.find((l) => l.name === 'Kim')!.id
+    await mutate(admin, (d) => {
+      const l = d.leads.find((x) => x.id === id)!
+      l.status = 'won'
+      l.notes = 'Booked in'
+      l.clientId = 'u-client-1'
+    })
+    const l = (await fetchAll(admin)).leads.find((x) => x.id === id)!
+    assert.deepEqual([l.status, l.notes, l.clientId], ['won', 'Booked in', 'u-client-1'])
+    await assert.rejects(
+      mutate(admin, (d) => {
+        d.leads.find((x) => x.id === id)!.message = 'changed'
+      }),
+      /can’t be changed/,
+    )
   })
 })
