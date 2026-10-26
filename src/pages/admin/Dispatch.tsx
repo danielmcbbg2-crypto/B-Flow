@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { BellRing, Send } from 'lucide-react'
 import { Empty, Field, Modal, PageHeader, Tabs } from '../../components/ui'
+import { TextComposer } from '../../components/TextMessage'
 import { RequestDetail, RequestRow } from '../../components/works'
 import { hasNoLogin, useLookup, useStore } from '../../lib/store'
 import { REQUEST_STATUS_LABEL, type MaintenanceRequest, type RequestStatus } from '../../lib/types'
-import { todayISO } from '../../lib/utils'
+import { fmtDate, todayISO } from '../../lib/utils'
 
 export function Dispatch() {
   const { data, can, update, notifyAdmins } = useStore()
@@ -135,9 +136,27 @@ function AssignForm({ r, onClose }: { r: MaintenanceRequest; onClose: () => void
   const current = lk.providers.some((p) => p.id === r.assignedProviderId) ? r.assignedProviderId : undefined
   const [providerId, setProviderId] = useState(current ?? matching[0]?.id ?? lk.providers[0]?.id ?? '')
   const [date, setDate] = useState(r.scheduledDate ?? todayISO())
-  const [sms, setSms] = useState(data.smsSettings.notifyProviderOnAssign)
+  const [offerText, setOfferText] = useState(data.smsSettings.notifyProviderOnAssign)
   const [busy, setBusy] = useState(false)
+  // After dispatching: the text for the trade, sent from the admin's own phone.
+  const [text, setText] = useState<{ name: string; phone: string; message: string } | null>(null)
   const chosen = lk.user(providerId)
+
+  if (text) {
+    return (
+      <Modal open onClose={onClose} title={`Dispatched #${r.number}`}>
+        <div className="space-y-4">
+          <p className="text-sm text-slate-600">
+            {text.name} has the work order in their portal. Text them from your phone:
+          </p>
+          <TextComposer phone={text.phone} initial={text.message} sendLabel={`Text ${text.name.split(' ')[0]}`} />
+          <div className="flex justify-end border-t border-slate-100 pt-4">
+            <button type="button" className="btn-primary" onClick={onClose}>Done</button>
+          </div>
+        </div>
+      </Modal>
+    )
+  }
 
   return (
     <Modal open onClose={onClose} title={`Assign #${r.number}`}>
@@ -146,9 +165,17 @@ function AssignForm({ r, onClose }: { r: MaintenanceRequest; onClose: () => void
         onSubmit={async (e) => {
           e.preventDefault()
           setBusy(true)
-          await assignRequest(r.id, providerId, date, sms)
+          await assignRequest(r.id, providerId, date, false)
           setBusy(false)
-          onClose()
+          if (offerText && chosen?.phone) {
+            const prop = data.properties.find((p) => p.id === r.propertyId)
+            const where = prop ? `${prop.address}, ${prop.suburb}` : ''
+            setText({
+              name: chosen.name,
+              phone: chosen.phone,
+              message: `Hi ${chosen.name.split(' ')[0]}, Next Phase Maintenance here. Work order #${r.number}: ${r.title}${where ? `, ${where}` : ''}${date ? `, on ${fmtDate(date)}` : ''}. Details are in your portal. Thanks!`,
+            })
+          } else onClose()
         }}
       >
         <p className="text-sm text-slate-600">
@@ -174,8 +201,8 @@ function AssignForm({ r, onClose }: { r: MaintenanceRequest; onClose: () => void
           <input type="date" className="input num" value={date} onChange={(e) => setDate(e.target.value)} />
         </Field>
         <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" className="h-4 w-4 accent-slate-900" checked={sms} onChange={(e) => setSms(e.target.checked)} />
-          SMS the provider{chosen?.phone ? <span className="num text-slate-500"> ({chosen.phone})</span> : <span className="text-slate-500"> (no phone on file)</span>}
+          <input type="checkbox" className="h-4 w-4 accent-slate-900" checked={offerText} disabled={!chosen?.phone} onChange={(e) => setOfferText(e.target.checked)} />
+          Then text them from my phone{chosen?.phone ? <span className="num text-slate-500"> ({chosen.phone})</span> : <span className="text-slate-500"> (no phone on file)</span>}
         </label>
         <p className="text-xs text-slate-500">
           The provider also gets a work order in their Inbox to acknowledge

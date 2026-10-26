@@ -47,7 +47,13 @@ In **Edge Functions → Deploy a new function → Via Editor**, create these fun
 
 **AI product finder (optional).** The store's assistant uses Claude, from Anthropic. Create an API key at [console.anthropic.com](https://console.anthropic.com) (Settings → API keys), add some credit and set a monthly spend limit there, then add it under **Edge Functions → Secrets** as `ANTHROPIC_API_KEY`. Each search or draft searches or reads the web and usually costs well under a dollar. Without the key the rest of the store works and the finder shows these steps instead.
 
-### 4. SMS credentials (kept secret on the server)
+### 4. Text messages (from your own phone)
+
+Texts to trades, clients and website requests go from **your own mobile number**: wherever the portal texts someone (Admin → **Text messages**, the step after dispatching a job, **Text** on a website request, **Text it** on an invite), it opens Messages on your iPhone (or a Mac signed in to Messages) with the number and text filled in. Check it, tap Send, and the conversation stays in your Messages with replies coming to your phone as usual. Nothing to set up. On a Windows computer, use **Copy text** and send it from your phone.
+
+### 4b. Automatic alerts (optional, kept secret on the server)
+
+Automatic alerts (e.g. a text to your admin phones when a client lodges an urgent request) need an SMS provider with its own number, so they don't come from your iPhone. Your portal inbox shows every alert either way.
 
 Under **Edge Functions → Secrets**, add either:
 

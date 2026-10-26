@@ -1,16 +1,22 @@
 import { useState } from 'react'
-import { Plus, Send, Trash2 } from 'lucide-react'
+import { Plus, Smartphone, Trash2 } from 'lucide-react'
 import { Empty, Field, PageHeader, Status } from '../../components/ui'
+import { TextComposer } from '../../components/TextMessage'
 import { useStore } from '../../lib/store'
 import type { SmsSettings } from '../../lib/types'
 import { fmtDateTime } from '../../lib/utils'
 
 export function SmsGateway() {
-  const { data, update, sendSms, cloud } = useStore()
+  const { data, update, cloud } = useStore()
   const [s, setS] = useState<SmsSettings>(data.smsSettings)
   const [newNum, setNewNum] = useState('')
-  const [test, setTest] = useState({ to: data.smsSettings.recipients[0] ?? '', message: 'Test message from Next Phase Maintenance ops.' })
-  const [sending, setSending] = useState(false)
+  // Anyone on file with a mobile: accounts first, then website requests.
+  const contacts = [
+    ...data.users.filter((u) => u.phone).map((u) => ({ key: `u:${u.id}`, label: `${u.name} (${u.role === 'provider' ? u.trade || 'trade' : u.role})`, phone: u.phone, name: u.name })),
+    ...data.leads.filter((l) => l.phone && !l.clientId).map((l) => ({ key: `l:${l.id}`, label: `${l.name} (request #${l.number})`, phone: l.phone, name: l.name })),
+  ].sort((a, b) => a.label.localeCompare(b.label))
+  const [to, setTo] = useState({ key: '', phone: '' })
+  const toContact = contacts.find((c) => c.key === to.key)
   const [saved, setSaved] = useState(false)
   const dirty = JSON.stringify(s) !== JSON.stringify(data.smsSettings)
   const set = (patch: Partial<SmsSettings>) => {
@@ -25,9 +31,48 @@ export function SmsGateway() {
 
   return (
     <>
-      <PageHeader title="SMS gateway" subtitle="Alerts for new requests and dispatches, sent to your linked admin phones." />
-      <div className="grid gap-6 lg:grid-cols-5">
-        <section className="card space-y-5 p-6 lg:col-span-3">
+      <PageHeader title="Text messages" subtitle="Texts go from your own number and stay in your iPhone's Messages." />
+      <div className="mb-8 grid gap-6 lg:grid-cols-5">
+        <section className="card space-y-4 p-6 lg:col-span-3">
+          <h2 className="font-bold">Send a text</h2>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="To">
+              <select className="input" value={to.key} onChange={(e) => setTo({ key: e.target.value, phone: contacts.find((c) => c.key === e.target.value)?.phone ?? '' })}>
+                <option value="">Type a number…</option>
+                {contacts.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+              </select>
+            </Field>
+            <Field label="Mobile">
+              <input className="input num" type="tel" value={to.phone} onChange={(e) => setTo({ key: '', phone: e.target.value })} placeholder="04xx xxx xxx" />
+            </Field>
+          </div>
+          {to.phone.replace(/\D/g, '').length >= 8 ? (
+            <TextComposer key={to.key || 'typed'} phone={to.phone} initial={toContact ? `Hi ${toContact.name.split(' ')[0]}, it's Next Phase Maintenance. ` : 'Hi, it’s Next Phase Maintenance. '} />
+          ) : (
+            <p className="text-sm text-slate-500">Choose someone or type a mobile number.</p>
+          )}
+        </section>
+        <section className="card h-fit space-y-3 p-6 text-sm text-slate-700 lg:col-span-2">
+          <h2 className="flex items-center gap-2 font-bold"><Smartphone size={18} aria-hidden="true" /> How texting works</h2>
+          <p>
+            Wherever the portal texts someone (dispatching a trade, replying to a website request, sending an invite), it opens Messages on your iPhone
+            with the number and text filled in. Check it, tap Send, and it goes from your normal number. The conversation stays in Messages, and replies
+            come to your phone as usual.
+          </p>
+          <p className="text-xs text-slate-500">
+            Using the portal on a computer? A Mac signed in to Messages works the same way. On Windows, use Copy text and send it from your phone.
+          </p>
+        </section>
+      </div>
+
+      <details className="card mb-8 p-6">
+        <summary className="cursor-pointer font-bold">Automatic alerts (optional)</summary>
+        <p className="mt-2 text-sm text-slate-600">
+          The portal can also text alerts automatically (new requests to your admin phones). That needs an SMS provider with its own number, so
+          those texts wouldn't come from your iPhone. Your inbox shows every alert either way.
+        </p>
+      <div className="mt-5 grid gap-6 lg:grid-cols-5">
+        <section className="space-y-5 lg:col-span-5">
           <h2 className="font-bold">Provider & credentials</h2>
           {cloud ? (
             <div className="space-y-2 rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
@@ -75,7 +120,7 @@ export function SmsGateway() {
               [
                 ['notifyOnNewRequest', 'SMS admins when a client lodges a maintenance request'],
                 ['notifyOnUrgentOnly', '…only for urgent requests'],
-                ['notifyProviderOnAssign', 'Offer SMS to provider on dispatch by default'],
+                ['notifyProviderOnAssign', 'After dispatching, offer to text the trade from my phone'],
               ] as const
             ).map(([k, label]) => (
               <label key={k} className="flex items-center gap-2 text-sm">
@@ -118,31 +163,12 @@ export function SmsGateway() {
           </div>
         </section>
 
-        <section className="card h-fit space-y-4 p-6 lg:col-span-2">
-          <h2 className="font-bold">Send a test</h2>
-          <p className="text-xs text-slate-500">Uses the saved settings.{dirty && ' Save your changes first.'}</p>
-          <Field label="To"><input className="input num" type="tel" value={test.to} onChange={(e) => setTest({ ...test, to: e.target.value })} /></Field>
-          <Field label="Message">
-            <textarea className="input" maxLength={320} value={test.message} onChange={(e) => setTest({ ...test, message: e.target.value })} />
-            <span className="num mt-1 block text-right text-xs text-slate-500">{test.message.length}/160</span>
-          </Field>
-          <button
-            className="btn-ghost w-full"
-            disabled={sending || !test.to || !test.message}
-            onClick={async () => {
-              setSending(true)
-              await sendSms(test.to, test.message, 'Test send')
-              setSending(false)
-            }}
-          >
-            <Send size={16} /> {sending ? 'Sending…' : 'Send test SMS'}
-          </button>
-        </section>
       </div>
+      </details>
 
-      <section className="mt-8">
+      <section>
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="font-bold">Dispatch log</h2>
+          <h2 className="font-bold">Automatic alert log</h2>
           {data.sms.length > 0 && (
             <button className="text-sm font-semibold text-slate-500 hover:text-slate-900" onClick={() => update((d) => { d.sms = [] })}>
               Clear log
@@ -150,7 +176,7 @@ export function SmsGateway() {
           )}
         </div>
         {data.sms.length === 0 ? (
-          <Empty title="No messages sent yet" />
+          <Empty title="No automatic alerts yet">Texts you send from your phone are in your Messages app.</Empty>
         ) : (
           <div className="card overflow-x-auto">
             <table className="w-full min-w-[760px]">
