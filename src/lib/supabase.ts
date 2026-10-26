@@ -50,6 +50,15 @@ export function supabaseAdapter(client: SupabaseClient): DbAdapter {
   }
 }
 
+/** Uploads a visitor's photo for a maintenance request to the private "lead-photos" bucket; returns its path. */
+export async function uploadLeadPhoto(client: SupabaseClient, dataUrl: string): Promise<string> {
+  const blob = await (await fetch(dataUrl)).blob()
+  const path = `incoming/${crypto.randomUUID()}.jpg`
+  const { error } = await client.storage.from('lead-photos').upload(path, blob, { contentType: 'image/jpeg' })
+  if (error) throw new Error(`A photo didn’t upload (${error.message}). Please try again.`)
+  return path
+}
+
 /** Uploads a data-URL image to the public "photos" bucket and returns its URL. */
 export async function uploadPhoto(client: SupabaseClient, dataUrl: string): Promise<string> {
   const blob = await (await fetch(dataUrl)).blob()

@@ -982,46 +982,78 @@ describe('construction: quotes, variations, payments and costs', () => {
   })
 })
 
-describe('website enquiries', () => {
-  const lead = (name: string, email: string, phone = '0400 222 333', urgency = 'soon') =>
+describe('website maintenance requests', () => {
+  /** A visitor's photo upload, as Supabase Storage does it (the bucket's policies decide). */
+  const upload = async (name = `incoming/${crypto.randomUUID()}.jpg`, bucket = 'lead-photos') => {
+    await asAnon('insert into storage.objects (bucket_id, name) values ($1, $2)', [bucket, name])
+    return name
+  }
+  const send = async (o: { name?: string; email?: string; phone?: string; service?: string; message?: string; photos?: string[]; urgency?: string; ip?: string } = {}) =>
     asAnon<{ r: { number: number } }>(
-      `select submit_lead($1, $2, $3, 'Carlton', '["Plumbing Services", "Plumbing Services", " "]', $4, 'phone', 'Leaking shower') as r`,
-      [name, email, phone, urgency],
-      '203.0.113.9',
+      `select submit_lead($1, $2, $3, 'Carlton', $4, $5, 'phone', $6, $7::jsonb) as r`,
+      [
+        o.name ?? 'Jo Visitor',
+        o.email ?? 'jo@example.com',
+        o.phone ?? '0400 222 333',
+        o.service ?? 'Plumbing Services',
+        o.urgency ?? 'soon',
+        o.message ?? 'Leaking shower',
+        JSON.stringify(o.photos ?? [await upload()]),
+      ],
+      o.ip ?? '203.0.113.9',
     )
 
-  test('a visitor sends an enquiry; the office is told and sees it, nobody else does', async () => {
-    const r = await lead('Jo Visitor', 'jo@example.com', '0400 222 333', 'urgent')
-    assert.ok(r.rows[0].r.number >= 3001)
+  test('a visitor sends a request with photos; the office is told and sees it, nobody else does', async () => {
+    const photos = [await upload(), await upload()]
+    const r = await send({ urgency: 'urgent', photos })
     const d = await fetchAll(admin)
     const l = d.leads.find((x) => x.number === r.rows[0].r.number)!
     assert.deepEqual(l.services, ['Plumbing Services'])
+    assert.deepEqual([...l.photos].sort(), [...photos].sort())
     assert.equal(l.status, 'new')
-    assert.ok(d.inbox.some((m) => m.title === `Urgent enquiry #${l.number}: Jo Visitor`))
+    assert.ok(d.inbox.some((m) => m.title === `Urgent request #${l.number}: Jo Visitor` && m.body.includes('2 photos')))
     assert.equal((await fetchAll(sarah)).leads.length, 0)
-    assert.equal((await asAnon('select count(*)::int as n from leads').catch(() => ({ rows: [{ n: 0 }] }))).rows[0].n, 0)
+    assert.equal((await asAnon<{ n: number }>('select count(*)::int as n from leads')).rows[0].n, 0)
   })
 
-  test('visitors cannot add or read enquiries directly', async () => {
-    await assert.rejects(asAnon(`insert into leads (name) values ('x')`), /permission denied|row-level security/)
+  test('only the office can see the photos; visitors can upload only to the request folder', async () => {
+    const name = await upload()
+    assert.equal((await asAnon<{ n: number }>(`select count(*)::int as n from storage.objects where bucket_id = 'lead-photos'`)).rows[0].n, 0)
+    assert.equal((await asUser<{ n: number }>(uid.sarah, `select count(*)::int as n from storage.objects where bucket_id = 'lead-photos'`)).rows[0].n, 0)
+    assert.ok((await asUser<{ n: number }>(uid.admin, `select count(*)::int as n from storage.objects where name = $1`, [name])).rows[0].n === 1)
+    await assert.rejects(upload('elsewhere/x.jpg'), /row-level security/)
+    await assert.rejects(upload(`incoming/${crypto.randomUUID()}.jpg`, 'photos'), /row-level security/)
+  })
+
+  test('visitors cannot add or read requests directly', async () => {
+    await assert.rejects(asAnon(`insert into leads (name) values ('x')`), /row-level security/)
     await assert.rejects(asUser(uid.sarah, `insert into leads (name) values ('x')`), /row-level security/)
     await assert.rejects(asAnon('select * from lead_attempts'), /permission denied/)
   })
 
-  test('enquiries are checked: a name and a way to reply are needed', async () => {
-    await assert.rejects(lead('', 'a@example.com'), /Enter your name/)
-    await assert.rejects(lead('Al', 'not-an-email'), /valid email/)
-    await assert.rejects(lead('Al', '', ''), /phone number or email/)
-    await assert.rejects(lead('Al', '', '12'), /valid phone/)
+  test('requests are checked: one of our services, photos, what needs doing, a name and a way to reply', async () => {
+    await assert.rejects(send({ service: '' }), /Choose the service/)
+    await assert.rejects(send({ service: 'Pool cleaning' }), /Choose the service/)
+    await assert.rejects(send({ photos: [] }), /at least one photo/)
+    await assert.rejects(send({ photos: [`incoming/${crypto.randomUUID()}.jpg`] }), /didn’t upload/) // never uploaded
+    await assert.rejects(send({ message: ' ' }), /what needs doing/)
+    await assert.rejects(send({ name: '' }), /Enter your name/)
+    await assert.rejects(send({ email: 'not-an-email' }), /valid email/)
+    await assert.rejects(send({ email: '', phone: '' }), /phone number or email/)
+    await assert.rejects(send({ phone: '12' }), /valid phone/)
+  })
+
+  test("a photo can't be reused on another request", async () => {
+    const photo = await upload()
+    await send({ name: 'Reuse One', email: 'reuse1@example.com', phone: '0400 555 001', photos: [photo], ip: '192.0.2.1' })
+    await assert.rejects(send({ name: 'Reuse Two', email: 'reuse2@example.com', phone: '0400 555 002', photos: [photo], ip: '192.0.2.2' }), /didn’t upload/)
   })
 
   test('one person can only send a few an hour', async () => {
-    for (let i = 0; i < 3; i++) {
-      await asAnon(`select submit_lead('Flo', 'flood@example.com', '', '', '[]', 'soon', 'email', 'hi')`, [], `198.51.100.${i}`)
-    }
-    await assert.rejects(asAnon(`select submit_lead('Flo', 'flood@example.com', '', '', '[]', 'soon', 'email', 'hi')`, [], '198.51.100.50'), /already got your enquiry/)
+    for (let i = 0; i < 3; i++) await send({ name: 'Flo', email: 'flood@example.com', phone: '', ip: `198.51.100.${i}` })
+    await assert.rejects(send({ name: 'Flo', email: 'flood@example.com', phone: '', ip: '198.51.100.50' }), /already got your request/)
     // Another visitor isn't affected.
-    await asAnon(`select submit_lead('Kim', 'kim@example.com', '', '', '[]', 'soon', 'email', 'hi')`, [], '198.51.100.60')
+    await send({ name: 'Kim', email: 'kim@example.com', phone: '', ip: '198.51.100.60' })
   })
 
   test('the office updates status, notes and the linked client, but not what was sent', async () => {

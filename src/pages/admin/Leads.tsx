@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Mail, Phone, Trash2, UserPlus } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Camera, Mail, Phone, Trash2, UserPlus } from 'lucide-react'
 import { Empty, Field, Modal, PageHeader, Sep, Tabs } from '../../components/ui'
 import { useStore } from '../../lib/store'
 import { navigate } from '../../lib/router'
@@ -7,6 +7,38 @@ import { DEFAULT_PERMISSIONS, LEAD_STATUS_LABEL, LEAD_URGENCY_LABEL, type Lead, 
 import { fmtDateTime, uid } from '../../lib/utils'
 
 const digits = (s: string) => s.replace(/\D/g, '')
+
+/** A request's photos, as thumbnails that open full size. Live photos are private, so links are made on demand. */
+function LeadPhotos({ paths }: { paths: string[] }) {
+  const { leadPhotoUrls } = useStore()
+  const [urls, setUrls] = useState<string[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const key = paths.join('|')
+  useEffect(() => {
+    let live = true
+    leadPhotoUrls(key ? key.split('|') : [])
+      .then((u) => live && setUrls(u))
+      .catch((e: Error) => live && setError(e.message))
+    return () => {
+      live = false
+    }
+  }, [key, leadPhotoUrls])
+  if (!paths.length) return null
+  if (error) return <p className="text-xs text-red-600">Photos couldn’t be loaded: {error}</p>
+  return (
+    <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+      {(urls ?? paths.map(() => '')).map((u, i) =>
+        u ? (
+          <a key={i} href={u} target="_blank" rel="noreferrer" className="block aspect-square overflow-hidden border border-slate-200 hover:opacity-90">
+            <img src={u} alt={`Photo ${i + 1}`} className="h-full w-full object-cover" />
+          </a>
+        ) : (
+          <div key={i} className="aspect-square animate-pulse bg-slate-100" />
+        ),
+      )}
+    </div>
+  )
+}
 
 function UrgencyTag({ l }: { l: Lead }) {
   if (l.urgency === 'urgent') return <span className="bg-red-600 px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-white">Urgent</span>
@@ -28,7 +60,7 @@ export function Leads() {
 
   return (
     <>
-      <PageHeader title="Enquiries" subtitle="Quote requests from the website, from people without an account. Follow them up and add them as clients." />
+      <PageHeader title="Enquiries" subtitle="Maintenance requests from the website, with photos, from people without an account. Follow them up and add them as clients." />
       <Tabs
         value={tab}
         onChange={setTab}
@@ -40,7 +72,7 @@ export function Leads() {
       />
       {list.length === 0 ? (
         <Empty title={tab === 'new' ? 'No new enquiries' : 'Nothing here'}>
-          {tab === 'new' ? 'Enquiries from the “Get a quote” form on the home page show up here, and in your inbox.' : undefined}
+          {tab === 'new' ? 'Requests from the “Request maintenance” pop-up on the home page show up here, and in your inbox.' : undefined}
         </Empty>
       ) : (
         <ul className="card divide-y divide-slate-100">
@@ -70,6 +102,11 @@ export function Leads() {
                   <p className="num text-xs text-slate-500">{fmtDateTime(l.createdAt)}</p>
                   {l.suburb && <p className="text-slate-600">{l.suburb}</p>}
                   <p className="text-xs text-slate-500">Prefers {l.contactBy === 'phone' ? 'a call' : 'email'}</p>
+                  {l.photos.length > 0 && (
+                    <p className="mt-1 inline-flex items-center gap-1 text-xs text-slate-500">
+                      <Camera size={13} aria-hidden="true" /> {l.photos.length} photo{l.photos.length > 1 ? 's' : ''}
+                    </p>
+                  )}
                 </div>
               </button>
             </li>
@@ -82,7 +119,7 @@ export function Leads() {
 }
 
 function LeadDetail({ lead, onClose }: { lead: Lead; onClose: () => void }) {
-  const { data, update, can } = useStore()
+  const { data, update, can, deleteLead } = useStore()
   const [notes, setNotes] = useState(lead.notes)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const change = (patch: Partial<Lead>) =>
@@ -126,7 +163,7 @@ function LeadDetail({ lead, onClose }: { lead: Lead; onClose: () => void }) {
   }
 
   return (
-    <Modal open onClose={onClose} title={`Enquiry #${lead.number} · ${lead.name}`} width="max-w-2xl">
+    <Modal open onClose={onClose} title={`Request #${lead.number} · ${lead.name}`} width="max-w-2xl">
       <div className="space-y-5 text-sm">
         <p className="text-slate-600">
           {fmtDateTime(lead.createdAt)}
@@ -146,7 +183,7 @@ function LeadDetail({ lead, onClose }: { lead: Lead; onClose: () => void }) {
             </a>
           )}
           {lead.email && (
-            <a className={lead.contactBy === 'email' ? 'btn-primary' : 'btn-ghost'} href={`mailto:${lead.email}?subject=${encodeURIComponent(`Your enquiry #${lead.number} with Next Phase Maintenance`)}`}>
+            <a className={lead.contactBy === 'email' ? 'btn-primary' : 'btn-ghost'} href={`mailto:${lead.email}?subject=${encodeURIComponent(`Your maintenance request #${lead.number} with Next Phase Maintenance`)}`}>
               <Mail size={15} /> {lead.email}
             </a>
           )}
@@ -160,6 +197,7 @@ function LeadDetail({ lead, onClose }: { lead: Lead; onClose: () => void }) {
           </div>
         )}
         <p className="whitespace-pre-wrap rounded-md bg-slate-50 p-3 text-slate-800">{lead.message || 'No details given.'}</p>
+        <LeadPhotos paths={lead.photos} />
 
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Status">
@@ -194,14 +232,12 @@ function LeadDetail({ lead, onClose }: { lead: Lead; onClose: () => void }) {
         <div className="flex items-center justify-between border-t border-slate-100 pt-4">
           {confirmDelete ? (
             <span className="flex items-center gap-2">
-              Delete this enquiry?
+              Delete this request and its photos?
               <button
                 type="button"
                 className="btn-ghost px-2.5 py-1 text-xs text-red-600"
                 onClick={() => {
-                  update((d) => {
-                    d.leads = d.leads.filter((x) => x.id !== lead.id)
-                  })
+                  deleteLead(lead.id)
                   onClose()
                 }}
               >

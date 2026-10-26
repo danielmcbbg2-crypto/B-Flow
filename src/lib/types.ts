@@ -413,7 +413,7 @@ export const LEAD_STATUS_LABEL: Record<LeadStatus, string> = { new: 'New', conta
 export type LeadUrgency = 'urgent' | 'soon' | 'flexible'
 export const LEAD_URGENCY_LABEL: Record<LeadUrgency, string> = { urgent: 'Urgent', soon: 'Within a few weeks', flexible: 'Flexible / planning' }
 
-/** An enquiry from the website from someone without an account. */
+/** A maintenance request from the website, from someone without an account. */
 export interface Lead {
   id: string
   number: number
@@ -426,6 +426,8 @@ export interface Lead {
   urgency: LeadUrgency
   contactBy: 'phone' | 'email'
   message: string
+  /** Photos of the job: storage paths (live) or images (demo). */
+  photos: string[]
   status: LeadStatus
   /** Office notes. */
   notes: string
