@@ -18,8 +18,8 @@ create policy lead_photos_read on storage.objects for select to authenticated
 create policy lead_photos_delete on storage.objects for delete to authenticated
   using (bucket_id = 'lead-photos' and (public.has_perm('canManageProjects') or public.has_perm('canDispatchJobs')));
 
--- Replaces the version without photos (no website used it yet).
-drop function public.submit_lead(text, text, text, text, jsonb, text, text, text, text);
+-- Replaces the version without photos (no website used it yet): it stays defined but nobody can call it.
+revoke execute on function public.submit_lead(text, text, text, text, jsonb, text, text, text, text) from public, anon, authenticated;
 
 create function public.submit_lead(
   p_name text, p_email text, p_phone text, p_suburb text, p_service text, p_urgency text,

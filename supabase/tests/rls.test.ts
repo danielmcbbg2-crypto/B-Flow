@@ -1029,6 +1029,8 @@ describe('website maintenance requests', () => {
     await assert.rejects(asAnon(`insert into leads (name) values ('x')`), /row-level security/)
     await assert.rejects(asUser(uid.sarah, `insert into leads (name) values ('x')`), /row-level security/)
     await assert.rejects(asAnon('select * from lead_attempts'), /permission denied/)
+    // The earlier version without photos is switched off.
+    await assert.rejects(asAnon(`select submit_lead('X', 'x@example.com', '', '', '[]'::jsonb, 'soon', 'email', 'hi', '')`), /permission denied/)
   })
 
   test('requests are checked: one of our services, photos, what needs doing, a name and a way to reply', async () => {
