@@ -1,40 +1,15 @@
-import { useEffect, useState, type ComponentType, type MouseEvent, type SVGProps } from 'react'
-import {
-  ArrowRight,
-  CalendarCheck,
-  Hammer,
-  Mail,
-  MapPin,
-  Menu,
-  Paintbrush,
-  Phone,
-  Wrench,
-  X,
-  Zap,
-} from 'lucide-react'
+import { useEffect, useState, type MouseEvent } from 'react'
+import { ArrowRight, Mail, MapPin, Menu, Phone, X } from 'lucide-react'
 import { Logo } from '../components/Logo'
 import { SignInModal } from '../components/SignInModal'
-import { Trowel, TwinGears, Worker } from '../components/ServiceIcons'
 import { BRAND, SITE_COPY, SITE_SERVICES } from '../lib/brand'
 import { useStore } from '../lib/store'
 import { navigate } from '../lib/router'
+import { LeadCapture, REQUEST_SERVICES, RequestMaintenanceModal, SERVICE_ICONS } from './LeadCapture'
 import interiorPhoto from '../assets/photos/interior.webp'
 import residentialPhoto from '../assets/photos/residential.webp'
 import commercialPhoto from '../assets/photos/commercial.webp'
 import conciergePhoto from '../assets/photos/concierge.webp'
-
-type ServiceIcon = ComponentType<Pick<SVGProps<SVGSVGElement>, 'className' | 'strokeWidth' | 'aria-hidden'>>
-
-const SERVICE_ICONS: Record<(typeof SITE_SERVICES)[number], ServiceIcon> = {
-  'Plumbing Services': Wrench,
-  'Electrical Services': Zap,
-  'Painting and Decorating': Paintbrush,
-  'Handyman Services': Worker,
-  'Carpentry Services': Hammer,
-  'Plastering Services': Trowel,
-  'Emergency Repairs': TwinGears,
-  'Subscription Packages': CalendarCheck,
-}
 
 const [EMAIL_LOCAL, EMAIL_DOMAIN] = BRAND.email.split('@')
 
@@ -48,6 +23,7 @@ function jump(id: string) {
 const NAV = [
   ['about', 'About'],
   ['services', 'Services'],
+  ['quote', 'Request maintenance'],
   ['portal', 'Client portal'],
   ['coverage', 'Coverage'],
   ['contact', 'Contact'],
@@ -69,6 +45,9 @@ function Feature({ title, body, photo, alt, flip }: { title: string; body: strin
 export function PublicHome() {
   const { user, authNotice } = useStore()
   const [signIn, setSignIn] = useState(false)
+  // The maintenance-request pop-up; a fresh form each time it opens (with the service tapped, if any).
+  const [request, setRequest] = useState<{ key: number; service?: string } | null>(null)
+  const openRequest = (service?: string) => (user ? navigate(`/${user.role}`) : setRequest({ key: Date.now(), service }))
   const [menuOpen, setMenuOpen] = useState(false)
   const openPortal = () => (user ? navigate(`/${user.role}`) : setSignIn(true))
 
@@ -160,13 +139,13 @@ export function PublicHome() {
             <a href="#about" onClick={jump('about')} className="btn-accent w-full border border-transparent px-6 py-3.5 text-base font-normal sm:w-52">
               Learn More About Us
             </a>
-            <a
-              href="#contact"
-              onClick={jump('contact')}
+            <button
+              type="button"
+              onClick={() => openRequest()}
               className="btn w-full border border-white px-6 py-3.5 text-base font-normal text-white hover:bg-white hover:text-slate-900 sm:w-52"
             >
-              Get in Touch
-            </a>
+              Request Maintenance
+            </button>
           </div>
           <p className="mt-10 text-sm text-white/80">
             Melbourne, VIC <span className="mx-2 text-white/40">/</span> ABN {BRAND.abn}
@@ -196,23 +175,44 @@ export function PublicHome() {
               <h2 className="mt-2 text-4xl font-bold leading-[1.15] text-accent-heading sm:text-[42px] sm:leading-[1.2]">{SITE_COPY.servicesTitle}</h2>
               <p className="mt-6 max-w-lg text-base font-light leading-[1.8]">{SITE_COPY.servicesIntro}</p>
             </div>
-            <button className="btn-accent shrink-0 self-start px-7 py-3.5 text-base font-normal" onClick={openPortal}>
+            {/* Signed-in clients lodge it in their portal; everyone else gets the request pop-up. */}
+            <button className="btn-accent shrink-0 self-start px-7 py-3.5 text-base font-normal" onClick={() => openRequest()}>
               Request a Service
             </button>
           </div>
           <ul className="mt-12 grid grid-cols-2 gap-3 lg:grid-cols-4">
             {SITE_SERVICES.map((name) => {
               const Icon = SERVICE_ICONS[name]
-              return (
-                <li key={name} className="flex min-h-[150px] flex-col bg-white p-5 sm:min-h-[220px] sm:p-10">
+              const requestable = (REQUEST_SERVICES as readonly string[]).includes(name)
+              const tile = (
+                <>
                   <Icon strokeWidth={1.25} className="h-10 w-10 text-accent sm:h-[52px] sm:w-[52px]" aria-hidden="true" />
                   <span className="mt-4 text-base leading-snug text-slate-900 sm:mt-6 sm:text-[22px]">{name}</span>
+                  <span className="mt-auto flex items-center gap-1.5 pt-4 text-sm text-slate-500 transition-colors group-hover:text-accent-ink">
+                    {requestable ? 'Request' : 'Ask us'} <ArrowRight size={14} aria-hidden="true" />
+                  </span>
+                </>
+              )
+              const cls = 'group flex h-full min-h-[150px] w-full flex-col bg-white p-5 text-left transition-shadow hover:shadow-lg sm:min-h-[220px] sm:p-10'
+              return (
+                <li key={name}>
+                  {requestable ? (
+                    <button type="button" className={cls} onClick={() => openRequest(name)} aria-label={`Request ${name}`}>
+                      {tile}
+                    </button>
+                  ) : (
+                    <a href="#contact" onClick={jump('contact')} className={cls} aria-label={`Ask us about ${name}`}>
+                      {tile}
+                    </a>
+                  )}
                 </li>
               )
             })}
           </ul>
         </div>
       </section>
+
+      <LeadCapture onRequest={() => openRequest()} onSignIn={() => setSignIn(true)} />
 
       <section id="portal" className="scroll-mt-16 bg-white">
         <div className="mx-auto grid max-w-7xl gap-12 px-4 py-20 sm:px-6 sm:py-24 lg:grid-cols-3">
@@ -327,6 +327,7 @@ export function PublicHome() {
       </footer>
 
       <SignInModal open={signIn} onClose={() => setSignIn(false)} />
+      {request && <RequestMaintenanceModal key={request.key} open service={request.service} onClose={() => setRequest(null)} />}
     </div>
   )
 }

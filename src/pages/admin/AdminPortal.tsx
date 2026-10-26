@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Building2, CalendarDays, FolderKanban, LayoutDashboard, MessageSquareText, Receipt, ShoppingBag, Truck, Users } from 'lucide-react'
+import { Building2, CalendarDays, FolderKanban, LayoutDashboard, MessageSquareText, MessagesSquare, Receipt, ShoppingBag, Truck, Users } from 'lucide-react'
 import { GridTile, PortalShell, type NavItem } from '../../components/PortalShell'
 import { Calendar } from '../../components/Calendar'
 import { Empty, PageHeader, Stat } from '../../components/ui'
@@ -12,6 +12,7 @@ import { Finance } from './Finance'
 import { SmsGateway } from './SmsGateway'
 import { Accounts } from './Accounts'
 import { AdminStore } from './AdminStore'
+import { Leads } from './Leads'
 import { PropertyCard } from '../client/ClientPortal'
 
 export function AdminPortal({ section }: { section: string }) {
@@ -19,8 +20,11 @@ export function AdminPortal({ section }: { section: string }) {
   const pending = data.requests.filter((r) => r.status === 'pending').length
   const quotes = data.projects.filter((p) => p.status === 'quote_requested').length
   const newOrders = data.orders.filter((o) => o.status === 'new').length
+  const newLeads = data.leads.filter((l) => l.status === 'new').length
+  const canLeads = can('canManageProjects') || can('canDispatchJobs')
   const nav: NavItem[] = [
     { key: 'home', label: 'Command centre', icon: LayoutDashboard },
+    ...(canLeads ? [{ key: 'leads', label: 'Enquiries', icon: MessagesSquare, badge: newLeads }] : []),
     ...(can('canDispatchJobs') ? [{ key: 'dispatch', label: 'Triage & dispatch', icon: Truck, badge: pending }] : []),
     ...(can('canManageProjects') ? [{ key: 'projects', label: 'Quotes & projects', icon: FolderKanban, badge: quotes }] : []),
     { key: 'calendar', label: 'Calendar', icon: CalendarDays },
@@ -32,6 +36,8 @@ export function AdminPortal({ section }: { section: string }) {
   ]
   const body = (() => {
     switch (section) {
+      case 'leads':
+        return canLeads ? <Leads /> : <Empty title="You don't have access to enquiries." />
       case 'dispatch':
         return can('canDispatchJobs') ? <Dispatch /> : <Empty title="You don't have access to dispatch." />
       case 'projects':

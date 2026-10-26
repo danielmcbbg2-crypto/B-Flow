@@ -5,6 +5,7 @@ import type {
   DraftListing,
   FoundProduct,
   InboxMessage,
+  Lead,
   MaintenanceRequest,
   Permission,
   Product,
@@ -15,13 +16,13 @@ import type {
   StoreOrder,
   UserAccount,
 } from './types'
-import { BRAND } from './brand'
+import { BRAND, SITE_SERVICES } from './brand'
 import { blankCommercials } from './quote'
 import { createSeed, DATA_VERSION } from './seed'
 import { dispatchSms } from './sms'
 import { generateInviteCode, money, sha256, uid } from './utils'
 import { applyOps, diff, emptyData, fetchAll, productsFromRows, profileRow, projectFromRow, propertyRow, requestFromRow, userFromRow } from './db'
-import { ANON_KEY, CLOUD, DEMO, DEMO_BUILD, FUNCTIONS_URL, supabase, supabaseAdapter, uploadPhoto } from './supabase'
+import { ANON_KEY, CLOUD, DEMO, DEMO_BUILD, FUNCTIONS_URL, supabase, supabaseAdapter, uploadLeadPhoto, uploadPhoto } from './supabase'
 
 const DATA_KEY = 'npm.data.v1'
 const SESSION_KEY = 'npm.session.v1'
@@ -154,6 +155,14 @@ export interface OrderInput {
   notes: string
 }
 
+/** An enquiry from the website's quote form. */
+export type LeadInput = Pick<Lead, 'name' | 'email' | 'phone' | 'company' | 'suburb' | 'urgency' | 'contactBy' | 'message'> & {
+  /** One of the services on the website. */
+  service: string
+  /** Photos of the job, as image data URLs. */
+  photos: string[]
+}
+
 /** A project an admin sets up, optionally with a new client (added without a login) and property. */
 export interface NewProject {
   newClient?: UserAccount
@@ -223,6 +232,10 @@ interface StoreValue {
   loadCatalog: () => Promise<Product[]>
   /** Places a store order for anyone; throws with a message the customer can act on. */
   placeOrder: (o: OrderInput) => Promise<{ number: number; total: number }>
+  /** Anyone, signed in or not: send a maintenance request (with photos) to the office. */
+  submitLead: (l: LeadInput) => Promise<{ number: number }>
+  leadPhotoUrls: (paths: string[]) => Promise<string[]>
+  deleteLead: (id: string) => void
   /**
    * Store managers: the AI assistant searches the web for products (sample results in demo mode).
    * `onProgress` hears what it's doing as it goes; aborting `signal` stops it.
@@ -970,6 +983,97 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [update, refresh, user],
   )
 
+  const submitLead = useCallback(
+    async (l: LeadInput): Promise<{ number: number }> => {
+      const email = l.email.trim()
+      const phone = l.phone.trim()
+      // Checked here too so a visitor's photos aren't uploaded for a request that would be refused.
+      if (!(SITE_SERVICES as readonly string[]).includes(l.service)) throw new Error('Choose the service you need')
+      if (l.photos.length === 0) throw new Error('Add at least one photo of the job')
+      if (l.photos.length > 6) throw new Error('Up to 6 photos, please')
+      if (!l.message.trim()) throw new Error('Tell us what needs doing')
+      if (!l.name.trim()) throw new Error('Enter your name')
+      if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error('Enter a valid email address')
+      if (phone && phone.replace(/\D/g, '').length < 8) throw new Error('Enter a valid phone number')
+      if (!email && !phone) throw new Error('Leave a phone number or email so we can reply')
+      if (supabase) {
+        const client = supabase
+        const photos = await Promise.all(l.photos.map((p) => uploadLeadPhoto(client, p)))
+        const { data: res, error } = await client.rpc('submit_lead', {
+          p_name: l.name,
+          p_email: email,
+          p_phone: phone,
+          p_suburb: l.suburb,
+          p_service: l.service,
+          p_urgency: l.urgency,
+          p_contact_by: l.contactBy,
+          p_message: l.message,
+          p_photos: photos,
+          p_company: l.company,
+        })
+        if (error) throw new Error(error.message)
+        return { number: (res as { number: number }).number }
+      }
+      // Demo mode follows the same rules as the database; photos stay in this browser.
+      const contactBy = l.contactBy === 'phone' ? (phone ? 'phone' : 'email') : email ? 'email' : 'phone'
+      const number = Math.max(3000, ...dataRef.current.leads.map((x) => x.number)) + 1
+      update((d) => {
+        d.leads.unshift({
+          id: uid('l'),
+          number,
+          name: l.name.trim(),
+          email,
+          phone,
+          company: l.company.trim(),
+          suburb: l.suburb.trim(),
+          services: [l.service],
+          urgency: l.urgency,
+          contactBy,
+          message: l.message.trim(),
+          photos: l.photos,
+          status: 'new',
+          notes: '',
+          createdAt: new Date().toISOString(),
+        })
+        const office = d.users.filter((u) => u.role === 'admin' && u.status === 'active' && (u.permissions.includes('canManageProjects') || u.permissions.includes('canDispatchJobs')))
+        for (const a of office) {
+          d.inbox.unshift({
+            id: uid('n'),
+            userId: a.id,
+            title: `${l.urgency === 'urgent' ? 'Urgent request' : 'New maintenance request'} #${number}: ${l.name.trim()}`,
+            body: [l.service, l.suburb.trim(), `${l.photos.length} photo${l.photos.length > 1 ? 's' : ''}`, contactBy === 'phone' ? `call ${phone}` : `email ${email}`].filter(Boolean).join(' · '),
+            createdAt: new Date().toISOString(),
+            read: false,
+            requiresAck: false,
+            acknowledged: false,
+          })
+        }
+      })
+      return { number }
+    },
+    [update],
+  )
+
+  /** Viewable links for a request's photos (live: short-lived signed links; demo: the images themselves). */
+  const leadPhotoUrls = useCallback(async (paths: string[]): Promise<string[]> => {
+    if (!supabase || paths.length === 0) return paths
+    const { data, error } = await supabase.storage.from('lead-photos').createSignedUrls(paths, 3600)
+    if (error) throw new Error(error.message)
+    return data.map((x) => x.signedUrl ?? '')
+  }, [])
+
+  /** Removes a request (e.g. spam) and, live, its photos. */
+  const deleteLead = useCallback(
+    (id: string) => {
+      const photos = dataRef.current.leads.find((l) => l.id === id)?.photos ?? []
+      update((d) => {
+        d.leads = d.leads.filter((l) => l.id !== id)
+      })
+      if (supabase && photos.length) void supabase.storage.from('lead-photos').remove(photos)
+    },
+    [update],
+  )
+
   const findProducts = useCallback(async (query: string, onProgress?: (text: string) => void, signal?: AbortSignal) => {
     if (supabase) return streamFunction<{ products: FoundProduct[]; note: string }>('store-assistant', { action: 'find', query }, onProgress, signal)
     const q = query.trim() || 'bathroom products'
@@ -1136,6 +1240,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     createProject,
     loadCatalog,
     placeOrder,
+    submitLead,
+    leadPhotoUrls,
+    deleteLead,
     findProducts,
     draftListing,
     assignRequest,
