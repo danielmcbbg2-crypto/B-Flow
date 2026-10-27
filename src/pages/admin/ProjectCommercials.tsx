@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
 import { QuoteBreakdown } from '../../components/quote'
 import { Field, Stat } from '../../components/ui'
+import { useStore } from '../../lib/store'
 import { approvedVariationsExGst, contractTotal, GST_RATE, itemsSubtotal, lineTotal, paymentAmounts, projectFinancials, quoteTotal, sections, withGst } from '../../lib/quote'
 import { COST_CATEGORIES, QUOTE_ITEM_KIND_LABEL, type PaymentStage, type Project, type QuickBooksInvoice, type QuoteItem, type QuoteItemKind } from '../../lib/types'
 import { fmtDate, money, todayISO, uid } from '../../lib/utils'
@@ -38,6 +39,7 @@ export function QuoteBuilder({ p, set }: Panel) {
 
   return (
     <div className="space-y-4">
+      <QuoteSources p={p} set={set} />
       {p.quoteItems.length === 0 && (
         <div className="space-y-3">
           <Field label="Quote amount (AUD, inc. GST)" className="max-w-xs">
@@ -69,7 +71,7 @@ export function QuoteBuilder({ p, set }: Panel) {
                 </tr>
                 <tr className="text-left text-xs text-slate-500">
                   <th className="px-2 py-1 font-semibold">Description</th>
-                  <th className="w-32 px-2 py-1 font-semibold">Type</th>
+                  <th className="w-40 px-2 py-1 font-semibold">Type</th>
                   <th className="w-20 px-2 py-1 font-semibold">Qty</th>
                   <th className="w-20 px-2 py-1 font-semibold">Unit</th>
                   <th className="w-28 px-2 py-1 font-semibold">Rate ex GST</th>
@@ -142,6 +144,77 @@ export function QuoteBuilder({ p, set }: Panel) {
           <input type="date" className="input num" value={p.quoteValidUntil ?? ''} onChange={(e) => set({ quoteValidUntil: e.target.value || undefined })} />
         </Field>
       </div>
+    </div>
+  )
+}
+
+/** Start from a template or another quote (its lines are added, with fresh copies), or save this one as a template. */
+function QuoteSources({ p, set }: Panel) {
+  const { data, update } = useStore()
+  const [naming, setNaming] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
+  const past = data.projects.filter((x) => x.id !== p.id && x.quoteItems.length > 0).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  const copyFrom = (key: string) => {
+    const [kind, id] = key.split(':')
+    const src =
+      kind === 't'
+        ? data.quoteTemplates.find((t) => t.id === id)
+        : (() => {
+            const q = data.projects.find((x) => x.id === id)
+            return q && { items: q.quoteItems, inclusions: q.quoteInclusions, exclusions: q.quoteExclusions }
+          })()
+    if (!src) return
+    set({
+      quoteItems: [...p.quoteItems, ...src.items.map((i) => ({ section: i.section, description: i.description, kind: i.kind, qty: i.qty, unit: i.unit, rate: i.rate, id: uid('qi') }))],
+      quoteInclusions: p.quoteInclusions || src.inclusions,
+      quoteExclusions: p.quoteExclusions || src.exclusions,
+    })
+  }
+  const saveTemplate = (name: string) => {
+    update((d) => {
+      d.quoteTemplates.push({
+        id: uid('qt'),
+        name,
+        items: p.quoteItems.map(({ section, description, kind, qty, unit, rate }) => ({ section, description, kind, qty, unit, rate })),
+        inclusions: p.quoteInclusions,
+        exclusions: p.quoteExclusions,
+        createdAt: new Date().toISOString(),
+      })
+      d.quoteTemplates.sort((a, b) => a.name.localeCompare(b.name))
+    })
+    setNaming(null)
+    setSaved(true)
+  }
+  if (!data.quoteTemplates.length && !past.length && !p.quoteItems.length) return null
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-md bg-slate-50 p-3 text-sm">
+      {(data.quoteTemplates.length > 0 || past.length > 0) && (
+        <select className="input w-auto max-w-full py-1" aria-label="Add lines from a template or past quote" value="" onChange={(e) => e.target.value && copyFrom(e.target.value)}>
+          <option value="">{p.quoteItems.length ? 'Add lines from…' : 'Start from a template or past quote…'}</option>
+          {data.quoteTemplates.length > 0 && (
+            <optgroup label="Templates">
+              {data.quoteTemplates.map((t) => <option key={t.id} value={`t:${t.id}`}>{t.name} ({t.items.length} lines)</option>)}
+            </optgroup>
+          )}
+          {past.length > 0 && (
+            <optgroup label="Past quotes">
+              {past.slice(0, 30).map((x) => <option key={x.id} value={`p:${x.id}`}>P-{x.number} {x.title} ({money(quoteTotal(x))})</option>)}
+            </optgroup>
+          )}
+        </select>
+      )}
+      {p.quoteItems.length > 0 &&
+        (naming === null ? (
+          <button type="button" className="btn-ghost ml-auto px-3 py-1" onClick={() => { setNaming(p.title); setSaved(false) }}>
+            {saved ? 'Saved as a template ✓' : 'Save as template'}
+          </button>
+        ) : (
+          <span className="ml-auto flex flex-wrap items-center gap-2">
+            <input className="input w-56 py-1" aria-label="Template name" autoFocus value={naming} onChange={(e) => setNaming(e.target.value)} />
+            <button type="button" className="btn-primary px-3 py-1" disabled={!naming.trim()} onClick={() => saveTemplate(naming.trim())}>Save</button>
+            <button type="button" className="btn-ghost px-3 py-1" onClick={() => setNaming(null)}>Cancel</button>
+          </span>
+        ))}
     </div>
   )
 }

@@ -1,35 +1,20 @@
 import { useState, type FormEvent } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
-import { Empty, Field, Modal, PageHeader, Sep, Tabs } from '../../components/ui'
+import { Empty, Field, Modal, PageHeader, Sep, Stat, Tabs } from '../../components/ui'
 import { ProjectBy, ProjectProgress } from '../../components/works'
 import { ProjectStatusText } from '../../components/status'
 import { ExpenseTable } from '../provider/ProviderPortal'
 import { hasNoLogin, stampQuoteDecision, useLookup, useStore, type NewProject } from '../../lib/store'
 import { DEFAULT_PERMISSIONS, PROJECT_STATUS_LABEL, type PaymentStage, type Project, type ProjectStatus, type Property, type UserAccount } from '../../lib/types'
-import { contractTotal, nextInvoiceNumber, quoteTotal, withGst } from '../../lib/quote'
-import { money, toISODate, todayISO, uid } from '../../lib/utils'
+import { contractTotal, nextInvoiceNumber, paymentAmounts, projectFinancials, quoteTotal, withGst } from '../../lib/quote'
+import { fmtDate, money, toISODate, todayISO, uid } from '../../lib/utils'
+import { navigate } from '../../lib/router'
 import { CostsPanel, PaymentsPanel, QuoteBuilder, VariationsPanel } from './ProjectCommercials'
 
-export function AdminProjects() {
+/** Saves a project edited in the office, telling the trade, the client and so on what changed for them. */
+export function useSaveProject() {
   const { data, user, update, pushInbox } = useStore()
-  const lk = useLookup()
-  const [tab, setTab] = useState<'quotes' | 'active' | 'closed'>('quotes')
-  const [editing, setEditing] = useState<Project | null>(null)
-  const [creating, setCreating] = useState(false)
-
-  const quotes = data.projects.filter((p) => p.status === 'quote_requested' || p.status === 'quoted')
-  const active = data.projects.filter((p) => p.status === 'approved' || p.status === 'in_progress')
-  const closed = data.projects.filter((p) => p.status === 'completed' || p.status === 'rejected')
-  const list = tab === 'quotes' ? quotes : tab === 'active' ? active : closed
-  const pendingExpenses = data.projects.flatMap((p) => p.expenses.filter((e) => e.status === 'submitted').map((e) => ({ e, p })))
-
-  const setExpense = (pid: string, eid: string, status: 'approved' | 'rejected') =>
-    update((d) => {
-      const e = d.projects.find((p) => p.id === pid)?.expenses.find((x) => x.id === eid)
-      if (e) e.status = status
-    })
-
-  const save = (p: Project) => {
+  return (p: Project) => {
     const before = data.projects.find((x) => x.id === p.id)
     update((d) => {
       const next = structuredClone(p)
@@ -52,16 +37,61 @@ export function AdminProjects() {
         projectId: p.id,
       })
     }
-    setEditing(null)
   }
+}
+
+/** Payment stages ready to claim: their milestone is done (or, for a first stage without one, the job is underway) and no invoice yet. */
+export function claimsReady(p: Project) {
+  return p.payments.filter((s, i) => {
+    if (s.invoiceId) return false
+    const m = p.milestones.find((x) => x.id === s.milestoneId)
+    return m ? m.done : i === 0 && (p.status === 'approved' || p.status === 'in_progress')
+  })
+}
+
+/** The next milestone not yet done. */
+const nextMilestone = (p: Project) => [...p.milestones].filter((m) => !m.done).sort((a, b) => a.date.localeCompare(b.date))[0]
+
+/** Admin → Projects: work that's been won, from approval to completion. */
+export function AdminProjects() {
+  const { data, update } = useStore()
+  const lk = useLookup()
+  const save = useSaveProject()
+  const [tab, setTab] = useState<'active' | 'closed'>('active')
+  const [editing, setEditing] = useState<Project | null>(null)
+  const [creating, setCreating] = useState(false)
+
+  const active = data.projects.filter((p) => p.status === 'approved' || p.status === 'in_progress')
+  // Declined quotes and cancelled jobs stay here too, so an old one can be reopened.
+  const closed = data.projects.filter((p) => p.status === 'completed' || p.status === 'rejected')
+  const list = tab === 'active' ? active : closed
+  const pendingExpenses = data.projects.flatMap((p) => p.expenses.filter((e) => e.status === 'submitted').map((e) => ({ e, p })))
+  const ready = active.flatMap((p) => {
+    const amounts = paymentAmounts(p, data.invoices)
+    return claimsReady(p).map((s) => ({ p, s, amount: amounts.get(s.id) ?? 0 }))
+  })
+  const today = todayISO()
+  const overdue = active.filter((p) => p.milestones.some((m) => !m.done && m.date < today))
+
+  const setExpense = (pid: string, eid: string, status: 'approved' | 'rejected') =>
+    update((d) => {
+      const e = d.projects.find((p) => p.id === pid)?.expenses.find((x) => x.id === eid)
+      if (e) e.status = status
+    })
 
   return (
     <>
       <PageHeader
-        title="Quotes & projects"
-        subtitle="Price requests, attach scope of works, then run the project."
+        title="Projects"
+        subtitle="Work you've won, from go-ahead to handover."
         actions={<button className="btn-primary" onClick={() => setCreating(true)}><Plus size={16} /> New project</button>}
       />
+      <div className="card mb-6 grid divide-y divide-slate-100 sm:grid-cols-2 sm:divide-y-0 lg:grid-cols-4 lg:divide-x">
+        <Stat label="Active projects" value={active.length} hint={`${active.filter((p) => p.status === 'in_progress').length} under way`} />
+        <Stat label="Contract value" value={money(active.reduce((s, p) => s + contractTotal(p), 0))} hint="active, inc GST" />
+        <Stat label="Ready to claim" value={money(ready.reduce((s, x) => s + x.amount, 0))} hint={`${ready.length} payment stage${ready.length === 1 ? '' : 's'}`} />
+        <Stat label="Behind schedule" value={overdue.length} hint="with an overdue milestone" />
+      </div>
       {pendingExpenses.length > 0 && (
         <section className="card mb-6 overflow-hidden">
           <h2 className="border-b border-slate-200 px-5 py-3 font-bold">Expenses awaiting approval</h2>
@@ -79,35 +109,57 @@ export function AdminProjects() {
           />
         </section>
       )}
+      {ready.length > 0 && (
+        <section className="card mb-6 overflow-hidden">
+          <h2 className="border-b border-slate-200 px-5 py-3 font-bold">Ready to claim</h2>
+          <ul className="divide-y divide-slate-100">
+            {ready.map(({ p, s, amount }) => (
+              <li key={s.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 text-sm">
+                <span>
+                  <span className="num text-xs text-slate-500">P-{p.number}</span> <span className="font-semibold">{p.title}</span> · {s.title}
+                </span>
+                <span className="flex items-center gap-3">
+                  <span className="num font-semibold">{money(amount)}</span>
+                  <button className="btn-ghost px-3 py-1" onClick={() => setEditing(p)}>Open payments</button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       <Tabs
         value={tab}
         onChange={setTab}
         tabs={[
-          { value: 'quotes', label: 'Quotes', count: quotes.length },
           { value: 'active', label: 'Active projects', count: active.length },
           { value: 'closed', label: 'Closed', count: closed.length },
         ]}
       />
       {list.length === 0 ? (
-        <Empty title="Nothing here" />
+        <Empty title={tab === 'active' ? 'No active projects' : 'Nothing closed yet'}>
+          {tab === 'active' ? 'Accepted quotes show up here.' : undefined}
+        </Empty>
       ) : (
         <div className="card overflow-x-auto">
-          <table className="w-full min-w-[760px]">
+          <table className="w-full min-w-[900px]">
             <thead className="border-b border-slate-200 bg-slate-50">
               <tr>
                 <th className="th">Project</th>
                 <th className="th">Client</th>
                 <th className="th">Status</th>
-                <th className="th text-right">Budget</th>
-                <th className="th text-right">Quote</th>
                 <th className="th">Progress</th>
+                <th className="th text-right">Contract</th>
+                <th className="th text-right">Margin</th>
+                <th className="th text-right">Paid</th>
                 <th className="th" />
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {list.map((p) => {
                 const prop = lk.property(p.propertyId)
-                const spent = p.expenses.filter((e) => e.status === 'approved').reduce((s, e) => s + e.amount, 0)
+                const fin = projectFinancials(p, data.invoices)
+                const next = nextMilestone(p)
+                const late = next && next.date < today
                 return (
                   <tr key={p.id} className="hover:bg-slate-50">
                     <td className="td">
@@ -121,17 +173,21 @@ export function AdminProjects() {
                       {p.assignedProviderId && <p className="text-xs text-slate-500">Trade: {lk.user(p.assignedProviderId)?.name}</p>}
                     </td>
                     <td className="td"><ProjectStatusText s={p.status} /></td>
-                    <td className="td num text-right">
-                      {p.budget ? money(p.budget) : '—'}
-                      {spent > 0 && <p className="text-xs text-slate-500">spent {money(spent)}</p>}
+                    <td className="td">
+                      <ProjectProgress p={p} />
+                      {next && (
+                        <p className={`mt-1 text-xs ${late ? 'font-semibold text-red-600' : 'text-slate-500'}`}>
+                          {late ? 'Overdue: ' : 'Next: '}{next.title} · {fmtDate(next.date)}
+                        </p>
+                      )}
                     </td>
                     <td className="td num text-right">
                       {p.quoteAmount || p.quoteItems.length ? money(contractTotal(p)) : '—'}
-                      {p.variations.some((v) => v.status === 'approved') && <p className="text-xs text-slate-500">incl. variations</p>}
                       {p.variations.some((v) => v.status === 'proposed') && <p className="text-xs text-amber-700">variation pending</p>}
                     </td>
-                    <td className="td"><ProjectProgress p={p} /></td>
-                    <td className="td text-right"><button className="btn-ghost px-3 py-1.5" onClick={() => setEditing(p)}>{p.status === 'quote_requested' ? 'Prepare quote' : 'Manage'}</button></td>
+                    <td className={`td num text-right ${fin.margin < 0 ? 'text-red-600' : ''}`}>{fin.contract ? `${fin.marginPct}%` : '—'}</td>
+                    <td className="td num text-right">{money(fin.paid)}</td>
+                    <td className="td text-right"><button className="btn-ghost px-3 py-1.5" onClick={() => setEditing(p)}>Manage</button></td>
                   </tr>
                 )
               })}
@@ -139,13 +195,25 @@ export function AdminProjects() {
           </table>
         </div>
       )}
-      {editing && <ProjectEditor key={editing.id} project={editing} onClose={() => setEditing(null)} onSave={save} />}
+      {editing && (
+        <ProjectEditor
+          key={editing.id}
+          project={editing}
+          onClose={() => setEditing(null)}
+          onSave={(p) => {
+            save(p)
+            setEditing(null)
+          }}
+        />
+      )}
       {creating && (
         <NewProjectForm
           onClose={() => setCreating(false)}
           onCreated={(p) => {
             setCreating(false)
-            setTab(p.status === 'quote_requested' || p.status === 'quoted' ? 'quotes' : 'active')
+            if (p.status === 'completed' || p.status === 'rejected') setTab('closed')
+            else if (p.status === 'quote_requested' || p.status === 'quoted') navigate('/admin/quotes')
+            else setTab('active')
           }}
         />
       )}
@@ -160,7 +228,7 @@ const NEW_PROJECT_STATUSES: ProjectStatus[] = ['quote_requested', 'quoted', 'app
  * An admin sets up a project for any client, including one added here without a login: the client
  * sees it (with its property) once they're invited and sign in.
  */
-function NewProjectForm({ onClose, onCreated }: { onClose: () => void; onCreated: (p: Project) => void }) {
+export function NewProjectForm({ onClose, onCreated, quote = false }: { onClose: () => void; onCreated: (p: Project) => void; quote?: boolean }) {
   const { data, can, createProject } = useStore()
   const lk = useLookup()
   // Ids are made once, so saving again after an error doesn't add the client or property twice.
@@ -175,7 +243,7 @@ function NewProjectForm({ onClose, onCreated }: { onClose: () => void; onCreated
     title: '',
     description: '',
     type: 'renovation' as Project['type'],
-    status: 'approved' as ProjectStatus,
+    status: (quote ? 'quote_requested' : 'approved') as ProjectStatus,
     budget: '',
     quoteAmount: '',
     scopeOfWorks: '',
@@ -260,7 +328,7 @@ function NewProjectForm({ onClose, onCreated }: { onClose: () => void; onCreated
   }
 
   return (
-    <Modal open onClose={onClose} title="New project" width="max-w-3xl">
+    <Modal open onClose={onClose} title={quote ? 'New quote' : 'New project'} width="max-w-3xl">
       <form className="grid gap-4 sm:grid-cols-2" onSubmit={submit}>
         <Field label="Client" className="sm:col-span-2">
           <select
@@ -365,22 +433,22 @@ function NewProjectForm({ onClose, onCreated }: { onClose: () => void; onCreated
         </Field>
         {error && <p className="text-sm text-red-600 sm:col-span-2">{error}</p>}
         <div className="flex justify-end sm:col-span-2">
-          <button className="btn-primary" disabled={busy}>{busy ? 'Creating…' : 'Create project'}</button>
+          <button className="btn-primary" disabled={busy}>{busy ? 'Creating…' : quote ? 'Create quote' : 'Create project'}</button>
         </div>
       </form>
     </Modal>
   )
 }
 
-type EditorTab = 'overview' | 'quote' | 'variations' | 'payments' | 'costs'
+export type EditorTab = 'overview' | 'quote' | 'variations' | 'payments' | 'costs'
 
-function ProjectEditor({ project, onClose, onSave }: { project: Project; onClose: () => void; onSave: (p: Project) => void }) {
+export function ProjectEditor({ project, onClose, onSave, initialTab = 'overview' }: { project: Project; onClose: () => void; onSave: (p: Project) => void; initialTab?: EditorTab }) {
   const { data, can, update } = useStore()
   const lk = useLookup()
   const [p, setP] = useState<Project>(project)
   // What's stored now: a claim raised here saves straight away.
   const [saved, setSaved] = useState<Project>(project)
-  const [tab, setTab] = useState<EditorTab>('overview')
+  const [tab, setTab] = useState<EditorTab>(initialTab)
   const [ms, setMs] = useState({ title: '', date: todayISO() })
   const [error, setError] = useState<string | null>(null)
   const set = (patch: Partial<Project>) => setP((cur) => ({ ...cur, ...patch }))

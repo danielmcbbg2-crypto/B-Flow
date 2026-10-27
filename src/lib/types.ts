@@ -225,6 +225,11 @@ export interface Project {
   quoteInclusions: string
   quoteExclusions: string
   quoteValidUntil?: string
+  /** Set by the database: when the quote was last issued and when it was answered. */
+  quoteIssuedAt?: string
+  quoteDecidedAt?: string
+  /** When the office last followed up an unanswered quote. */
+  quoteFollowedUpAt?: string
   variations: Variation[]
   payments: PaymentStage[]
   /** Office only: not loaded for clients. */
@@ -447,6 +452,16 @@ export interface TextLogEntry {
   openedAt: string
 }
 
+/** A standard quote to start new ones from. */
+export interface QuoteTemplate {
+  id: string
+  name: string
+  items: Omit<QuoteItem, 'id'>[]
+  inclusions: string
+  exclusions: string
+  createdAt: string
+}
+
 export interface AppData {
   version: number
   users: UserAccount[]
@@ -462,4 +477,5 @@ export interface AppData {
   orders: StoreOrder[]
   leads: Lead[]
   texts: TextLogEntry[]
+  quoteTemplates: QuoteTemplate[]
 }

@@ -90,3 +90,55 @@ export function nextInvoiceNumber(invoices: QuickBooksInvoice[]): string {
   const nums = invoices.map((i) => parseInt(i.qbInvoiceNumber.replace(/\D/g, ''), 10)).filter((n) => !Number.isNaN(n))
   return `INV-${nums.length ? Math.max(...nums) + 1 : 1001}`
 }
+
+// ───────────── pipeline ─────────────
+
+/** Days an issued quote waits for an answer before it needs a follow-up (and between follow-ups). */
+export const FOLLOW_UP_DAYS = 5
+const DAY = 86_400_000
+export const daysSince = (iso: string | undefined, now = Date.now()) => (iso ? Math.floor((now - new Date(iso).getTime()) / DAY) : 0)
+
+export type QuoteStage = 'requested' | 'pricing' | 'issued' | 'won' | 'lost'
+
+/** Where a quote is in the pipeline (undefined for projects that never were a quote in play). */
+export function quoteStage(p: Project): QuoteStage | undefined {
+  if (p.status === 'quote_requested') return p.quoteItems.length || p.quoteAmount ? 'pricing' : 'requested'
+  if (p.status === 'quoted') return 'issued'
+  if (p.quoteDecision === 'approved') return 'won'
+  if (p.quoteDecision === 'rejected' || p.status === 'rejected') return 'lost'
+  return undefined
+}
+
+/** An issued quote nobody has answered or followed up for a while. */
+export function needsFollowUp(p: Project, now = Date.now()): boolean {
+  if (p.status !== 'quoted') return false
+  return daysSince(p.quoteIssuedAt, now) >= FOLLOW_UP_DAYS && (!p.quoteFollowedUpAt || daysSince(p.quoteFollowedUpAt, now) >= FOLLOW_UP_DAYS)
+}
+
+/** Days until an issued quote's validity ends (negative once expired); undefined without a date. */
+export function daysToExpiry(p: Project, now = Date.now()): number | undefined {
+  if (p.status !== 'quoted' || !p.quoteValidUntil) return undefined
+  return Math.ceil((new Date(`${p.quoteValidUntil}T23:59:59`).getTime() - now) / DAY)
+}
+
+/** Win rate and values over the last `days` days (by when quotes were answered or issued). */
+export function quoteStats(projects: Project[], days = 90, now = Date.now()) {
+  const since = now - days * DAY
+  const within = (iso?: string) => !!iso && new Date(iso).getTime() >= since
+  const won = projects.filter((p) => p.quoteDecision === 'approved' && within(p.quoteDecidedAt))
+  const lost = projects.filter((p) => p.quoteDecision === 'rejected' && within(p.quoteDecidedAt))
+  const issued = projects.filter((p) => within(p.quoteIssuedAt))
+  const open = projects.filter((p) => p.status === 'quoted')
+  const sum = (list: Project[]) => cents(list.reduce((s, p) => s + quoteTotal(p), 0))
+  const answered = won.length + lost.length
+  return {
+    openCount: open.length,
+    openValue: sum(open),
+    wonCount: won.length,
+    wonValue: sum(won),
+    lostCount: lost.length,
+    winRate: answered ? Math.round((won.length / answered) * 100) : undefined,
+    averageQuote: issued.length ? cents(sum(issued) / issued.length) : undefined,
+    issuedCount: issued.length,
+  }
+}
