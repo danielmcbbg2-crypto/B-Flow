@@ -436,6 +436,17 @@ export interface Lead {
   createdAt: string
 }
 
+/** A text handed to an admin's phone (opened in Messages); whether it was sent isn't known. */
+export interface TextLogEntry {
+  id: string
+  to: string
+  message: string
+  event: string
+  /** Set by the database: who opened it, and when. */
+  openedBy?: string
+  openedAt: string
+}
+
 export interface AppData {
   version: number
   users: UserAccount[]
@@ -450,4 +461,5 @@ export interface AppData {
   products: Product[]
   orders: StoreOrder[]
   leads: Lead[]
+  texts: TextLogEntry[]
 }

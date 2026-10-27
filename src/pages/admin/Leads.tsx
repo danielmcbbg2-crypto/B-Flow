@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Camera, Mail, Phone, Trash2, UserPlus } from 'lucide-react'
 import { Empty, Field, Modal, PageHeader, Sep, Tabs } from '../../components/ui'
+import { TextButton } from '../../components/TextMessage'
 import { useStore } from '../../lib/store'
 import { navigate } from '../../lib/router'
 import { DEFAULT_PERMISSIONS, LEAD_STATUS_LABEL, LEAD_URGENCY_LABEL, type Lead, type LeadStatus, type UserAccount } from '../../lib/types'
@@ -181,6 +182,15 @@ function LeadDetail({ lead, onClose }: { lead: Lead; onClose: () => void }) {
             <a className={lead.contactBy === 'phone' ? 'btn-primary' : 'btn-ghost'} href={`tel:${digits(lead.phone)}`}>
               <Phone size={15} /> {lead.phone}
             </a>
+          )}
+          {lead.phone && (
+            <TextButton
+              phone={lead.phone}
+              event={`Website request #${lead.number}`}
+              label="Text"
+              className={lead.contactBy === 'phone' ? 'btn-primary' : 'btn-ghost'}
+              message={`Hi ${lead.name.split(' ')[0]}, it's Next Phase Maintenance about your ${lead.services[0]?.replace(/ Services$/, '').toLowerCase() ?? 'maintenance'} request (#${lead.number}). `}
+            />
           )}
           {lead.email && (
             <a className={lead.contactBy === 'email' ? 'btn-primary' : 'btn-ghost'} href={`mailto:${lead.email}?subject=${encodeURIComponent(`Your maintenance request #${lead.number} with Next Phase Maintenance`)}`}>

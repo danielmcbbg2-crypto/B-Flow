@@ -235,6 +235,8 @@ interface StoreValue {
   /** Anyone, signed in or not: send a maintenance request (with photos) to the office. */
   submitLead: (l: LeadInput) => Promise<{ number: number }>
   leadPhotoUrls: (paths: string[]) => Promise<string[]>
+  /** Records that a text was opened in Messages on this device (who and when are set by the database). */
+  logText: (to: string, message: string, event: string) => void
   deleteLead: (id: string) => void
   /**
    * Store managers: the AI assistant searches the web for products (sample results in demo mode).
@@ -1054,6 +1056,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [update],
   )
 
+  const logText = useCallback(
+    (to: string, message: string, event: string) => {
+      update((d) => {
+        d.texts.unshift({ id: uid('t'), to: to.trim().slice(0, 40), message: message.slice(0, 2000), event: event.slice(0, 120), openedBy: user?.id, openedAt: new Date().toISOString() })
+      })
+    },
+    [update, user],
+  )
+
   /** Viewable links for a request's photos (live: short-lived signed links; demo: the images themselves). */
   const leadPhotoUrls = useCallback(async (paths: string[]): Promise<string[]> => {
     if (!supabase || paths.length === 0) return paths
@@ -1242,6 +1253,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     placeOrder,
     submitLead,
     leadPhotoUrls,
+    logText,
     deleteLead,
     findProducts,
     draftListing,

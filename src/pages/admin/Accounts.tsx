@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
-import { Copy, LayoutDashboard, Mail, MessageSquare, UserPlus } from 'lucide-react'
+import { Copy, LayoutDashboard, Mail, UserPlus } from 'lucide-react'
 import { Field, Modal, PageHeader, Status, Tabs } from '../../components/ui'
+import { TextButton } from '../../components/TextMessage'
 import { hasNoLogin as noLogin, lacksLogin, useStore } from '../../lib/store'
 import { navigate } from '../../lib/router'
 import { ALL_PERMISSIONS, DEFAULT_PERMISSIONS, TRADES, type Permission, type Role, type UserAccount } from '../../lib/types'
@@ -35,9 +36,7 @@ function ShareLink({ account, link, invite }: { account: UserAccount; link: stri
           {copied === 'link' ? 'Link copied' : 'Copy link only'}
         </button>
         {account.phone && (
-          <a className="btn-ghost" href={`sms:${account.phone.replace(/[\s()-]/g, '')}?&body=${encodeURIComponent(message)}`}>
-            <MessageSquare size={15} /> Text it
-          </a>
+          <TextButton phone={account.phone} message={message} event={`${invite ? 'Invite' : 'Password'} link for ${account.name}`} logAs={message.replace(link, '[sign-in link]')} label="Text it" />
         )}
         <a className="btn-ghost" href={`mailto:${account.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(message)}`}>
           <Mail size={15} /> Email it

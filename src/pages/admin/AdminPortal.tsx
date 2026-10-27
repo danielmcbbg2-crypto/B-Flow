@@ -31,7 +31,7 @@ export function AdminPortal({ section }: { section: string }) {
     ...(can('canManageInvoices') ? [{ key: 'finance', label: 'Finance', icon: Receipt }] : []),
     { key: 'properties', label: 'Properties', icon: Building2 },
     ...(can('canManageStore') ? [{ key: 'store', label: 'Store', icon: ShoppingBag, badge: newOrders }] : []),
-    { key: 'sms', label: 'SMS gateway', icon: MessageSquareText },
+    { key: 'sms', label: 'Text messages', icon: MessageSquareText },
     ...(can('canEditPermissions') ? [{ key: 'accounts', label: 'Accounts', icon: Users }] : []),
   ]
   const body = (() => {
