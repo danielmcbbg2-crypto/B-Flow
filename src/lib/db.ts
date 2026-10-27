@@ -73,6 +73,8 @@ export interface DbAdapter {
   insert(table: TableName, rows: Row[]): Promise<void>
   update(table: TableName, id: string | number, patch: Row): Promise<void>
   remove(table: TableName, id: string | number): Promise<void>
+  /** Runs a database function that takes no arguments and returns JSON (live mode only). */
+  call?(fn: 'my_booked_projects'): Promise<unknown>
 }
 
 export type Op =
@@ -828,6 +830,15 @@ const ordersFromRows = (orders: Row[], items: Row[], notes: Row[]): StoreOrder[]
 export async function fetchAll(db: DbAdapter): Promise<AppData> {
   const [profiles, properties, projects, requests, milestones, expenses, quoteItems, variations, payments, costs, tasks, diary, defects, documents, invoices, inbox, sms, settings, products, tradePrices, sources, orders, orderItems, orderNotes, leads, texts, quoteTemplates] =
     await Promise.all(TABLES.map((t) => db.select(t)))
+  // Projects a trade is booked on but isn't the project's own trade for: their tasks, diary,
+  // defects and documents come with the tables above, and this adds the project's name and address.
+  const booked = ((await db.call?.('my_booked_projects')) ?? []) as Row[]
+  for (const b of booked) {
+    if (projects.some((p) => p.id === b.id)) continue
+    const site = `site-${b.id as string}`
+    projects.push({ id: b.id, number: b.number, title: b.title, status: b.status, client_id: '', property_id: site, description: '', type: 'renovation', budget: 0, scope_of_works: '', created_at: '' })
+    properties.push({ id: site, client_id: '', address: b.address, suburb: b.suburb, postcode: b.postcode, paint_colors: { walls: '', trim: '', ceiling: '' }, skirt_profile: '', cladding_type: '', access_code: '', notes: '' })
+  }
   const byProject = (rows: Row[]) => {
     const m = new Map<string, Row[]>()
     for (const r of rows) m.set(r.project_id as string, [...(m.get(r.project_id as string) ?? []), r])

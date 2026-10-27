@@ -47,6 +47,11 @@ export function supabaseAdapter(client: SupabaseClient): DbAdapter {
       const { error } = await client.from(table).delete().eq('id', id)
       if (error) throw new Error(`${table}: ${error.message}`)
     },
+    async call(fn) {
+      const { data, error } = await client.rpc(fn)
+      if (error) throw new Error(`${fn}: ${error.message}`)
+      return data
+    },
   }
 }
 

@@ -45,7 +45,7 @@ const BAR: Record<TaskStatus | 'late', string> = {
 }
 
 /** A Gantt-style view of the schedule: one bar per task across the days it runs, with today marked. */
-function Timeline({ tasks, onPick, labelFor }: { tasks: ProjectTask[]; onPick: (id: string) => void; labelFor: (t: ProjectTask) => string }) {
+export function Timeline({ tasks, onPick, labelFor }: { tasks: ProjectTask[]; onPick: (id: string) => void; labelFor: (t: ProjectTask) => string }) {
   const today = todayISO()
   if (tasks.length === 0) return null
   const first = tasks.reduce((m, t) => (t.startDate < m ? t.startDate : m), tasks[0].startDate)
@@ -264,7 +264,7 @@ function useProjectUpdate(projectId: string) {
     })
 }
 
-function Photos({ urls, label }: { urls: string[]; label: string }) {
+export function Photos({ urls, label }: { urls: string[]; label: string }) {
   if (!urls.length) return null
   return (
     <div className="mt-2 flex flex-wrap gap-2">
@@ -501,11 +501,33 @@ export function DefectsPanel({ projectId }: { projectId: string }) {
   )
 }
 
-const size = (n: number) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`)
+/**
+ * Opens a project document in a new tab. The tab opens straight away (browsers block pop-ups opened
+ * after a wait) and loads once the private link is ready.
+ */
+export function useOpenDocument(onError: (message: string) => void) {
+  const { projectFileUrl } = useStore()
+  return async (d: ProjectDocument) => {
+    const tab = window.open('about:blank', '_blank')
+    if (tab) tab.opener = null
+    try {
+      let url = await projectFileUrl(d.path)
+      // Browsers won't open data: links in a tab; a blob: link works.
+      if (url.startsWith('data:')) url = URL.createObjectURL(await (await fetch(url)).blob())
+      if (tab) tab.location.href = url
+      else window.location.href = url
+    } catch (e) {
+      tab?.close()
+      onError((e as Error).message)
+    }
+  }
+}
+
+export const size = (n: number) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`)
 
 /** Office: plans, permits, certificates and so on, each shared with the client, trades, both or nobody. */
 export function DocumentsPanel({ projectId }: { projectId: string }) {
-  const { data, uploadProjectFile, projectFileUrl, deleteProjectDocument } = useStore()
+  const { data, uploadProjectFile, deleteProjectDocument } = useStore()
   const lk = useLookup()
   const change = useProjectUpdate(projectId)
   const p = data.projects.find((x) => x.id === projectId)
@@ -513,6 +535,7 @@ export function DocumentsPanel({ projectId }: { projectId: string }) {
   const [share, setShare] = useState<DocumentShare>('office')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const open = useOpenDocument(setError)
   if (!p) return null
   const upload = async (files: FileList | null) => {
     if (!files?.length) return
@@ -529,22 +552,6 @@ export function DocumentsPanel({ projectId }: { projectId: string }) {
       setError((e as Error).message)
     } finally {
       setBusy(false)
-    }
-  }
-  // The tab opens straight away (browsers block pop-ups opened after a wait) and loads once the
-  // private link is ready.
-  const open = async (d: ProjectDocument) => {
-    const tab = window.open('about:blank', '_blank')
-    if (tab) tab.opener = null
-    try {
-      let url = await projectFileUrl(d.path)
-      // Browsers won't open data: links in a tab; a blob: link works.
-      if (url.startsWith('data:')) url = URL.createObjectURL(await (await fetch(url)).blob())
-      if (tab) tab.location.href = url
-      else window.location.href = url
-    } catch (e) {
-      tab?.close()
-      setError((e as Error).message)
     }
   }
   const groups = DOCUMENT_CATEGORIES.map((c) => ({ c, docs: p.documents.filter((d) => d.category === c) })).filter((g) => g.docs.length)

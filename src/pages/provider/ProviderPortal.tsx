@@ -7,6 +7,8 @@ import { ProjectStatusText } from '../../components/status'
 import { ProjectProgress, RequestDetail, RequestRow, useLinkedCalendar } from '../../components/works'
 import { doneBy, useLookup, useStore } from '../../lib/store'
 import { PortalStore } from '../store/Shop'
+import { SiteHeader, SiteView, fmtTime } from '../../components/ProjectSite'
+import { useHashRoute } from '../../lib/router'
 import { REQUEST_STATUS_LABEL, type Expense, type RequestStatus } from '../../lib/types'
 import { cx, fmtDate, fmtDateTime, money, todayISO, uid } from '../../lib/utils'
 
@@ -49,6 +51,15 @@ function useAssigned() {
     () => ({
       requests: data.requests.filter((r) => r.assignedProviderId === user?.id),
       projects: data.projects.filter((p) => p.assignedProviderId === user?.id),
+      // Every project they work on: as its trade, booked for some of its tasks, or given a defect.
+      worksOn: data.projects.filter(
+        (p) => p.assignedProviderId === user?.id || p.tasks.some((t) => t.assigneeId === user?.id) || p.defects.some((d) => d.assigneeId === user?.id),
+      ),
+      // Their bookings still to do, soonest first, with the project they're on.
+      bookings: data.projects
+        .filter((p) => p.status === 'approved' || p.status === 'in_progress')
+        .flatMap((p) => p.tasks.filter((t) => t.assigneeId === user?.id && t.status !== 'done').map((t) => ({ p, t })))
+        .sort((a, b) => a.t.startDate.localeCompare(b.t.startDate) || (a.t.startTime ?? '').localeCompare(b.t.startTime ?? '')),
       inbox: data.inbox.filter((m) => m.userId === user?.id),
     }),
     [data, user],
@@ -61,7 +72,8 @@ function Overview({ unread }: { unread: number }) {
   const live = a.requests.filter((r) => r.status !== 'completed')
   const today = todayISO()
   const todays = live.filter((r) => r.scheduledDate === today).length
-  const liveProjects = a.projects.filter((p) => p.status === 'in_progress' || p.status === 'approved')
+  const liveProjects = a.worksOn.filter((p) => p.status === 'in_progress' || p.status === 'approved')
+  const lk = useLookup()
   const pendingExp = a.projects.flatMap((p) => p.expenses).filter((e) => e.providerId === user?.id && e.status === 'submitted').length
   return (
     <>
@@ -69,10 +81,34 @@ function Overview({ unread }: { unread: number }) {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <GridTile href="#/provider/inbox" icon={InboxIcon} emphasis={unread > 0} title="Inbox" description="Work orders to acknowledge and messages from the office." meta={<><span className="num">{unread}</span> need attention</>} />
         <GridTile href="#/provider/hub" icon={Wrench} title="Maintenance Hub" description="Your live work orders: update status and upload completion photos." meta={<><span className="num">{live.length}</span> live<Sep /><span className="num">{todays}</span> today</>} />
-        <GridTile href="#/provider/projects" icon={FolderKanban} title="Live projects" description="Renovation projects you're assigned to, with milestones." meta={<><span className="num">{liveProjects.length}</span> active</>} />
+        <GridTile href="#/provider/projects" icon={FolderKanban} title="Live projects" description="Your bookings, the site diary, defects to fix and the job's documents." meta={<><span className="num">{liveProjects.length}</span> active<Sep /><span className="num">{a.bookings.length}</span> bookings</>} />
         <GridTile href="#/provider/calendar" icon={CalendarDays} title="Project calendar" description="Maintenance visits and project milestones on one calendar. Drag to reschedule." />
         <GridTile href="#/provider/budget" icon={Receipt} title="Budget & expenses" description="Submit materials, labour and hire costs against project budgets." meta={<><span className="num">{pendingExp}</span> awaiting approval</>} />
       </div>
+      {a.bookings.length > 0 && (
+        <section className="mt-8">
+          <h2 className="mb-3 font-bold">Your project bookings</h2>
+          <ul className="card divide-y divide-slate-100">
+            {a.bookings.slice(0, 6).map(({ p, t }) => {
+              const prop = lk.property(p.propertyId)
+              return (
+                <li key={t.id}>
+                  <a href={`#/provider/projects/${p.id}`} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 text-sm hover:bg-slate-50">
+                    <span className={cx('num w-40 shrink-0 font-semibold', t.startDate <= today ? 'text-accent-ink' : 'text-slate-700')}>
+                      {t.startDate === today ? 'Today' : fmtDate(t.startDate)}
+                      {t.startTime ? `, ${fmtTime(t.startTime)}` : ''}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="font-medium text-slate-900">{t.title}</span>
+                      <span className="block truncate text-xs text-slate-500">P-{p.number} {p.title}{prop ? ` · ${prop.address}, ${prop.suburb}` : ''}</span>
+                    </span>
+                  </a>
+                </li>
+              )
+            })}
+          </ul>
+        </section>
+      )}
     </>
   )
 }
@@ -237,9 +273,28 @@ function Hub() {
 }
 
 function Projects() {
-  const { update, canAct } = useStore()
+  const [, , id] = useHashRoute()
+  const a = useAssigned()
+  const site = id ? a.worksOn.find((p) => p.id === id) : undefined
+  if (id)
+    return site ? (
+      <>
+        <SiteHeader p={site} as="trade" back="#/provider/projects" />
+        <SiteView p={site} as="trade" />
+      </>
+    ) : (
+      <Empty title="This project isn't one of yours">
+        <a className="font-semibold underline" href="#/provider/projects">Back to your projects</a>
+      </Empty>
+    )
+  return <ProjectList />
+}
+
+function ProjectList() {
+  const { user, update, canAct } = useStore()
   const lk = useLookup()
   const a = useAssigned()
+  const bookedOnly = a.worksOn.filter((p) => p.assignedProviderId !== user?.id)
   // An admin in this trade's dashboard ticks milestones with their own project permission.
   const canTick = canAct('canManageProjects')
   const toggle = (pid: string, mid: string) => {
@@ -251,8 +306,8 @@ function Projects() {
   }
   return (
     <>
-      <PageHeader title="Live projects" subtitle="Tick off milestones as they're completed." />
-      {a.projects.length === 0 ? (
+      <PageHeader title="Live projects" subtitle="Open a project for your bookings, the site diary, defects and documents." />
+      {a.worksOn.length === 0 ? (
         <Empty title="No projects assigned" />
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
@@ -264,11 +319,14 @@ function Projects() {
                   <span className="num text-xs text-slate-500">P-{p.number}</span>
                   <ProjectStatusText s={p.status} />
                 </div>
-                <h2 className="mt-1 text-lg font-bold">{p.title}</h2>
+                <h2 className="mt-1 text-lg font-bold">
+                  <a href={`#/provider/projects/${p.id}`} className="hover:underline">{p.title}</a>
+                </h2>
                 <p className="text-sm text-slate-500">
                   {prop?.address}, {prop?.suburb}
                   {prop?.accessCode && (<><Sep />{prop.accessCode}</>)}
                 </p>
+                <a href={`#/provider/projects/${p.id}`} className="btn-ghost mt-3 px-3 py-1 text-xs">Open project</a>
                 {p.scopeOfWorks && <p className="mt-2 text-sm text-slate-600">{p.scopeOfWorks}</p>}
                 <div className="mt-4"><ProjectProgress p={p} /></div>
                 <ul className="mt-3 divide-y divide-slate-100 border-t border-slate-100">
@@ -282,6 +340,40 @@ function Projects() {
                     </li>
                   ))}
                 </ul>
+              </div>
+            )
+          })}
+          {bookedOnly.map((p) => {
+            const prop = lk.property(p.propertyId)
+            const mine = p.tasks.filter((t) => t.assigneeId === user?.id && t.status !== 'done')
+            const defects = p.defects.filter((d) => d.assigneeId === user?.id && d.status === 'open').length
+            return (
+              <div key={p.id} className="card p-5">
+                <div className="flex flex-wrap items-center gap-x-3">
+                  <span className="num text-xs text-slate-500">P-{p.number}</span>
+                  <ProjectStatusText s={p.status} />
+                </div>
+                <h2 className="mt-1 text-lg font-bold">
+                  <a href={`#/provider/projects/${p.id}`} className="hover:underline">{p.title}</a>
+                </h2>
+                <p className="text-sm text-slate-500">{[prop?.address, prop?.suburb].filter(Boolean).join(', ')}</p>
+                <ul className="mt-3 divide-y divide-slate-100 border-t border-slate-100 text-sm">
+                  {mine.length === 0 ? (
+                    <li className="py-2 text-slate-500">All your bookings here are done.</li>
+                  ) : (
+                    mine.map((t) => (
+                      <li key={t.id} className="flex items-center justify-between gap-3 py-2">
+                        <span>{t.title}</span>
+                        <span className="num text-xs text-slate-500">
+                          {fmtDate(t.startDate)}
+                          {t.startTime ? `, ${fmtTime(t.startTime)}` : ''}
+                        </span>
+                      </li>
+                    ))
+                  )}
+                </ul>
+                {defects > 0 && <p className="mt-2 text-sm font-semibold text-red-700">{defects} defect{defects === 1 ? '' : 's'} to fix</p>}
+                <a href={`#/provider/projects/${p.id}`} className="btn-ghost mt-3 px-3 py-1 text-xs">Open project</a>
               </div>
             )
           })}
