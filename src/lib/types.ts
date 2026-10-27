@@ -359,6 +359,24 @@ export interface SmsSettings {
   notifyOnNewRequest: boolean
   notifyOnUrgentOnly: boolean
   notifyProviderOnAssign: boolean
+  /** Text trades and clients the afternoon before each booking (sent by ClickSend from the server). */
+  bookingReminderTexts: boolean
+  /** Text website enquiries back straight away with `autoReplyMessage` ({first_name} is filled in). */
+  autoReply: boolean
+  autoReplyMessage: string
+}
+
+export const DEFAULT_SMS: SmsSettings = {
+  provider: 'server',
+  fromNumber: '',
+  webhookUrl: '',
+  recipients: [],
+  notifyOnNewRequest: true,
+  notifyOnUrgentOnly: false,
+  notifyProviderOnAssign: true,
+  bookingReminderTexts: true,
+  autoReply: false,
+  autoReplyMessage: "Hi {first_name}, it's Daniel from Next Phase Maintenance. Thanks for your enquiry, we've got it. If you can, reply with a few photos of the job and we'll come back to you with a quote.",
 }
 
 export interface BankDetails {

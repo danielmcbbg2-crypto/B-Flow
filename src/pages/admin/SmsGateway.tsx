@@ -108,11 +108,12 @@ export function SmsGateway() {
         )}
       </section>
 
-      <details className="card mb-8 p-6">
-        <summary className="cursor-pointer font-bold">Automatic alerts (optional)</summary>
+      <details className="card mb-8 p-6" open>
+        <summary className="cursor-pointer font-bold">Automatic texts (ClickSend)</summary>
         <p className="mt-2 text-sm text-slate-600">
-          The portal can also text alerts automatically (new requests to your admin phones). That needs an SMS provider with its own number, so
-          those texts wouldn't come from your iPhone. Your inbox shows every alert either way.
+          Some texts go out on their own, without you tapping Send: booking reminders the afternoon before, alerts to your admin phones, and (if you
+          switch it on) a reply to new website enquiries. ClickSend sends these from your own mobile number, so replies still come to your phone. They
+          won't show in your iPhone's Messages; they're listed in the automatic text log below. Texts you write yourself still open in Messages.
         </p>
       <div className="mt-5 grid gap-6 lg:grid-cols-5">
         <section className="space-y-5 lg:col-span-5">
@@ -120,13 +121,13 @@ export function SmsGateway() {
           {cloud ? (
             <div className="space-y-2 rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
               <p>
-                Messages are sent by the secure <code className="font-mono">send-sms</code> server function. Your SMS credentials are stored as Supabase
-                secrets and are never sent to anyone's browser.
+                Automatic texts are sent by the portal's server functions through ClickSend. Your ClickSend login is stored as Supabase secrets and is never
+                sent to anyone's browser.
               </p>
               <p className="text-xs text-slate-500">
-                Twilio: set <code className="font-mono">TWILIO_ACCOUNT_SID</code>, <code className="font-mono">TWILIO_AUTH_TOKEN</code> and{' '}
-                <code className="font-mono">TWILIO_FROM</code>. Any other provider: set <code className="font-mono">SMS_WEBHOOK_URL</code>. With neither set, messages
-                are logged as “Queued”. See the README for setup steps.
+                Set <code className="font-mono">CLICKSEND_USERNAME</code>, <code className="font-mono">CLICKSEND_API_KEY</code> and{' '}
+                <code className="font-mono">CLICKSEND_FROM</code> (your mobile, verified in ClickSend as a sender) under Edge Functions → Secrets. Until
+                they're set, automatic texts are logged as “Queued” and not sent. See the README for the steps.
               </p>
             </div>
           ) : (
@@ -151,17 +152,39 @@ export function SmsGateway() {
               </>
             )}
             <p className="text-xs text-slate-500">
-              Demo mode never stores SMS provider credentials in the browser. Twilio and other providers are set up in live mode, where a server
-              function keeps the credentials secret. See the README.
+              Demo mode never stores SMS provider credentials in the browser. ClickSend is set up in live mode, where the server keeps the login secret.
+              See the README.
             </p>
             </>
           )}
 
+          <div className="space-y-3 border-t border-slate-100 pt-5">
+            <h3 className="text-sm font-bold">What's texted automatically</h3>
+            <label className="flex items-start gap-2 text-sm">
+              <input type="checkbox" className="mt-0.5 h-4 w-4 accent-slate-900" checked={s.bookingReminderTexts} onChange={(e) => set({ bookingReminderTexts: e.target.checked })} />
+              <span>
+                Booking reminders: text the trade and the client the afternoon before each booking (project tasks and scheduled maintenance jobs)
+                <span className="block text-xs text-slate-500">Everyone with a mobile on file, including people without a portal login. Each booking is texted once per person.</span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2 text-sm">
+              <input type="checkbox" className="mt-0.5 h-4 w-4 accent-slate-900" checked={s.autoReply} onChange={(e) => set({ autoReply: e.target.checked })} />
+              <span>
+                Website enquiries: text people back straight away when they send a maintenance request
+              </span>
+            </label>
+            {s.autoReply && (
+              <Field label="Reply text ({first_name} is filled in)">
+                <textarea className="input min-h-[80px] text-sm" maxLength={480} value={s.autoReplyMessage} onChange={(e) => set({ autoReplyMessage: e.target.value })} />
+              </Field>
+            )}
+          </div>
+
           <div className="space-y-2 border-t border-slate-100 pt-5">
-            <h3 className="text-sm font-bold">Triggers</h3>
+            <h3 className="text-sm font-bold">Office alerts</h3>
             {(
               [
-                ['notifyOnNewRequest', 'SMS admins when a client lodges a maintenance request'],
+                ['notifyOnNewRequest', 'Text the admin phones below when a client lodges a maintenance request'],
                 ['notifyOnUrgentOnly', '…only for urgent requests'],
                 ['notifyProviderOnAssign', 'After dispatching, offer to text the trade from my phone'],
               ] as const
@@ -211,7 +234,7 @@ export function SmsGateway() {
 
       <section>
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="font-bold">Automatic alert log</h2>
+          <h2 className="font-bold">Automatic text log</h2>
           {data.sms.length > 0 && (
             <button className="text-sm font-semibold text-slate-500 hover:text-slate-900" onClick={() => update((d) => { d.sms = [] })}>
               Clear log
@@ -219,7 +242,7 @@ export function SmsGateway() {
           )}
         </div>
         {data.sms.length === 0 ? (
-          <Empty title="No automatic alerts yet">Texts you send from your phone are in your Messages app.</Empty>
+          <Empty title="No automatic texts yet">Texts you send from your phone are in your Messages app.</Empty>
         ) : (
           <div className="card overflow-x-auto">
             <table className="w-full min-w-[760px]">

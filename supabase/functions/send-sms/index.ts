@@ -1,9 +1,11 @@
 // Supabase Edge Function: sends SMS alerts and records them in sms_log.
 //
-// Credentials live in Supabase secrets, never in the browser:
-//   Twilio:  TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM (e.g. +61400000000)
-//   Other:   SMS_WEBHOOK_URL (receives POST { to, message, event }), optional SMS_WEBHOOK_SECRET
-// With neither configured, messages are logged as "queued".
+// Credentials live in Supabase secrets, never in the browser. The first one set is used:
+//   ClickSend: CLICKSEND_USERNAME, CLICKSEND_API_KEY, CLICKSEND_FROM (the sender: your own mobile,
+//              verified in ClickSend, e.g. +61400000000)
+//   Twilio:    TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM (e.g. +61400000000)
+//   Other:     SMS_WEBHOOK_URL (receives POST { to, message, event }), optional SMS_WEBHOOK_SECRET
+// With none configured, messages are logged as "queued".
 //
 // Who can send what:
 //   new_request / quote_request — the client who created it (or an admin); the
@@ -32,14 +34,35 @@ function toE164(phone: string): string {
 
 type Result = { to: string; status: 'dispatched' | 'queued' | 'failed'; detail: string }
 
+/** Sends one text through ClickSend. */
+async function clickSend(to: string, message: string): Promise<{ ok: boolean; detail: string }> {
+  const user = Deno.env.get('CLICKSEND_USERNAME')!
+  const key = Deno.env.get('CLICKSEND_API_KEY')!
+  const from = Deno.env.get('CLICKSEND_FROM')
+  const res = await fetch(`${Deno.env.get('CLICKSEND_API_URL') ?? 'https://rest.clicksend.com'}/v3/sms/send`, {
+    method: 'POST',
+    headers: { Authorization: 'Basic ' + btoa(`${user}:${key}`), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages: [{ source: 'nextphase-portal', to: toE164(to), body: message, ...(from ? { from: toE164(from) } : {}) }] }),
+  })
+  const body = await res.json().catch(() => ({}))
+  const m = body?.data?.messages?.[0]
+  return res.ok && m?.status === 'SUCCESS'
+    ? { ok: true, detail: `ClickSend ${m.message_id ?? 'sent'}` }
+    : { ok: false, detail: `ClickSend ${m?.status ?? `HTTP ${res.status}`}${body?.response_msg ? `: ${body.response_msg}` : ''}` }
+}
+
 async function sendOne(to: string, message: string, event: string): Promise<Result> {
+  const clicksend = Deno.env.get('CLICKSEND_USERNAME') && Deno.env.get('CLICKSEND_API_KEY')
   const sid = Deno.env.get('TWILIO_ACCOUNT_SID')
   const token = Deno.env.get('TWILIO_AUTH_TOKEN')
   const from = Deno.env.get('TWILIO_FROM')
   const webhook = Deno.env.get('SMS_WEBHOOK_URL')
   let result: Result
   try {
-    if (sid && token && from) {
+    if (clicksend) {
+      const r = await clickSend(to, message)
+      result = { to, status: r.ok ? 'dispatched' : 'failed', detail: r.detail }
+    } else if (sid && token && from) {
       const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
         method: 'POST',
         headers: { Authorization: 'Basic ' + btoa(`${sid}:${token}`), 'Content-Type': 'application/x-www-form-urlencoded' },

@@ -1006,6 +1006,18 @@ describe('website maintenance requests', () => {
       o.ip ?? '203.0.113.9',
     )
 
+  test('with the auto-reply switched on, a visitor who leaves a mobile is texted back straight away', async () => {
+    assert.equal((await pool.query(`select 1 from sms_outbox where source = 'lead_autoreply'`)).rowCount, 0, 'off by default')
+    await pool.query(`update settings set sms = sms || '{"autoReply": true, "autoReplyMessage": "Hi {first_name}, thanks! We will be in touch."}'`)
+    try {
+      await send({ name: 'Kim Reply', phone: '0400 555 666', ip: '203.0.113.77' })
+      const q = await pool.query<{ to_phone: string; message: string }>(`select to_phone, message from sms_outbox where source = 'lead_autoreply'`)
+      assert.deepEqual(q.rows, [{ to_phone: '0400 555 666', message: 'Hi Kim, thanks! We will be in touch.' }])
+    } finally {
+      await pool.query(`update settings set sms = sms || '{"autoReply": false}'`)
+    }
+  })
+
   test('a visitor sends a request with photos; the office is told and sees it, nobody else does', async () => {
     const photos = [await upload(), await upload()]
     const r = await send({ urgency: 'urgent', photos })
@@ -1278,6 +1290,49 @@ describe('booking reminders', () => {
     await pool.query(`select send_booking_reminders($1)`, [d2])
     const who = await pool.query<{ recipient_id: string; ref_id: string }>(`select recipient_id, ref_id from reminder_log where booking_date = $1`, [d2])
     assert.ok(who.rows.every((r) => r.ref_id === 't-8' && r.recipient_id !== 'u-client-1'))
+  })
+
+  test('the trade and the client are also texted, once each per booking, through the SMS outbox', async () => {
+    const day = '2031-03-04'
+    const q = await pool.query<{ to_phone: string; message: string; event: string; source: string; status: string }>(
+      `select to_phone, message, event, source, status from sms_outbox where event like 'Booking reminder · % · ${day} · %' order by event, to_phone`,
+    )
+    // Tom for the task and the job, Sarah for both: four texts, all waiting to be sent.
+    assert.equal(q.rowCount, 4)
+    assert.ok(q.rows.every((r) => r.source === 'booking_reminder' && r.status === 'pending'))
+    const task = q.rows.find((r) => r.event === `Booking reminder · task t-7 · ${day} · trade`)!
+    assert.match(task.message, /^Hi Tom, a reminder from Next Phase Maintenance: you're booked on Tue 4 Mar from 7:30 am for Plumbing fit-off at .+ \(Bathroom renovation/)
+    const client = q.rows.find((r) => r.event === `Booking reminder · request r-5 · ${day} · client`)!
+    assert.match(client.message, /^Hi Sarah, a reminder from Next Phase Maintenance: our team is booked at .+ on Tue 4 Mar for quarterly gutter clean/)
+    // Running again sends nothing new.
+    await pool.query(`select send_booking_reminders($1)`, [day])
+    assert.equal((await pool.query(`select 1 from sms_outbox where event like 'Booking reminder · % · ${day} · %'`)).rowCount, 4)
+  })
+
+  test("trades without a login are texted too; suspended people and those without a mobile aren't; it can be switched off", async () => {
+    const d3 = '2031-03-06'
+    await pool.query(`insert into profiles (id, name, email, role, phone, status) values ('u-nolog-t', 'Nora Nolog', 'nora@example.com', 'provider', '0400 111 222', 'invited'), ('u-susp-t', 'Sam Susp', 'sam@example.com', 'provider', '0400 333 444', 'suspended')`)
+    await pool.query(`update project_tasks set start_date = $1, end_date = $1, status = 'todo', assignee_id = 'u-nolog-t', client_visible = false where id = 't-1'`, [d3])
+    await pool.query(`update project_tasks set start_date = $1, end_date = $1, status = 'todo', assignee_id = 'u-susp-t', client_visible = false where id = 't-3'`, [d3])
+    await pool.query(`select send_booking_reminders($1)`, [d3])
+    const to = (await pool.query<{ event: string }>(`select event from sms_outbox where event like 'Booking reminder · % · ${d3} · %'`)).rows.map((r) => r.event)
+    assert.deepEqual(to, [`Booking reminder · task t-1 · ${d3} · trade`])
+    // Nora has no login: no inbox reminder, just the text.
+    assert.equal((await pool.query(`select 1 from reminder_log where recipient_id = 'u-nolog-t'`)).rowCount, 0)
+
+    const d4 = '2031-03-07'
+    await pool.query(`update project_tasks set start_date = $1, end_date = $1 where id = 't-1'`, [d4])
+    await pool.query(`update settings set sms = sms || '{"bookingReminderTexts": false}'`)
+    await pool.query(`select send_booking_reminders($1)`, [d4])
+    assert.equal((await pool.query(`select 1 from sms_outbox where event like 'Booking reminder · % · ${d4} · %'`)).rowCount, 0)
+    await pool.query(`update settings set sms = sms || '{"bookingReminderTexts": true}'`)
+  })
+
+  test('only the office reads the outbox; admins can queue a text, others cannot', async () => {
+    assert.ok(((await asUser(uid.admin, `select id from sms_outbox`)).rowCount ?? 0) >= 5)
+    assert.equal((await asUser(uid.tom, `select id from sms_outbox`)).rowCount, 0)
+    await assert.rejects(asUser(uid.tom, `insert into sms_outbox (to_phone, message) values ('0400000000', 'hi')`), /row-level security/)
+    await assert.rejects(asUser(uid.admin, `select * from claim_sms_outbox(5)`), /permission denied/)
   })
 
   test('only the office sees the reminder record, and nobody can run it from the app', async () => {

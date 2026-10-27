@@ -51,16 +51,25 @@ In **Edge Functions → Deploy a new function → Via Editor**, create these fun
 
 Texts to trades, clients and website requests go from **your own mobile number**: wherever the portal texts someone (Admin → **Text messages**, the step after dispatching a job, **Text** on a website request, **Text it** on an invite), it opens Messages on your iPhone (or a Mac signed in to Messages) with the number and text filled in. Check it, tap Send, and the conversation stays in your Messages with replies coming to your phone as usual. Nothing to set up. On a Windows computer, use **Copy text** and send it from your phone. **Using a Mac or iPad?** It can send iMessages on its own, but ordinary SMS (green bubbles, to people without an iPhone) only go through your iPhone: on the iPhone, open Settings → Apps → Messages → **Text Message Forwarding** and switch on the Mac/iPad (same Apple Account; the iPhone needs to be on with signal). Also keep **Send as Text Message** on there. Every text opened (or copied) from the portal is kept in the **Text log** on that page: who opened it, to whom, for what and the text. The portal can't see whether you tapped Send, so your Messages app is the record of what was actually sent. Invite and password texts are logged without their sign-in link, and log entries can't be changed or deleted.
 
-### 4b. Automatic alerts (optional, kept secret on the server)
+### 4b. Automatic texts with ClickSend (kept secret on the server)
 
-Automatic alerts (e.g. a text to your admin phones when a client lodges an urgent request) need an SMS provider with its own number, so they don't come from your iPhone. Your portal inbox shows every alert either way.
+Some texts go out on their own, without anyone tapping Send. **ClickSend** sends them, from your own mobile number, so replies still come to your phone:
 
-Under **Edge Functions → Secrets**, add either:
+- **Booking reminders:** the afternoon before each booking (5 pm in summer, 4 pm in winter, Melbourne time), the trade and the client are texted the time, address and job. This covers project tasks on running projects and scheduled maintenance jobs. It reaches everyone with a mobile on file, including people without a portal login, and each booking is texted once per person. On by default.
+- **Office alerts:** a text to your admin phones when a client lodges a request (Admin → Text messages → Office alerts).
+- **Website enquiry auto-reply** (off until you switch it on): texts people back straight away when they send a maintenance request from the website, in your own words.
 
-- **Twilio**: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_FROM` (your Twilio number, e.g. `+61…`), **or**
-- **any other SMS provider**: `SMS_WEBHOOK_URL`, which receives `POST { to, message, event }`, plus an optional `SMS_WEBHOOK_SECRET`, sent as the `X-Webhook-Secret` header.
+These texts don't appear in your iPhone's Messages. They're listed in the **Automatic text log** (Admin → Text messages) with whether ClickSend accepted them. Booking reminders that went out are ticked off as "Auto-texted" in the booking reminders queue. Texts you write yourself still open in Messages on your phone (section 4).
 
-Until one of these is set, messages are recorded in the SMS log as "Queued" rather than sent. Then, in the app, open **Admin → SMS gateway** and add the admin mobile numbers that should receive alerts.
+To connect ClickSend:
+
+1. Sign up at clicksend.com and add credit.
+2. In ClickSend, add your mobile as a sender: **Messaging → Sender IDs → Own number** (or **Numbers → Own Numbers**) and verify it with the code they text you.
+3. Find your **API username** and **API key** under **Developers → API Credentials**.
+4. In Supabase, open **Edge Functions → Secrets** and add `CLICKSEND_USERNAME`, `CLICKSEND_API_KEY`, and `CLICKSEND_FROM` (your verified mobile, e.g. `0412 345 678` or `+61412345678`). Never paste these into a chat or an email.
+5. Deploy the server functions `send-sms` and `process-sms-outbox` (the second with JWT verification off, since the database calls it and it only sends texts already queued).
+
+Until the ClickSend secrets are set, automatic texts are logged as "Queued" and not sent. Texts queued by the database (booking reminders, auto-replies) are marked held, so old ones never go out later by surprise. Twilio (`TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM`) or any other provider (`SMS_WEBHOOK_URL`, which receives `POST { to, message, event }`, plus an optional `SMS_WEBHOOK_SECRET`) still work instead; ClickSend is used whenever its secrets are set. Switch booking reminder texts and the auto-reply on or off under **Admin → Text messages → Automatic texts**, where you also add the admin mobiles that get office alerts.
 
 ### 5. Put the website online
 
