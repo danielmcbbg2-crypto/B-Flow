@@ -8,7 +8,8 @@ import { PaymentSchedule, QuoteBreakdown } from '../../components/quote'
 import { ProjectBy, ProjectProgress, RequestDetail, RequestRow, useLinkedCalendar } from '../../components/works'
 import { stampQuoteDecision, useLookup, useStore } from '../../lib/store'
 import { contractTotal, quoteTotal, withGst } from '../../lib/quote'
-import { navigate } from '../../lib/router'
+import { navigate, useHashRoute } from '../../lib/router'
+import { SiteHeader, SiteView } from '../../components/ProjectSite'
 import { PortalStore } from '../store/Shop'
 import { TRADES, type Property, type Trade } from '../../lib/types'
 import { fmtDate, money, uid } from '../../lib/utils'
@@ -293,7 +294,28 @@ function Hub() {
   )
 }
 
+/** Projects under way or finished have a site: the schedule, progress updates, defects and documents. */
+const hasSite = (status: string) => status === 'approved' || status === 'in_progress' || status === 'completed'
+
 function Projects() {
+  const [, , id] = useHashRoute()
+  const mine = useMine()
+  const site = id ? mine.projects.find((p) => p.id === id && hasSite(p.status)) : undefined
+  if (id)
+    return site ? (
+      <>
+        <SiteHeader p={site} as="client" back="#/client/projects" />
+        <SiteView p={site} as="client" />
+      </>
+    ) : (
+      <Empty title="Project not found">
+        <a className="font-semibold underline" href="#/client/projects">Back to your projects</a>
+      </Empty>
+    )
+  return <ProjectList />
+}
+
+function ProjectList() {
   const { user, actor, update, requestQuote, canAct, pushAdminInbox } = useStore()
   const lk = useLookup()
   const mine = useMine()
@@ -373,6 +395,11 @@ function Projects() {
                 </div>
                 <h2 className="mt-1 text-lg font-bold">{p.title}</h2>
                 <p className="text-sm text-slate-500">{prop ? `${prop.address}, ${prop.suburb}` : ''}</p>
+                {hasSite(p.status) && (
+                  <a href={`#/client/projects/${p.id}`} className="btn-primary mt-3 px-3 py-1.5 text-sm">
+                    Open project: schedule, updates, defects & documents
+                  </a>
+                )}
                 <p className="mt-2 text-sm text-slate-600">{p.description}</p>
                 <ProjectBy p={p} className="mt-1" />
                 <dl className="mt-4 grid grid-cols-2 gap-3 border-t border-slate-100 pt-3 text-sm">

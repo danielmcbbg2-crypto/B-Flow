@@ -51,6 +51,9 @@ function adapter(uid: string): DbAdapter {
     async remove(t: TableName, id: string | number) {
       await asUser(uid, `delete from public.${t} where id = $1`, [id])
     },
+    async call(fn: string) {
+      return (await asUser<{ j: unknown }>(uid, `select to_jsonb(public.${fn}()) j`)).rows[0].j
+    },
   }
 }
 
@@ -1272,5 +1275,33 @@ describe('booking reminders', () => {
     assert.ok(((await asUser(uid.admin, `select id from reminder_log`)).rowCount ?? 0) >= 4)
     assert.equal((await asUser(uid.tom, `select id from reminder_log`)).rowCount, 0)
     await assert.rejects(asUser(uid.admin, `select send_booking_reminders()`), /permission denied/)
+  })
+})
+
+describe('booked trades see the projects they work on', () => {
+  test("a trade booked for tasks gets the project's name and address, not its money; the app shows their part of it", async () => {
+    const tom = adapter(uid.tom)
+    const booked = (await tom.call!('my_booked_projects')) as { id: string; title: string; address: string }[]
+    assert.deepEqual(booked.map((b) => b.id), ['pr-1'])
+    assert.ok(booked[0].address)
+    assert.deepEqual(Object.keys(booked[0]).sort(), ['address', 'id', 'number', 'postcode', 'status', 'suburb', 'title'])
+    const p = (await fetchAll(tom)).projects.find((x) => x.id === 'pr-1')!
+    assert.deepEqual(p.tasks.map((t) => t.id).sort(), ['t-2', 't-7'])
+    assert.equal(p.budget, 0)
+    assert.equal(p.quoteAmount, undefined)
+    // Still no access to the project itself.
+    assert.equal((await asUser(uid.tom, `select id from projects where id = 'pr-1'`)).rowCount, 0)
+  })
+
+  test("the project's own trade, its client and other people don't get it from here", async () => {
+    assert.deepEqual(await sarah.call!('my_booked_projects'), [])
+    assert.deepEqual(await marcus.call!('my_booked_projects'), [])
+    const c = await pool.connect()
+    try {
+      await assert.rejects(c.query(`begin; set local role anon; select public.my_booked_projects()`), /permission denied/)
+    } finally {
+      await c.query('rollback')
+      c.release()
+    }
   })
 })

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { AlertTriangle, BellRing, Check } from 'lucide-react'
 import { TextButton } from '../../components/TextMessage'
+import { fmtTime } from '../../components/ProjectSite'
 import { BRAND } from '../../lib/brand'
 import { useLookup, useStore } from '../../lib/store'
 import type { TextLogEntry, UserAccount as Profile } from '../../lib/types'
@@ -27,12 +28,6 @@ const addDays = (iso: string, n: number) => {
   return toISODate(d)
 }
 
-/** "7:30 am" from "07:30". */
-export function fmtTime(t?: string): string {
-  if (!t) return ''
-  const [h, m] = t.split(':').map(Number)
-  return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'am' : 'pm'}`
-}
 
 /** "tomorrow (Tue 28 Oct)", "today (…)" or "on Tue 4 Nov". */
 function whenLabel(day: string): string {
