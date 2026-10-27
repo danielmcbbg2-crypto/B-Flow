@@ -311,14 +311,48 @@ function AccountFields({
       </Field>
       <Field label="Company"><input className="input" value={a.company ?? ''} onChange={(e) => set({ company: e.target.value || undefined })} /></Field>
       {a.role === 'provider' && (
-        <Field label="Primary trade">
-          <select className="input" value={a.trade ?? ''} onChange={(e) => set({ trade: e.target.value || undefined })}>
-            <option value="">—</option>
-            {TRADES.map((t) => <option key={t}>{t}</option>)}
-          </select>
-        </Field>
+        <TradeField value={a.trade} onChange={(trade) => set({ trade })} />
       )}
     </>
+  )
+}
+
+const CUSTOM = '__custom__'
+
+/** Pick a trade from the list (ours plus any custom ones already in use), or type a new one. */
+function TradeField({ value, onChange }: { value?: string; onChange: (trade?: string) => void }) {
+  const { data } = useStore()
+  const known = [...new Set([...TRADES, ...data.users.map((u) => u.trade?.trim()).filter((t): t is string => !!t)])].sort((x, y) => x.localeCompare(y))
+  const [typing, setTyping] = useState(false)
+  if (typing)
+    return (
+      <Field label="Primary trade">
+        <div className="flex gap-2">
+          <input
+            className="input"
+            autoFocus
+            maxLength={60}
+            placeholder="e.g. Tiling, Roofing, Landscaping"
+            aria-label="Custom trade"
+            value={value ?? ''}
+            onChange={(e) => onChange(e.target.value || undefined)}
+            onBlur={() => onChange(value?.trim() || undefined)}
+          />
+          <button type="button" className="btn-ghost shrink-0" onClick={() => setTyping(false)}>
+            Pick from list
+          </button>
+        </div>
+      </Field>
+    )
+  return (
+    <Field label="Primary trade">
+      <select className="input" value={value ?? ''} onChange={(e) => (e.target.value === CUSTOM ? (onChange(undefined), setTyping(true)) : onChange(e.target.value || undefined))}>
+        <option value="">—</option>
+        {value && !known.includes(value) && <option>{value}</option>}
+        {known.map((t) => <option key={t}>{t}</option>)}
+        <option value={CUSTOM}>+ Add a custom trade…</option>
+      </select>
+    </Field>
   )
 }
 
