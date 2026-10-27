@@ -1158,18 +1158,27 @@ describe('project workspace: schedule, diary, defects, documents', () => {
     assert.equal(p.documents.length, 2)
   })
 
-  test('a trade booked for tasks sees only their tasks, the diary, their defects and documents shared with trades', async () => {
+  test("a trade booked for tasks sees the project's whole schedule, the diary, their defects and documents shared with trades", async () => {
     // Tom isn't the project's trade, so he doesn't see the project itself: the app reads these tables directly.
+    // He sees every booking on it (who else is on site, and when), on no other project.
     const tasks = await asUser<{ id: string }>(uid.tom, `select id from project_tasks where project_id = 'pr-1' order by id`)
-    assert.deepEqual(tasks.rows.map((r) => r.id), ['t-2', 't-7'])
+    assert.equal(tasks.rowCount, 9)
+    assert.equal((await asUser(uid.tom, `select id from project_tasks where project_id <> 'pr-1'`)).rowCount, 0)
     assert.equal((await asUser(uid.tom, `select id from project_diary where project_id = 'pr-1'`)).rowCount, 2)
     assert.deepEqual((await asUser<{ id: string }>(uid.tom, `select id from project_defects`)).rows.map((r) => r.id), ['df-1'])
     assert.deepEqual((await asUser<{ id: string }>(uid.tom, `select id from project_documents`)).rows.map((r) => r.id), ['doc-1'])
   })
 
-  test('a trade moves their task along but cannot reschedule it, or touch others', async () => {
+  test('a trade moves their own booking along or to another day (the office is told), but cannot change anything else, or touch others', async () => {
     await asUser(uid.tom, `update project_tasks set status = 'in_progress', notes = 'On my way' where id = 't-7'`)
-    await assert.rejects(asUser(uid.tom, `update project_tasks set start_date = start_date + 1 where id = 't-7'`), /Only the office can change the schedule/)
+    await asUser(uid.tom, `update project_tasks set start_date = start_date + 2, end_date = end_date + 2 where id = 't-7'`)
+    const told = await pool.query<{ title: string; body: string; project_id: string }>(`select title, body, project_id from inbox where user_id = 'u-admin' and title like 'Booking moved:%'`)
+    assert.equal(told.rows[0].title, 'Booking moved: Plumbing fit-off')
+    assert.match(told.rows[0].body, /^Tom Gallagher moved it from \d+ \w+ to \d+ \w+\.$/)
+    assert.equal(told.rows[0].project_id, 'pr-1')
+    await assert.rejects(asUser(uid.tom, `update project_tasks set title = 'Something else' where id = 't-7'`), /Only the office can change the schedule/)
+    await assert.rejects(asUser(uid.tom, `update project_tasks set assignee_id = null where id = 't-7'`), /Only the office can change the schedule/)
+    assert.equal((await asUser(uid.tom, `update project_tasks set start_date = start_date + 1, end_date = end_date + 1 where id = 't-8'`)).rowCount, 0)
     assert.equal((await asUser(uid.tom, `update project_tasks set status = 'done' where id = 't-1'`)).rowCount, 0)
     await assert.rejects(asUser(uid.tom, `insert into project_tasks (project_id, title, start_date, end_date) values ('pr-1', 'x', current_date, current_date)`), /row-level security/)
   })
@@ -1286,7 +1295,7 @@ describe('booked trades see the projects they work on', () => {
     assert.ok(booked[0].address)
     assert.deepEqual(Object.keys(booked[0]).sort(), ['address', 'id', 'number', 'postcode', 'status', 'suburb', 'title'])
     const p = (await fetchAll(tom)).projects.find((x) => x.id === 'pr-1')!
-    assert.deepEqual(p.tasks.map((t) => t.id).sort(), ['t-2', 't-7'])
+    assert.equal(p.tasks.length, 9)
     assert.equal(p.budget, 0)
     assert.equal(p.quoteAmount, undefined)
     // Still no access to the project itself.
@@ -1303,5 +1312,19 @@ describe('booked trades see the projects they work on', () => {
       await c.query('rollback')
       c.release()
     }
+  })
+})
+
+describe("trades' calendar", () => {
+  test('a trade moves their own maintenance order; the office is told', async () => {
+    const r = await pool.query<{ id: string; number: number }>(`select id, number from requests where assigned_provider_id = 'u-prov-3' and status <> 'completed' limit 1`)
+    if (!r.rowCount) return
+    await asUser(uid.tom, `update requests set scheduled_date = coalesce(scheduled_date, current_date) + 1 where id = $1`, [r.rows[0].id])
+    const told = await pool.query<{ title: string; request_id: string }>(`select title, request_id from inbox where user_id = 'u-admin' and title like 'Job moved:%'`)
+    assert.equal(told.rows.at(-1)?.request_id, r.rows[0].id)
+    assert.match(told.rows.at(-1)!.title, new RegExp(`^Job moved: #${r.rows[0].number} `))
+    // Not someone else's.
+    const other = await pool.query<{ id: string }>(`select id from requests where assigned_provider_id is distinct from 'u-prov-3' limit 1`)
+    assert.equal((await asUser(uid.tom, `update requests set scheduled_date = current_date + 9 where id = $1`, [other.rows[0].id])).rowCount, 0)
   })
 })
