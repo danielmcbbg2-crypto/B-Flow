@@ -1234,3 +1234,43 @@ describe('project workspace: schedule, diary, defects, documents', () => {
     assert.deepEqual((await seen(uid.admin)).sort(), [path1, path2].sort())
   })
 })
+
+describe('booking reminders', () => {
+  const day = '2031-03-04'
+  test('the day before, the trade and the client get one reminder each in their inbox, never twice', async () => {
+    await pool.query(`update project_tasks set start_date = $1, end_date = $1, status = 'todo', start_time = '07:30' where id = 't-7'`, [day])
+    await pool.query(`update requests set scheduled_date = $1 where id = 'r-5'`, [day])
+    const sent = await pool.query<{ n: number }>(`select send_booking_reminders($1) n`, [day])
+    // Tom (task and job) and Sarah (task and job); the project's other people aren't booked that day.
+    assert.equal(sent.rows[0].n, 4)
+    assert.equal((await pool.query<{ n: number }>(`select send_booking_reminders($1) n`, [day])).rows[0].n, 0)
+    const tom = await asUser<{ title: string; body: string; project_id: string | null; request_id: string | null }>(
+      uid.tom,
+      `select title, body, project_id, request_id from inbox where title like 'Booked for%' order by title`,
+    )
+    assert.deepEqual(tom.rows.map((r) => r.title), ['Booked for Tuesday 4 March: Plumbing fit-off', 'Booked for Tuesday 4 March: Quarterly gutter clean & roof inspection'])
+    assert.match(tom.rows[0].body, /^You are booked at .+ from 7:30 am/)
+    assert.equal(tom.rows[0].project_id, 'pr-1')
+    assert.equal(tom.rows[1].request_id, 'r-5')
+    const sarahs = await asUser<{ body: string }>(uid.sarah, `select body from inbox where title like 'Booked for%'`)
+    assert.equal(sarahs.rowCount, 2)
+    assert.match(sarahs.rows[0].body, /^Our team is booked at your place/)
+  })
+
+  test("done tasks, hidden tasks and finished jobs don't get one", async () => {
+    const d2 = '2031-03-05'
+    await pool.query(`update project_tasks set start_date = $1, end_date = $1, client_visible = false where id = 't-8'`, [d2])
+    await pool.query(`update project_tasks set start_date = $1, end_date = $1, status = 'done' where id = 't-9'`, [d2])
+    await pool.query(`update requests set scheduled_date = $1, status = 'completed' where id = 'r-5'`, [d2])
+    // Only the electrician for t-8 (if they can sign in); never the client.
+    await pool.query(`select send_booking_reminders($1)`, [d2])
+    const who = await pool.query<{ recipient_id: string; ref_id: string }>(`select recipient_id, ref_id from reminder_log where booking_date = $1`, [d2])
+    assert.ok(who.rows.every((r) => r.ref_id === 't-8' && r.recipient_id !== 'u-client-1'))
+  })
+
+  test('only the office sees the reminder record, and nobody can run it from the app', async () => {
+    assert.ok(((await asUser(uid.admin, `select id from reminder_log`)).rowCount ?? 0) >= 4)
+    assert.equal((await asUser(uid.tom, `select id from reminder_log`)).rowCount, 0)
+    await assert.rejects(asUser(uid.admin, `select send_booking_reminders()`), /permission denied/)
+  })
+})

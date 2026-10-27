@@ -15,6 +15,7 @@ import { SmsGateway } from './SmsGateway'
 import { Accounts } from './Accounts'
 import { AdminStore } from './AdminStore'
 import { Leads } from './Leads'
+import { BookingReminders } from './BookingReminders'
 import { PropertyCard } from '../client/ClientPortal'
 
 export function AdminPortal({ section }: { section: string }) {
@@ -163,6 +164,12 @@ function CommandCentre() {
           </ul>
         </section>
       </div>
+
+      {(can('canManageProjects') || can('canDispatchJobs')) && (
+        <div className="mt-8">
+          <BookingReminders />
+        </div>
+      )}
 
       <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {can('canDispatchJobs') && (
