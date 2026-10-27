@@ -199,6 +199,87 @@ export interface ProjectCost {
   amount: number
 }
 
+export type TaskStatus = 'todo' | 'in_progress' | 'done'
+export const TASK_STATUS_LABEL: Record<TaskStatus, string> = { todo: 'To do', in_progress: 'In progress', done: 'Done' }
+
+/** A piece of the schedule: a stage of work booked with a trade for a span of days. */
+export interface ProjectTask {
+  id: string
+  /** Group it belongs to, e.g. "Rough-in" (blank: general). */
+  stage: string
+  title: string
+  startDate: string
+  endDate: string
+  /** When the trade is booked to arrive on the first day, "07:30" (optional). */
+  startTime?: string
+  assigneeId?: string
+  status: TaskStatus
+  notes: string
+  /** Shown on the client's schedule. */
+  clientVisible: boolean
+}
+
+/** A day's entry in the site diary. */
+export interface DiaryEntry {
+  id: string
+  date: string
+  weather: string
+  /** Who was on site. */
+  onSite: string
+  workDone: string
+  issues: string
+  photos: string[]
+  /** Only the office decides what the client sees. */
+  shareWithClient: boolean
+  /** Set by the database. */
+  authorId?: string
+  createdAt: string
+}
+
+export type DefectStatus = 'open' | 'fixed' | 'closed'
+export const DEFECT_STATUS_LABEL: Record<DefectStatus, string> = { open: 'Open', fixed: 'Fixed, to check', closed: 'Closed' }
+
+/** A snag on the punch list: raised (by the office or the client), fixed by a trade, closed by the office. */
+export interface Defect {
+  id: string
+  /** Numbered per project by the database. */
+  number: number
+  title: string
+  location: string
+  description: string
+  assigneeId?: string
+  dueDate?: string
+  status: DefectStatus
+  photos: string[]
+  fixPhotos: string[]
+  fixNotes: string
+  /** Set by the database. */
+  raisedBy?: string
+  raisedAt: string
+  fixedBy?: string
+  fixedAt?: string
+  closedBy?: string
+  closedAt?: string
+}
+
+export const DOCUMENT_CATEGORIES = ['Plans', 'Permits', 'Certificates', 'Warranties', 'Contracts', 'Photos', 'Other'] as const
+export type DocumentShare = 'office' | 'client' | 'trades' | 'everyone'
+export const DOCUMENT_SHARE_LABEL: Record<DocumentShare, string> = { office: 'Office only', client: 'Client', trades: 'Trades', everyone: 'Client and trades' }
+
+/** A file kept on the project (plans, permits, certificates…). */
+export interface ProjectDocument {
+  id: string
+  name: string
+  category: (typeof DOCUMENT_CATEGORIES)[number]
+  /** Where the file is stored (live: the private bucket; demo: the file itself). */
+  path: string
+  sizeBytes: number
+  contentType: string
+  share: DocumentShare
+  uploadedBy?: string
+  uploadedAt: string
+}
+
 export interface Project {
   id: string
   number: number
@@ -234,6 +315,10 @@ export interface Project {
   payments: PaymentStage[]
   /** Office only: not loaded for clients. */
   costs: ProjectCost[]
+  tasks: ProjectTask[]
+  diary: DiaryEntry[]
+  defects: Defect[]
+  documents: ProjectDocument[]
 }
 
 export type InvoiceStatus = 'draft' | 'sent' | 'paid'

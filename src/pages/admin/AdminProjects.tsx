@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { Plus, Trash2 } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2 } from 'lucide-react'
 import { Empty, Field, Modal, PageHeader, Sep, Stat, Tabs } from '../../components/ui'
 import { ProjectBy, ProjectProgress } from '../../components/works'
 import { ProjectStatusText } from '../../components/status'
@@ -10,6 +10,22 @@ import { contractTotal, nextInvoiceNumber, paymentAmounts, projectFinancials, qu
 import { fmtDate, money, toISODate, todayISO, uid } from '../../lib/utils'
 import { navigate } from '../../lib/router'
 import { CostsPanel, PaymentsPanel, QuoteBuilder, VariationsPanel } from './ProjectCommercials'
+import { DefectsPanel, DiaryPanel, DocumentsPanel, Fact, SchedulePanel } from './ProjectWorkspace'
+import { useHashRoute } from '../../lib/router'
+
+/**
+ * The diary, defects and documents are saved as they're added (by the office, trades and the
+ * client), so a draft of the rest of the project never overwrites them.
+ */
+function keepLiveParts(next: Project, current: Project | undefined): Project {
+  if (current) {
+    next.diary = current.diary
+    next.defects = current.defects
+    next.documents = current.documents
+  }
+  return next
+}
+const draftKey = (p: Project) => JSON.stringify({ ...p, diary: null, defects: null, documents: null })
 
 /** Saves a project edited in the office, telling the trade, the client and so on what changed for them. */
 export function useSaveProject() {
@@ -17,7 +33,7 @@ export function useSaveProject() {
   return (p: Project) => {
     const before = data.projects.find((x) => x.id === p.id)
     update((d) => {
-      const next = structuredClone(p)
+      const next = keepLiveParts(structuredClone(p), d.projects.find((x) => x.id === p.id))
       if (before) stampQuoteDecision(next, before.status, user?.id)
       d.projects = d.projects.map((x) => (x.id === p.id ? next : x))
     })
@@ -57,8 +73,8 @@ export function AdminProjects() {
   const { data, update } = useStore()
   const lk = useLookup()
   const save = useSaveProject()
+  const route = useHashRoute()
   const [tab, setTab] = useState<'active' | 'closed'>('active')
-  const [editing, setEditing] = useState<Project | null>(null)
   const [creating, setCreating] = useState(false)
 
   const active = data.projects.filter((p) => p.status === 'approved' || p.status === 'in_progress')
@@ -78,6 +94,22 @@ export function AdminProjects() {
       const e = d.projects.find((p) => p.id === pid)?.expenses.find((x) => x.id === eid)
       if (e) e.status = status
     })
+
+  // #/admin/projects/<id>[/<tab>] opens the project's workspace.
+  const [, , openId, openTab] = route
+  const opened = openId ? data.projects.find((p) => p.id === openId) : undefined
+  if (opened) {
+    return (
+      <ProjectEditor
+        key={opened.id}
+        project={opened}
+        asPage
+        initialTab={(openTab as EditorTab | undefined) ?? 'overview'}
+        onClose={() => navigate('/admin/projects')}
+        onSave={save}
+      />
+    )
+  }
 
   return (
     <>
@@ -120,7 +152,7 @@ export function AdminProjects() {
                 </span>
                 <span className="flex items-center gap-3">
                   <span className="num font-semibold">{money(amount)}</span>
-                  <button className="btn-ghost px-3 py-1" onClick={() => setEditing(p)}>Open payments</button>
+                  <button className="btn-ghost px-3 py-1" onClick={() => navigate(`/admin/projects/${p.id}/payments`)}>Open payments</button>
                 </span>
               </li>
             ))}
@@ -187,24 +219,13 @@ export function AdminProjects() {
                     </td>
                     <td className={`td num text-right ${fin.margin < 0 ? 'text-red-600' : ''}`}>{fin.contract ? `${fin.marginPct}%` : '—'}</td>
                     <td className="td num text-right">{money(fin.paid)}</td>
-                    <td className="td text-right"><button className="btn-ghost px-3 py-1.5" onClick={() => setEditing(p)}>Manage</button></td>
+                    <td className="td text-right"><button className="btn-ghost px-3 py-1.5" onClick={() => navigate(`/admin/projects/${p.id}`)}>Manage</button></td>
                   </tr>
                 )
               })}
             </tbody>
           </table>
         </div>
-      )}
-      {editing && (
-        <ProjectEditor
-          key={editing.id}
-          project={editing}
-          onClose={() => setEditing(null)}
-          onSave={(p) => {
-            save(p)
-            setEditing(null)
-          }}
-        />
       )}
       {creating && (
         <NewProjectForm
@@ -213,7 +234,7 @@ export function AdminProjects() {
             setCreating(false)
             if (p.status === 'completed' || p.status === 'rejected') setTab('closed')
             else if (p.status === 'quote_requested' || p.status === 'quoted') navigate('/admin/quotes')
-            else setTab('active')
+            else navigate(`/admin/projects/${p.id}`)
           }}
         />
       )}
@@ -440,9 +461,22 @@ export function NewProjectForm({ onClose, onCreated, quote = false }: { onClose:
   )
 }
 
-export type EditorTab = 'overview' | 'quote' | 'variations' | 'payments' | 'costs'
+export type EditorTab = 'overview' | 'schedule' | 'diary' | 'defects' | 'documents' | 'quote' | 'variations' | 'payments' | 'costs'
 
-export function ProjectEditor({ project, onClose, onSave, initialTab = 'overview' }: { project: Project; onClose: () => void; onSave: (p: Project) => void; initialTab?: EditorTab }) {
+export function ProjectEditor({
+  project,
+  onClose,
+  onSave,
+  initialTab = 'overview',
+  asPage = false,
+}: {
+  project: Project
+  onClose: () => void
+  onSave: (p: Project) => void
+  initialTab?: EditorTab
+  /** The full project workspace (with schedule, diary, defects and documents) instead of a pop-up. */
+  asPage?: boolean
+}) {
   const { data, can, update } = useStore()
   const lk = useLookup()
   const [p, setP] = useState<Project>(project)
@@ -453,7 +487,9 @@ export function ProjectEditor({ project, onClose, onSave, initialTab = 'overview
   const [error, setError] = useState<string | null>(null)
   const set = (patch: Partial<Project>) => setP((cur) => ({ ...cur, ...patch }))
   const prop = lk.property(p.propertyId)
-  const dirty = JSON.stringify(p) !== JSON.stringify(saved)
+  const dirty = draftKey(p) !== draftKey(saved)
+  // Saved as they're added, so shown from the stored project rather than this draft.
+  const live = data.projects.find((x) => x.id === p.id) ?? p
   const itemised = p.quoteItems.length > 0
 
   const trySave = (draft: Project) => {
@@ -463,6 +499,10 @@ export function ProjectEditor({ project, onClose, onSave, initialTab = 'overview
       setTab('quote')
       return setError('Every quote line needs a description.')
     }
+    if (next.tasks.some((t) => !t.title.trim())) {
+      setTab('schedule')
+      return setError('Every task needs a name.')
+    }
     if (next.payments.some((s) => !s.title.trim())) {
       setTab('payments')
       return setError('Every payment stage needs a name.')
@@ -470,6 +510,9 @@ export function ProjectEditor({ project, onClose, onSave, initialTab = 'overview
     if (next.status === 'quoted' && !((next.quoteAmount ?? 0) > 0)) return setError('Price the quote before issuing it.')
     setError(null)
     onSave(next)
+    // The workspace page stays open: what's saved is now the starting point.
+    setP(next)
+    setSaved(next)
   }
 
   const claim = (stage: PaymentStage, amount: number) => {
@@ -489,34 +532,70 @@ export function ProjectEditor({ project, onClose, onSave, initialTab = 'overview
         dueDate: toISODate(due),
         createdAt: new Date().toISOString(),
       })
-      d.projects = d.projects.map((x) => (x.id === p.id ? structuredClone(next) : x))
+      d.projects = d.projects.map((x) => (x.id === p.id ? keepLiveParts(structuredClone(next), x) : x))
     })
     setP(next)
     setSaved(next)
   }
 
   const pendingVariations = p.variations.filter((v) => v.status === 'proposed').length
-  return (
-    <Modal open onClose={onClose} title={`P-${p.number} · ${p.title}`} width="max-w-5xl">
+  const today = todayISO()
+  const openDefects = live.defects.filter((d) => d.status !== 'closed').length
+  const lateTasks = p.tasks.filter((t) => t.status !== 'done' && t.endDate < today).length
+  const tabs: { value: EditorTab; label: string; count?: number }[] = [
+    { value: 'overview', label: 'Overview' },
+    ...(asPage
+      ? ([
+          { value: 'schedule', label: 'Schedule', count: lateTasks || p.tasks.length || undefined },
+          { value: 'diary', label: 'Site diary', count: live.diary.length || undefined },
+          { value: 'defects', label: 'Defects', count: openDefects || undefined },
+          { value: 'documents', label: 'Documents', count: live.documents.length || undefined },
+        ] as const)
+      : []),
+    { value: 'quote', label: 'Quote', count: p.quoteItems.length || undefined },
+    { value: 'variations', label: 'Variations', count: pendingVariations || undefined },
+    { value: 'payments', label: 'Payments', count: p.payments.length || undefined },
+    { value: 'costs', label: 'Costs & margin' },
+  ]
+  // Saved as you go: no draft, so no Save button needed on these tabs.
+  const immediate = tab === 'diary' || tab === 'defects' || tab === 'documents'
+  const fin = projectFinancials(p, data.invoices)
+  const header = (
+    <>
       <p className="text-sm text-slate-600">
         {lk.user(p.clientId)?.name}
         <Sep />
         {prop?.address}, {prop?.suburb}
         <Sep />
         <ProjectStatusText s={p.status} />
+        {p.assignedProviderId && (
+          <>
+            <Sep />
+            Trade: {lk.user(p.assignedProviderId)?.name}
+          </>
+        )}
       </p>
-      <p className="mb-4 mt-2 rounded-md bg-slate-50 p-3 text-sm text-slate-700">{p.description}</p>
-      <Tabs
-        value={tab}
-        onChange={setTab}
-        tabs={[
-          { value: 'overview', label: 'Overview' },
-          { value: 'quote', label: 'Quote', count: p.quoteItems.length || undefined },
-          { value: 'variations', label: 'Variations', count: pendingVariations || undefined },
-          { value: 'payments', label: 'Payments', count: p.payments.length || undefined },
-          { value: 'costs', label: 'Costs & margin' },
-        ]}
-      />
+      {asPage ? (
+        <dl className="card mb-5 mt-4 grid grid-cols-2 gap-4 p-4 sm:grid-cols-3 lg:grid-cols-6">
+          <Fact label="Progress"><ProjectProgress p={p} /></Fact>
+          <Fact label="Tasks done">{p.tasks.filter((t) => t.status === 'done').length} / {p.tasks.length}{lateTasks > 0 && <span className="ml-1 text-red-600">({lateTasks} late)</span>}</Fact>
+          <Fact label="Open defects">{openDefects}</Fact>
+          <Fact label="Contract">{money(contractTotal(p))}</Fact>
+          <Fact label="Margin">{fin.contract ? `${fin.marginPct}%` : '—'}</Fact>
+          <Fact label="Paid">{money(fin.paid)}</Fact>
+        </dl>
+      ) : (
+        <p className="mb-4 mt-2 rounded-md bg-slate-50 p-3 text-sm text-slate-700">{p.description}</p>
+      )}
+      <Tabs value={tab} onChange={setTab} tabs={tabs} />
+    </>
+  )
+  const body = (
+    <>
+      {tab === 'diary' && <DiaryPanel projectId={p.id} />}
+      {tab === 'defects' && <DefectsPanel projectId={p.id} />}
+      {tab === 'documents' && <DocumentsPanel projectId={p.id} />}
+      {!immediate && (
       <form
         onSubmit={(e) => {
           e.preventDefault()
@@ -587,6 +666,7 @@ export function ProjectEditor({ project, onClose, onSave, initialTab = 'overview
             </div>
           </div>
         )}
+        {tab === 'schedule' && <SchedulePanel p={p} set={set} />}
         {tab === 'quote' && <QuoteBuilder p={p} set={set} />}
         {tab === 'variations' && <VariationsPanel p={p} set={set} original={saved} />}
         {tab === 'payments' && <PaymentsPanel p={p} set={set} invoices={data.invoices} dirty={dirty} canInvoice={can('canManageInvoices')} onClaim={claim} />}
@@ -602,6 +682,31 @@ export function ProjectEditor({ project, onClose, onSave, initialTab = 'overview
           <button className="btn-primary">Save project</button>
         </div>
       </form>
+      )}
+    </>
+  )
+  if (asPage) {
+    return (
+      <>
+        <button type="button" className="mb-3 inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-900" onClick={onClose}>
+          <ArrowLeft size={15} aria-hidden="true" /> Projects
+        </button>
+        <PageHeader title={`P-${p.number} · ${p.title}`} subtitle={p.description} />
+        {header}
+        {dirty && immediate && (
+          <p className="mb-4 rounded-md bg-amber-50 p-3 text-sm text-amber-800">
+            You have unsaved changes on other tabs.{' '}
+            <button type="button" className="font-semibold underline" onClick={() => trySave(p)}>Save them now</button>
+          </p>
+        )}
+        <div className="card p-5">{body}</div>
+      </>
+    )
+  }
+  return (
+    <Modal open onClose={onClose} title={`P-${p.number} · ${p.title}`} width="max-w-5xl">
+      {header}
+      {body}
     </Modal>
   )
 }

@@ -235,6 +235,12 @@ interface StoreValue {
   /** Anyone, signed in or not: send a maintenance request (with photos) to the office. */
   submitLead: (l: LeadInput) => Promise<{ number: number }>
   leadPhotoUrls: (paths: string[]) => Promise<string[]>
+  /** Stores a project document's file (live: the private project-docs bucket; demo: in the browser). */
+  uploadProjectFile: (projectId: string, file: File) => Promise<{ path: string; sizeBytes: number; contentType: string }>
+  /** A link to open a project document (live: a short-lived signed link). */
+  projectFileUrl: (path: string) => Promise<string>
+  /** Removes a project document and its file. */
+  deleteProjectDocument: (projectId: string, documentId: string) => void
   /** Records that a text was opened in Messages on this device (who and when are set by the database). */
   logText: (to: string, message: string, event: string) => void
   deleteLead: (id: string) => void
@@ -1065,6 +1071,45 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [update, user],
   )
 
+  const uploadProjectFile = useCallback(async (projectId: string, file: File) => {
+    if (file.size > 25 * 1024 * 1024) throw new Error('Files can be up to 25 MB.')
+    if (supabase) {
+      const safe = file.name.replace(/[^\w.\- ]+/g, '_').slice(-120) || 'file'
+      const path = `${projectId}/${crypto.randomUUID()}/${safe}`
+      const { error } = await supabase.storage.from('project-docs').upload(path, file, { contentType: file.type || 'application/octet-stream' })
+      if (error) throw new Error(`Upload failed: ${error.message}`)
+      return { path, sizeBytes: file.size, contentType: file.type }
+    }
+    // Demo mode keeps the file in this browser, so only small ones fit.
+    if (file.size > 1.5 * 1024 * 1024) throw new Error('In demo mode files can be up to 1.5 MB.')
+    const path = await new Promise<string>((resolve, reject) => {
+      const r = new FileReader()
+      r.onload = () => resolve(r.result as string)
+      r.onerror = () => reject(r.error)
+      r.readAsDataURL(file)
+    })
+    return { path, sizeBytes: file.size, contentType: file.type }
+  }, [])
+
+  const projectFileUrl = useCallback(async (path: string) => {
+    if (!supabase || path.startsWith('data:')) return path
+    const { data: link, error } = await supabase.storage.from('project-docs').createSignedUrl(path, 600)
+    if (error || !link) throw new Error(error?.message ?? 'Could not open the file')
+    return link.signedUrl
+  }, [])
+
+  const deleteProjectDocument = useCallback(
+    (projectId: string, documentId: string) => {
+      const doc = dataRef.current.projects.find((p) => p.id === projectId)?.documents.find((x) => x.id === documentId)
+      update((d) => {
+        const p = d.projects.find((x) => x.id === projectId)
+        if (p) p.documents = p.documents.filter((x) => x.id !== documentId)
+      })
+      if (supabase && doc && !doc.path.startsWith('data:')) void supabase.storage.from('project-docs').remove([doc.path])
+    },
+    [update],
+  )
+
   /** Viewable links for a request's photos (live: short-lived signed links; demo: the images themselves). */
   const leadPhotoUrls = useCallback(async (paths: string[]): Promise<string[]> => {
     if (!supabase || paths.length === 0) return paths
@@ -1253,6 +1298,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     placeOrder,
     submitLead,
     leadPhotoUrls,
+    uploadProjectFile,
+    projectFileUrl,
+    deleteProjectDocument,
     logText,
     deleteLead,
     findProducts,

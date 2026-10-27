@@ -22,7 +22,7 @@ function stamp(offsetDays: number, hour = 9): string {
 const DEMO_HASH = '0ead2060b65992dca4769af601a1b3a35ef38cfad2c2c465bb160ea764157c5d'
 
 // Bumped when the stored demo data changes; older saved demo data is replaced.
-export const DATA_VERSION = 8
+export const DATA_VERSION = 9
 
 export function createSeed(): AppData {
   return {
@@ -296,6 +296,84 @@ export function createSeed(): AppData {
         costs: [
           { id: 'c-1', date: day(-5), description: 'Plumber: rough-in', category: 'Subcontractor', supplier: 'Gallagher Plumbing', amount: 2400 },
           { id: 'c-2', date: day(-3), description: 'Tiles and adhesive', category: 'Materials', supplier: 'Tile Depot', amount: 2210 },
+        ],
+        tasks: [
+          { id: 't-1', stage: 'Demolition', title: 'Strip-out and skip', startDate: day(-8), endDate: day(-6), startTime: '07:30', assigneeId: 'u-prov-1', status: 'done', notes: '', clientVisible: true },
+          { id: 't-2', stage: 'Rough-in', title: 'Plumbing rough-in', startDate: day(-5), endDate: day(-4), startTime: '08:00', assigneeId: 'u-prov-3', status: 'done', notes: '', clientVisible: true },
+          { id: 't-3', stage: 'Rough-in', title: 'Electrical rough-in', startDate: day(-3), endDate: day(-2), startTime: '08:00', assigneeId: 'u-prov-2', status: 'done', notes: '', clientVisible: true },
+          { id: 't-4', stage: 'Rough-in', title: 'Wall framing and shower niche', startDate: day(-2), endDate: day(-1), startTime: '07:30', assigneeId: 'u-prov-1', status: 'done', notes: '', clientVisible: true },
+          { id: 't-5', stage: 'Waterproofing', title: 'Membrane and inspection', startDate: day(1), endDate: day(3), startTime: '09:00', status: 'todo', notes: 'Inspector booked for the 3rd day, 2 pm.', clientVisible: true },
+          { id: 't-6', stage: 'Tiling', title: 'Wall and floor tiling', startDate: day(4), endDate: day(8), startTime: '07:30', status: 'todo', notes: '', clientVisible: true },
+          { id: 't-7', stage: 'Fit-off', title: 'Plumbing fit-off', startDate: day(10), endDate: day(10), startTime: '08:00', assigneeId: 'u-prov-3', status: 'todo', notes: '', clientVisible: true },
+          { id: 't-8', stage: 'Fit-off', title: 'Electrical fit-off', startDate: day(11), endDate: day(11), startTime: '08:00', assigneeId: 'u-prov-2', status: 'todo', notes: '', clientVisible: true },
+          { id: 't-9', stage: 'Fit-off', title: 'Shower screen and final clean', startDate: day(13), endDate: day(15), startTime: '09:00', assigneeId: 'u-prov-1', status: 'todo', notes: '', clientVisible: true },
+        ],
+        diary: [
+          {
+            id: 'dy-1',
+            date: day(-1),
+            weather: 'Fine, 19°',
+            onSite: 'Dan (carpentry)',
+            workDone: 'Framed the shower niche and nogging for the vanity. Rough-in signed off.',
+            issues: 'Floor waste sits 15 mm off centre; plumber to adjust before waterproofing.',
+            photos: [],
+            shareWithClient: true,
+            authorId: 'u-prov-1',
+            createdAt: stamp(-1, 16),
+          },
+          {
+            id: 'dy-2',
+            date: day(-4),
+            weather: 'Showers',
+            onSite: 'Tom (plumbing)',
+            workDone: 'Plumbing rough-in: new waste, hot and cold to vanity, shower and toilet.',
+            issues: '',
+            photos: [],
+            shareWithClient: false,
+            authorId: 'u-prov-3',
+            createdAt: stamp(-4, 15),
+          },
+        ],
+        defects: [
+          {
+            id: 'df-1',
+            number: 1,
+            title: 'Floor waste off centre',
+            location: 'Shower',
+            description: 'Waste sits 15 mm off the planned centre line; move before waterproofing.',
+            assigneeId: 'u-prov-3',
+            dueDate: day(1),
+            status: 'open',
+            photos: [],
+            fixPhotos: [],
+            fixNotes: '',
+            raisedBy: 'u-admin',
+            raisedAt: stamp(-1, 17),
+          },
+        ],
+        documents: [
+          {
+            id: 'doc-1',
+            name: 'Bathroom layout plan.txt',
+            category: 'Plans',
+            path: 'data:text/plain;charset=utf-8,Bathroom%20layout%20plan%20(sample)',
+            sizeBytes: 31,
+            contentType: 'text/plain',
+            share: 'everyone',
+            uploadedBy: 'u-admin',
+            uploadedAt: stamp(-25),
+          },
+          {
+            id: 'doc-2',
+            name: 'Waterproofing certificate.txt',
+            category: 'Certificates',
+            path: 'data:text/plain;charset=utf-8,Waterproofing%20certificate%20(sample)',
+            sizeBytes: 37,
+            contentType: 'text/plain',
+            share: 'office',
+            uploadedBy: 'u-admin',
+            uploadedAt: stamp(-2),
+          },
         ],
         createdAt: stamp(-30),
       },
