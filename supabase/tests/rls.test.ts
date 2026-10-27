@@ -1139,3 +1139,98 @@ describe('quotes pipeline', () => {
     await assert.rejects(asUser(uid.sarah, `insert into quote_templates (name) values ('x')`), /row-level security/)
   })
 })
+
+describe('project workspace: schedule, diary, defects, documents', () => {
+  before(async () => {
+    uid.tom = await inviteAuthUser('tom@gallagherplumbing.com.au')
+    await asUser(uid.tom, 'select activate_my_account()')
+  })
+  const pr1 = async (db: DbAdapter) => (await fetchAll(db)).projects.find((p) => p.id === 'pr-1')
+
+  test('the office sees and runs everything', async () => {
+    const p = (await pr1(admin))!
+    assert.equal(p.tasks.length, 9)
+    assert.equal(p.diary.length, 2)
+    assert.deepEqual(p.defects.map((d) => d.number), [1])
+    assert.equal(p.documents.length, 2)
+  })
+
+  test('a trade booked for tasks sees only their tasks, the diary, their defects and documents shared with trades', async () => {
+    // Tom isn't the project's trade, so he doesn't see the project itself: the app reads these tables directly.
+    const tasks = await asUser<{ id: string }>(uid.tom, `select id from project_tasks where project_id = 'pr-1' order by id`)
+    assert.deepEqual(tasks.rows.map((r) => r.id), ['t-2', 't-7'])
+    assert.equal((await asUser(uid.tom, `select id from project_diary where project_id = 'pr-1'`)).rowCount, 2)
+    assert.deepEqual((await asUser<{ id: string }>(uid.tom, `select id from project_defects`)).rows.map((r) => r.id), ['df-1'])
+    assert.deepEqual((await asUser<{ id: string }>(uid.tom, `select id from project_documents`)).rows.map((r) => r.id), ['doc-1'])
+  })
+
+  test('a trade moves their task along but cannot reschedule it, or touch others', async () => {
+    await asUser(uid.tom, `update project_tasks set status = 'in_progress', notes = 'On my way' where id = 't-7'`)
+    await assert.rejects(asUser(uid.tom, `update project_tasks set start_date = start_date + 1 where id = 't-7'`), /Only the office can change the schedule/)
+    assert.equal((await asUser(uid.tom, `update project_tasks set status = 'done' where id = 't-1'`)).rowCount, 0)
+    await assert.rejects(asUser(uid.tom, `insert into project_tasks (project_id, title, start_date, end_date) values ('pr-1', 'x', current_date, current_date)`), /row-level security/)
+  })
+
+  test('a trade adds to the diary as themselves; only the office shares entries with the client', async () => {
+    const r = await asUser<{ author_id: string; share_with_client: boolean }>(
+      uid.tom,
+      `insert into project_diary (project_id, work_done, share_with_client, author_id) values ('pr-1', 'Moved the floor waste', true, 'u-admin') returning author_id, share_with_client`,
+    )
+    assert.deepEqual(r.rows[0], { author_id: 'u-prov-3', share_with_client: false })
+    await assert.rejects(asUser(uid.marcus, `insert into project_diary (project_id, work_done) values ('pr-1', 'x')`), /row-level security/)
+  })
+
+  test('a trade marks their defect fixed (recorded as them) but cannot edit or close it; the office closes it', async () => {
+    await assert.rejects(asUser(uid.tom, `update project_defects set title = 'Nothing wrong' where id = 'df-1'`), /mark a defect fixed/)
+    await assert.rejects(asUser(uid.tom, `update project_defects set status = 'closed' where id = 'df-1'`), /mark a defect fixed/)
+    await asUser(uid.tom, `update project_defects set status = 'fixed', fix_notes = 'Moved and retested' where id = 'df-1'`)
+    let d = (await pr1(admin))!.defects.find((x) => x.id === 'df-1')!
+    assert.deepEqual([d.status, d.fixedBy, d.fixNotes], ['fixed', 'u-prov-3', 'Moved and retested'])
+    assert.ok(d.fixedAt)
+    await mutate(admin, (x) => {
+      x.projects.find((p) => p.id === 'pr-1')!.defects.find((y) => y.id === 'df-1')!.status = 'closed'
+    })
+    d = (await pr1(admin))!.defects.find((x) => x.id === 'df-1')!
+    assert.deepEqual([d.status, d.closedBy, d.fixedBy], ['closed', 'u-admin', 'u-prov-3'])
+  })
+
+  test('the client sees their schedule, shared diary entries, all defects and shared documents, and can raise a defect', async () => {
+    const p = (await pr1(sarah))!
+    assert.equal(p.tasks.length, 9)
+    assert.deepEqual(p.diary.map((e) => e.id), ['dy-1'])
+    assert.ok(p.defects.some((d) => d.id === 'df-1'))
+    assert.deepEqual(p.documents.map((d) => d.id), ['doc-1'])
+    await mutate(sarah, (x) => {
+      x.projects.find((y) => y.id === 'pr-1')!.defects.push({
+        id: 'df-client', number: 99, title: 'Scratch on vanity', location: 'Vanity', description: '', assigneeId: 'u-prov-1', status: 'closed',
+        photos: [], fixPhotos: [], fixNotes: '', raisedAt: new Date().toISOString(),
+      })
+    })
+    const d = (await pr1(admin))!.defects.find((x) => x.id === 'df-client')!
+    assert.deepEqual([d.number, d.status, d.assigneeId, d.raisedBy], [2, 'open', undefined, 'u-client-1'])
+    // Once raised, only the office (or the trade fixing it) changes it.
+    assert.equal((await asUser(uid.sarah, `update project_defects set status = 'closed' where id = 'df-client'`)).rowCount, 0)
+    await assert.rejects(asUser(uid.sarah, `insert into project_documents (project_id, name, path) values ('pr-1', 'x', 'x')`), /row-level security/)
+  })
+
+  test('other clients see none of it', async () => {
+    for (const t of ['project_tasks', 'project_diary', 'project_defects', 'project_documents']) {
+      assert.equal((await asUser(uid.marcus, `select 1 from ${t} where project_id = 'pr-1'`)).rowCount, 0, t)
+    }
+  })
+
+  test('document files: only the office uploads; people read only the files of documents shared with them', async () => {
+    await asUser(uid.admin, `update project_documents set path = 'pr-1/a/plan.pdf' where id = 'doc-1'`)
+    const path1 = (await asUser<{ path: string }>(uid.admin, `select path from project_documents where id = 'doc-1'`)).rows[0].path
+    assert.notEqual(path1, 'pr-1/a/plan.pdf', 'path cannot change')
+    await asUser(uid.admin, `insert into storage.objects (bucket_id, name) values ('project-docs', $1)`, [path1])
+    const path2 = (await asUser<{ path: string }>(uid.admin, `select path from project_documents where id = 'doc-2'`)).rows[0].path
+    await asUser(uid.admin, `insert into storage.objects (bucket_id, name) values ('project-docs', $1)`, [path2])
+    await assert.rejects(asUser(uid.tom, `insert into storage.objects (bucket_id, name) values ('project-docs', 'pr-1/x/y.pdf')`), /row-level security/)
+    const seen = async (u: string) => (await asUser<{ name: string }>(u, `select name from storage.objects where bucket_id = 'project-docs' order by name`)).rows.map((r) => r.name)
+    assert.deepEqual(await seen(uid.tom), [path1])
+    assert.deepEqual(await seen(uid.sarah), [path1])
+    assert.deepEqual(await seen(uid.marcus), [])
+    assert.deepEqual((await seen(uid.admin)).sort(), [path1, path2].sort())
+  })
+})

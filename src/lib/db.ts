@@ -17,6 +17,10 @@ import type {
   Milestone,
   OrderItem,
   PaymentStage,
+  ProjectTask,
+  DiaryEntry,
+  Defect,
+  ProjectDocument,
   Product,
   Project,
   ProjectCost,
@@ -44,6 +48,10 @@ export const TABLES = [
   'project_variations',
   'project_payments',
   'project_costs',
+  'project_tasks',
+  'project_diary',
+  'project_defects',
+  'project_documents',
   'invoices',
   'inbox',
   'sms_log',
@@ -208,6 +216,69 @@ const costRow = (projectId: string, c: ProjectCost): Row => ({
   amount: c.amount,
 })
 
+const taskRow = (projectId: string, t: ProjectTask, position: number): Row => ({
+  id: t.id,
+  project_id: projectId,
+  position,
+  stage: t.stage,
+  title: t.title,
+  start_date: t.startDate,
+  end_date: t.endDate,
+  start_time: nul(t.startTime),
+  assignee_id: nul(t.assigneeId),
+  status: t.status,
+  notes: t.notes,
+  client_visible: t.clientVisible,
+})
+
+const diaryRow = (projectId: string, e: DiaryEntry): Row => ({
+  id: e.id,
+  project_id: projectId,
+  date: e.date,
+  weather: e.weather,
+  on_site: e.onSite,
+  work_done: e.workDone,
+  issues: e.issues,
+  photos: e.photos,
+  share_with_client: e.shareWithClient,
+  author_id: nul(e.authorId),
+  created_at: e.createdAt,
+})
+
+const defectRow = (projectId: string, d: Defect): Row => ({
+  id: d.id,
+  project_id: projectId,
+  number: d.number,
+  title: d.title,
+  location: d.location,
+  description: d.description,
+  assignee_id: nul(d.assigneeId),
+  due_date: nul(d.dueDate),
+  status: d.status,
+  photos: d.photos,
+  fix_photos: d.fixPhotos,
+  fix_notes: d.fixNotes,
+  raised_by: nul(d.raisedBy),
+  raised_at: d.raisedAt,
+  fixed_by: nul(d.fixedBy),
+  fixed_at: nul(d.fixedAt),
+  closed_by: nul(d.closedBy),
+  closed_at: nul(d.closedAt),
+})
+
+const documentRow = (projectId: string, d: ProjectDocument): Row => ({
+  id: d.id,
+  project_id: projectId,
+  name: d.name,
+  category: d.category,
+  path: d.path,
+  size_bytes: d.sizeBytes,
+  content_type: d.contentType,
+  share: d.share,
+  uploaded_by: nul(d.uploadedBy),
+  uploaded_at: d.uploadedAt,
+})
+
 const milestoneRow = (projectId: string, m: Milestone): Row => ({ id: m.id, project_id: projectId, title: m.title, date: m.date, done: m.done })
 
 const expenseRow = (projectId: string, e: Expense): Row => ({
@@ -361,6 +432,15 @@ const SPECS: Spec[] = [
   // Who proposed and who decided each variation (and when) is set by the database.
   { table: 'project_variations', rows: (d) => d.projects.flatMap((p) => p.variations.map((v) => variationRow(p.id, v))), readonly: ['created_by', 'decided_by', 'decided_at'] },
   { table: 'project_costs', rows: (d) => d.projects.flatMap((p) => p.costs.map((c) => costRow(p.id, c))) },
+  { table: 'project_tasks', rows: (d) => d.projects.flatMap((p) => p.tasks.map((t, n) => taskRow(p.id, t, n))) },
+  // Authors, numbers and who raised, fixed and closed what (and when) are set by the database.
+  { table: 'project_diary', rows: (d) => d.projects.flatMap((p) => p.diary.map((e) => diaryRow(p.id, e))), readonly: ['author_id', 'created_at'] },
+  {
+    table: 'project_defects',
+    rows: (d) => d.projects.flatMap((p) => p.defects.map((x) => defectRow(p.id, x))),
+    readonly: ['number', 'raised_by', 'raised_at', 'fixed_by', 'fixed_at', 'closed_by', 'closed_at'],
+  },
+  { table: 'project_documents', rows: (d) => d.projects.flatMap((p) => p.documents.map((x) => documentRow(p.id, x))), readonly: ['uploaded_by', 'uploaded_at'] },
   { table: 'invoices', rows: (d) => d.invoices.map(invoiceRow) },
   // After invoices: a claimed payment refers to its invoice.
   { table: 'project_payments', rows: (d) => d.projects.flatMap((p) => p.payments.map((s, n) => paymentRow(p.id, s, n))) },
@@ -492,7 +572,13 @@ interface ProjectChildren {
   variations?: Row[]
   payments?: Row[]
   costs?: Row[]
+  tasks?: Row[]
+  diary?: Row[]
+  defects?: Row[]
+  documents?: Row[]
 }
+/** "07:30:00" → "07:30". */
+const hhmm = (t: unknown) => (typeof t === 'string' && t ? t.slice(0, 5) : undefined)
 const byPosition = (a: Row, b: Row) => num(a.position) - num(b.position)
 
 export const projectFromRow = (r: Row, milestones: Row[] = [], expenses: Row[] = [], more: ProjectChildren = {}): Project => ({
@@ -559,6 +645,66 @@ export const projectFromRow = (r: Row, milestones: Row[] = [], expenses: Row[] =
       amount: num(c.amount),
     }))
     .sort((a, b) => a.date.localeCompare(b.date)),
+  tasks: [...(more.tasks ?? [])].sort(byPosition).map((t) => ({
+    id: t.id as string,
+    stage: t.stage as string,
+    title: t.title as string,
+    startDate: t.start_date as string,
+    endDate: t.end_date as string,
+    startTime: hhmm(t.start_time),
+    assigneeId: opt(t.assignee_id as string | null),
+    status: t.status as ProjectTask['status'],
+    notes: t.notes as string,
+    clientVisible: t.client_visible as boolean,
+  })),
+  diary: (more.diary ?? [])
+    .map((e) => ({
+      id: e.id as string,
+      date: e.date as string,
+      weather: e.weather as string,
+      onSite: e.on_site as string,
+      workDone: e.work_done as string,
+      issues: e.issues as string,
+      photos: (e.photos as string[]) ?? [],
+      shareWithClient: e.share_with_client as boolean,
+      authorId: opt(e.author_id as string | null),
+      createdAt: e.created_at as string,
+    }))
+    .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt)),
+  defects: (more.defects ?? [])
+    .map((x) => ({
+      id: x.id as string,
+      number: num(x.number),
+      title: x.title as string,
+      location: x.location as string,
+      description: x.description as string,
+      assigneeId: opt(x.assignee_id as string | null),
+      dueDate: opt(x.due_date as string | null),
+      status: x.status as Defect['status'],
+      photos: (x.photos as string[]) ?? [],
+      fixPhotos: (x.fix_photos as string[]) ?? [],
+      fixNotes: x.fix_notes as string,
+      raisedBy: opt(x.raised_by as string | null),
+      raisedAt: x.raised_at as string,
+      fixedBy: opt(x.fixed_by as string | null),
+      fixedAt: opt(x.fixed_at as string | null),
+      closedBy: opt(x.closed_by as string | null),
+      closedAt: opt(x.closed_at as string | null),
+    }))
+    .sort((a, b) => a.number - b.number),
+  documents: (more.documents ?? [])
+    .map((x) => ({
+      id: x.id as string,
+      name: x.name as string,
+      category: x.category as ProjectDocument['category'],
+      path: x.path as string,
+      sizeBytes: num(x.size_bytes),
+      contentType: x.content_type as string,
+      share: x.share as ProjectDocument['share'],
+      uploadedBy: opt(x.uploaded_by as string | null),
+      uploadedAt: x.uploaded_at as string,
+    }))
+    .sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name)),
   milestones: milestones
     .map((m) => ({ id: m.id as string, title: m.title as string, date: m.date as string, done: m.done as boolean }))
     .sort((a, b) => a.date.localeCompare(b.date)),
@@ -680,7 +826,7 @@ const ordersFromRows = (orders: Row[], items: Row[], notes: Row[]): StoreOrder[]
 }
 
 export async function fetchAll(db: DbAdapter): Promise<AppData> {
-  const [profiles, properties, projects, requests, milestones, expenses, quoteItems, variations, payments, costs, invoices, inbox, sms, settings, products, tradePrices, sources, orders, orderItems, orderNotes, leads, texts, quoteTemplates] =
+  const [profiles, properties, projects, requests, milestones, expenses, quoteItems, variations, payments, costs, tasks, diary, defects, documents, invoices, inbox, sms, settings, products, tradePrices, sources, orders, orderItems, orderNotes, leads, texts, quoteTemplates] =
     await Promise.all(TABLES.map((t) => db.select(t)))
   const byProject = (rows: Row[]) => {
     const m = new Map<string, Row[]>()
@@ -693,6 +839,10 @@ export async function fetchAll(db: DbAdapter): Promise<AppData> {
   const va = byProject(variations)
   const pa = byProject(payments)
   const co = byProject(costs)
+  const ta = byProject(tasks)
+  const di = byProject(diary)
+  const de = byProject(defects)
+  const dc = byProject(documents)
   const s = settings[0] as { sms?: Partial<SmsSettings>; bank?: AppData['bank'] } | undefined
   return {
     version: DATA_VERSION,
@@ -701,7 +851,7 @@ export async function fetchAll(db: DbAdapter): Promise<AppData> {
     requests: requests.sort(newestFirst('created_at')).map(requestFromRow),
     projects: projects.sort(newestFirst('created_at')).map((p) => {
       const id = p.id as string
-      return projectFromRow(p, ms.get(id), ex.get(id), { items: qi.get(id), variations: va.get(id), payments: pa.get(id), costs: co.get(id) })
+      return projectFromRow(p, ms.get(id), ex.get(id), { items: qi.get(id), variations: va.get(id), payments: pa.get(id), costs: co.get(id), tasks: ta.get(id), diary: di.get(id), defects: de.get(id), documents: dc.get(id) })
     }),
     invoices: invoices.sort(newestFirst('created_at')).map(invoiceFromRow),
     sms: sms.sort(newestFirst('sent_at')).map(smsFromRow),

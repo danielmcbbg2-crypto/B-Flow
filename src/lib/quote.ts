@@ -75,14 +75,21 @@ export function projectFinancials(p: Project, invoices: QuickBooksInvoice[]) {
   }
 }
 
-/** A new project's commercial parts, before any quote is prepared. */
-export const blankCommercials = (): Pick<Project, 'quoteItems' | 'quoteInclusions' | 'quoteExclusions' | 'variations' | 'payments' | 'costs'> => ({
+/** A new project's parts (quote, money, schedule, diary, defects, documents), all empty. */
+export const blankCommercials = (): Pick<
+  Project,
+  'quoteItems' | 'quoteInclusions' | 'quoteExclusions' | 'variations' | 'payments' | 'costs' | 'tasks' | 'diary' | 'defects' | 'documents'
+> => ({
   quoteItems: [],
   quoteInclusions: '',
   quoteExclusions: '',
   variations: [],
   payments: [],
   costs: [],
+  tasks: [],
+  diary: [],
+  defects: [],
+  documents: [],
 })
 
 /** The next QuickBooks-style invoice number, e.g. INV-2050. */
