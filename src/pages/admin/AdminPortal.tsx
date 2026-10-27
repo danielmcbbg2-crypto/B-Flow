@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Building2, CalendarDays, FolderKanban, LayoutDashboard, MessageSquareText, MessagesSquare, Receipt, ShoppingBag, Truck, Users } from 'lucide-react'
+import { Building2, CalendarDays, FileText, FolderKanban, LayoutDashboard, MessageSquareText, MessagesSquare, Receipt, ShoppingBag, Truck, Users } from 'lucide-react'
 import { GridTile, PortalShell, type NavItem } from '../../components/PortalShell'
 import { Calendar } from '../../components/Calendar'
 import { Empty, PageHeader, Stat } from '../../components/ui'
@@ -7,7 +7,9 @@ import { RequestDetail, RequestRow, useLinkedCalendar } from '../../components/w
 import { useLookup, useStore } from '../../lib/store'
 import { fmtDateTime, money } from '../../lib/utils'
 import { Dispatch } from './Dispatch'
-import { AdminProjects } from './AdminProjects'
+import { AdminProjects, claimsReady } from './AdminProjects'
+import { AdminQuotes } from './AdminQuotes'
+import { needsFollowUp } from '../../lib/quote'
 import { Finance } from './Finance'
 import { SmsGateway } from './SmsGateway'
 import { Accounts } from './Accounts'
@@ -18,7 +20,8 @@ import { PropertyCard } from '../client/ClientPortal'
 export function AdminPortal({ section }: { section: string }) {
   const { data, can } = useStore()
   const pending = data.requests.filter((r) => r.status === 'pending').length
-  const quotes = data.projects.filter((p) => p.status === 'quote_requested').length
+  const quotes = data.projects.filter((p) => p.status === 'quote_requested' || needsFollowUp(p)).length
+  const projectAlerts = data.projects.filter((p) => (p.status === 'approved' || p.status === 'in_progress') && (claimsReady(p).length > 0 || p.expenses.some((e) => e.status === 'submitted'))).length
   const newOrders = data.orders.filter((o) => o.status === 'new').length
   const newLeads = data.leads.filter((l) => l.status === 'new').length
   const canLeads = can('canManageProjects') || can('canDispatchJobs')
@@ -26,7 +29,8 @@ export function AdminPortal({ section }: { section: string }) {
     { key: 'home', label: 'Command centre', icon: LayoutDashboard },
     ...(canLeads ? [{ key: 'leads', label: 'Enquiries', icon: MessagesSquare, badge: newLeads }] : []),
     ...(can('canDispatchJobs') ? [{ key: 'dispatch', label: 'Triage & dispatch', icon: Truck, badge: pending }] : []),
-    ...(can('canManageProjects') ? [{ key: 'projects', label: 'Quotes & projects', icon: FolderKanban, badge: quotes }] : []),
+    ...(can('canManageProjects') ? [{ key: 'quotes', label: 'Quotes', icon: FileText, badge: quotes }] : []),
+    ...(can('canManageProjects') ? [{ key: 'projects', label: 'Projects', icon: FolderKanban, badge: projectAlerts }] : []),
     { key: 'calendar', label: 'Calendar', icon: CalendarDays },
     ...(can('canManageInvoices') ? [{ key: 'finance', label: 'Finance', icon: Receipt }] : []),
     { key: 'properties', label: 'Properties', icon: Building2 },
@@ -40,8 +44,10 @@ export function AdminPortal({ section }: { section: string }) {
         return canLeads ? <Leads /> : <Empty title="You don't have access to enquiries." />
       case 'dispatch':
         return can('canDispatchJobs') ? <Dispatch /> : <Empty title="You don't have access to dispatch." />
+      case 'quotes':
+        return can('canManageProjects') ? <AdminQuotes /> : <Empty title="You don't have access to quotes." />
       case 'projects':
-        return can('canManageProjects') ? <AdminProjects /> : <Empty title="You don't have access to quotes & projects." />
+        return can('canManageProjects') ? <AdminProjects /> : <Empty title="You don't have access to projects." />
       case 'calendar':
         return <AdminCalendar />
       case 'finance':
@@ -66,7 +72,7 @@ export function AdminPortal({ section }: { section: string }) {
 }
 
 function CommandCentre() {
-  const { data, user, can, cloud, update } = useStore()
+  const { data, user, can, update } = useStore()
   const [openId, setOpenId] = useState<string | null>(null)
   const messages = data.inbox.filter((m) => m.userId === user?.id && !m.read)
   const markRead = (id: string) =>
@@ -142,7 +148,7 @@ function CommandCentre() {
           <h2 className="mb-3 font-bold">Follow-ups</h2>
           <ul className="card divide-y divide-slate-100 text-sm">
             {[
-              ['#/admin/projects', 'Quote requests to price', quoteReqs.length],
+              ['#/admin/quotes', 'Quote requests to price', quoteReqs.length],
               ['#/admin/projects', 'Expenses awaiting approval', pendingExpenses.length],
               ['#/admin/finance', 'Completed jobs not yet invoiced', toInvoice.length],
               ['#/admin/sms', 'Failed SMS deliveries', failedSms],
@@ -163,12 +169,15 @@ function CommandCentre() {
           <GridTile href="#/admin/dispatch" icon={Truck} emphasis={pending.length > 0} title="Triage & dispatch" description="Review photos, assign trades, schedule visits and send SMS alerts." />
         )}
         {can('canManageProjects') && (
-          <GridTile href="#/admin/projects" icon={FolderKanban} title="Quotes & projects" description="Price quote requests, attach scope of works, manage milestones and expenses." />
+          <>
+            <GridTile href="#/admin/quotes" icon={FileText} title="Quotes" description="Price requests, chase issued quotes and see your win rate." />
+            <GridTile href="#/admin/projects" icon={FolderKanban} title="Projects" description="Run won work: milestones, payments, costs and expenses." />
+          </>
         )}
         {can('canManageInvoices') && (
           <GridTile href="#/admin/finance" icon={Receipt} title="Finance & QuickBooks" description="Track QuickBooks invoice numbers, amounts and bank transfer settlements." />
         )}
-        <GridTile href="#/admin/sms" icon={MessageSquareText} title="SMS gateway" description="Set the admin phones that get alerts, view the delivery log and send a test." meta={cloud ? 'Sent by server function' : data.smsSettings.provider === 'none' ? 'Not configured' : 'Webhook relay'} />
+        <GridTile href="#/admin/sms" icon={MessageSquareText} title="Text messages" description="Text anyone from your own phone, and see the log of texts sent from the portal." meta={<><span className="num">{data.texts.length}</span> in the log</>} />
         {can('canEditPermissions') && (
           <GridTile href="#/admin/accounts" icon={Users} title="Accounts & permissions" description="Invite clients and trades, switch roles and set granular permissions." meta={<><span className="num">{data.users.length}</span> accounts</>} />
         )}

@@ -34,6 +34,7 @@ export function TextButton({
   logAs,
   label = 'Text',
   className = 'btn-ghost',
+  onOpen,
 }: {
   phone: string
   message: string
@@ -41,11 +42,17 @@ export function TextButton({
   logAs?: string
   label?: string
   className?: string
+  /** Also called when it's opened, e.g. to record a follow-up. */
+  onOpen?: () => void
 }) {
   const { logText } = useStore()
   if (!phone.trim()) return null
   return (
-    <a className={className} href={smsHref(phone, message)} onClick={() => logText(phone, logAs ?? message, event)}>
+    <a className={className} href={smsHref(phone, message)} onClick={() => {
+        logText(phone, logAs ?? message, event)
+        onOpen?.()
+      }}
+    >
       <MessageSquare size={15} aria-hidden="true" /> {label}
     </a>
   )

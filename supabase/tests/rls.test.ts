@@ -1097,3 +1097,45 @@ describe('text log', () => {
     await assert.rejects(asUser(uid.sarah, `insert into text_log (recipient_phone, message) values ('0400000000', 'x')`), /row-level security/)
   })
 })
+
+describe('quotes pipeline', () => {
+  test('the database records when a quote is issued and answered; only the office records follow-ups', async () => {
+    const before = (await fetchAll(admin)).projects.find((p) => p.id === 'pr-3')!
+    assert.ok(before.quoteIssuedAt, 'issued time set when created as an issued quote')
+    assert.equal(before.quoteDecidedAt, undefined)
+    // The app can't backdate either time.
+    await mutate(admin, (d) => {
+      const p = d.projects.find((x) => x.id === 'pr-3')!
+      p.quoteIssuedAt = '2001-01-01T00:00:00Z'
+      p.quoteFollowedUpAt = new Date().toISOString()
+    })
+    const mid = (await fetchAll(admin)).projects.find((p) => p.id === 'pr-3')!
+    assert.equal(mid.quoteIssuedAt, before.quoteIssuedAt)
+    assert.ok(mid.quoteFollowedUpAt)
+    // A client can't mark it followed up; answering it records when.
+    await assert.rejects(asUser(uid.marcus, `update projects set quote_followed_up_at = now() where id = 'pr-3'`), /only accept or decline/)
+    await mutate(marcus, (d) => {
+      d.projects.find((x) => x.id === 'pr-3')!.status = 'approved'
+    })
+    const after = (await fetchAll(admin)).projects.find((p) => p.id === 'pr-3')!
+    assert.equal(after.quoteDecision, 'approved')
+    assert.ok(after.quoteDecidedAt)
+    // Issuing it again restarts the clock and clears the answer and follow-up.
+    await mutate(admin, (d) => {
+      d.projects.find((x) => x.id === 'pr-3')!.status = 'quoted'
+    })
+    const again = (await fetchAll(admin)).projects.find((p) => p.id === 'pr-3')!
+    assert.equal(again.quoteDecidedAt, undefined)
+    assert.equal(again.quoteFollowedUpAt, undefined)
+    assert.ok(new Date(again.quoteIssuedAt!) >= new Date(after.quoteDecidedAt!))
+  })
+
+  test('quote templates are for the office only', async () => {
+    await mutate(admin, (d) => {
+      d.quoteTemplates.push({ id: 'qt-test', name: 'Deck', items: [{ section: 'Deck', description: 'Decking', kind: 'materials', qty: 20, unit: 'm²', rate: 140 }], inclusions: '', exclusions: '', createdAt: new Date().toISOString() })
+    })
+    assert.equal((await fetchAll(admin)).quoteTemplates.find((t) => t.id === 'qt-test')!.items.length, 1)
+    assert.equal((await fetchAll(sarah)).quoteTemplates.length, 0)
+    await assert.rejects(asUser(uid.sarah, `insert into quote_templates (name) values ('x')`), /row-level security/)
+  })
+})

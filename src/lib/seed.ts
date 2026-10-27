@@ -22,7 +22,7 @@ function stamp(offsetDays: number, hour = 9): string {
 const DEMO_HASH = '0ead2060b65992dca4769af601a1b3a35ef38cfad2c2c465bb160ea764157c5d'
 
 // Bumped when the stored demo data changes; older saved demo data is replaced.
-export const DATA_VERSION = 7
+export const DATA_VERSION = 8
 
 export function createSeed(): AppData {
   return {
@@ -280,6 +280,9 @@ export function createSeed(): AppData {
         quoteInclusions: 'All labour, materials and fixtures listed; waste removal; waterproofing certificate; final clean.',
         quoteExclusions: 'Structural repairs found after strip-out (quoted as a variation); asbestos removal; painting outside the bathroom.',
         quoteValidUntil: day(-20),
+        quoteDecision: 'approved',
+        quoteIssuedAt: stamp(-36),
+        quoteDecidedAt: stamp(-33),
         variations: [
           { id: 'v-1', number: 1, title: 'Heated towel rail', description: 'Supply and install a 600 mm heated towel rail on its own switch.', amount: 680, status: 'approved', createdAt: stamp(-12), createdBy: 'u-admin', decidedBy: 'u-client-1', decidedAt: stamp(-11) },
           { id: 'v-2', number: 2, title: 'Herringbone floor tiles', description: 'Change the floor tiles to a herringbone layout (extra labour and wastage).', amount: 1240, status: 'proposed', createdAt: stamp(-1), createdBy: 'u-admin' },
@@ -311,6 +314,70 @@ export function createSeed(): AppData {
         expenses: [],
         ...blankCommercials(),
         createdAt: stamp(-3),
+      },
+      {
+        id: 'pr-3',
+        number: 212,
+        clientId: 'u-client-2',
+        propertyId: 'p-3',
+        title: 'Laundry refit',
+        description: 'New laundry cabinetry, trough and splashback tiles.',
+        type: 'renovation',
+        budget: 9000,
+        quoteAmount: 8536,
+        scopeOfWorks: 'Remove existing cabinets; supply and install 1.8 m laundry run with 45 L trough, tiled splashback.',
+        status: 'quoted',
+        milestones: [],
+        expenses: [],
+        ...blankCommercials(),
+        quoteItems: [
+          { id: 'qi-3-1', section: 'Demolition', description: 'Remove existing cabinets and trough', kind: 'labour', qty: 1, unit: 'job', rate: 480 },
+          { id: 'qi-3-2', section: 'Joinery', description: 'Laundry cabinetry, 1.8 m run', kind: 'materials', qty: 1, unit: 'set', rate: 3900 },
+          { id: 'qi-3-3', section: 'Plumbing', description: 'Trough and tapware, connect', kind: 'subcontract', qty: 1, unit: 'job', rate: 1850 },
+          { id: 'qi-3-4', section: 'Tiling', description: 'Splashback tiling', kind: 'labour', qty: 4.5, unit: 'm²', rate: 340 },
+        ],
+        quoteInclusions: 'Supply and installation of all items listed, waste removal.',
+        quoteExclusions: 'Appliances, electrical work.',
+        quoteValidUntil: day(4),
+        quoteIssuedAt: stamp(-8),
+        createdAt: stamp(-12),
+      },
+      {
+        id: 'pr-4',
+        number: 209,
+        clientId: 'u-client-2',
+        propertyId: 'p-3',
+        title: 'Front fence and gate',
+        description: 'Replace front picket fence and gate.',
+        type: 'renovation',
+        budget: 6000,
+        quoteAmount: 7480,
+        scopeOfWorks: 'Remove existing fence, install 14 m timber picket fence with single gate.',
+        status: 'rejected',
+        quoteDecision: 'rejected',
+        milestones: [],
+        expenses: [],
+        ...blankCommercials(),
+        quoteIssuedAt: stamp(-24),
+        quoteDecidedAt: stamp(-15),
+        createdAt: stamp(-28),
+      },
+    ],
+    quoteTemplates: [
+      {
+        id: 'qt-1',
+        name: 'Standard bathroom renovation',
+        items: [
+          { section: 'Demolition', description: 'Strip-out of existing bathroom', kind: 'labour', qty: 2, unit: 'day', rate: 980 },
+          { section: 'Demolition', description: 'Skip bin (6 m³)', kind: 'hire', qty: 1, unit: 'item', rate: 480 },
+          { section: 'Services', description: 'Plumbing rough-in and fit-off', kind: 'subcontract', qty: 1, unit: 'job', rate: 4850 },
+          { section: 'Services', description: 'Electrical rough-in and fit-off', kind: 'subcontract', qty: 1, unit: 'job', rate: 2600 },
+          { section: 'Waterproofing', description: 'Membrane system to AS 3740', kind: 'subcontract', qty: 9.5, unit: 'm²', rate: 95 },
+          { section: 'Tiling', description: 'Wall and floor tiling', kind: 'labour', qty: 32, unit: 'm²', rate: 145 },
+        ],
+        inclusions: 'All labour and materials listed, waste removal, final clean.',
+        exclusions: 'Structural changes, fixtures not listed, council permits.',
+        createdAt: stamp(-60),
       },
     ],
     invoices: [

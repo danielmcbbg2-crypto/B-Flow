@@ -12,6 +12,7 @@ import type {
   InboxMessage,
   Lead,
   TextLogEntry,
+  QuoteTemplate,
   MaintenanceRequest,
   Milestone,
   OrderItem,
@@ -55,6 +56,7 @@ export const TABLES = [
   'order_notes',
   'leads',
   'text_log',
+  'quote_templates',
 ] as const
 export type TableName = (typeof TABLES)[number]
 
@@ -154,6 +156,9 @@ const projectRow = (p: Project): Row => ({
   quote_inclusions: p.quoteInclusions,
   quote_exclusions: p.quoteExclusions,
   quote_valid_until: nul(p.quoteValidUntil),
+  quote_issued_at: nul(p.quoteIssuedAt),
+  quote_decided_at: nul(p.quoteDecidedAt),
+  quote_followed_up_at: nul(p.quoteFollowedUpAt),
 })
 
 const quoteItemRow = (projectId: string, i: QuoteItem, position: number): Row => ({
@@ -348,7 +353,7 @@ const SPECS: Spec[] = [
   { table: 'properties', rows: (d) => d.properties.map(propertyRow) },
   // created_by, quote_decided_by/quote_decision and acknowledged_by are stamped by the database from
   // whoever is signed in, so the app never sends them.
-  { table: 'projects', rows: (d) => d.projects.map(projectRow), readonly: ['number', 'created_by', 'quote_decided_by', 'quote_decision'] },
+  { table: 'projects', rows: (d) => d.projects.map(projectRow), readonly: ['number', 'created_by', 'quote_decided_by', 'quote_decision', 'quote_issued_at', 'quote_decided_at'] },
   { table: 'requests', rows: (d) => d.requests.map(requestRow), readonly: ['number', 'created_by'] },
   { table: 'project_milestones', rows: (d) => d.projects.flatMap((p) => p.milestones.map((m) => milestoneRow(p.id, m))) },
   { table: 'project_expenses', rows: (d) => d.projects.flatMap((p) => p.expenses.map((e) => expenseRow(p.id, e))), readonly: ['created_by'] },
@@ -383,6 +388,7 @@ const SPECS: Spec[] = [
   // Leads only arrive through submit_lead; the office changes their status and notes.
   { table: 'leads', rows: (d) => d.leads.map(leadRow), readonly: ['number'] },
   // Who opened each text, and when, is set by the database; entries are never changed.
+  { table: 'quote_templates', rows: (d) => d.quoteTemplates.map((t) => ({ id: t.id, name: t.name, items: t.items, inclusions: t.inclusions, exclusions: t.exclusions, created_at: t.createdAt })) },
   { table: 'text_log', rows: (d) => d.texts.map(textRow), readonly: ['opened_by', 'opened_at'] },
 ]
 
@@ -509,6 +515,9 @@ export const projectFromRow = (r: Row, milestones: Row[] = [], expenses: Row[] =
   quoteInclusions: (r.quote_inclusions as string | undefined) ?? '',
   quoteExclusions: (r.quote_exclusions as string | undefined) ?? '',
   quoteValidUntil: opt(r.quote_valid_until as string | null | undefined),
+  quoteIssuedAt: opt(r.quote_issued_at as string | null | undefined),
+  quoteDecidedAt: opt(r.quote_decided_at as string | null | undefined),
+  quoteFollowedUpAt: opt(r.quote_followed_up_at as string | null | undefined),
   quoteItems: [...(more.items ?? [])].sort(byPosition).map((i) => ({
     id: i.id as string,
     section: i.section as string,
@@ -671,7 +680,7 @@ const ordersFromRows = (orders: Row[], items: Row[], notes: Row[]): StoreOrder[]
 }
 
 export async function fetchAll(db: DbAdapter): Promise<AppData> {
-  const [profiles, properties, projects, requests, milestones, expenses, quoteItems, variations, payments, costs, invoices, inbox, sms, settings, products, tradePrices, sources, orders, orderItems, orderNotes, leads, texts] =
+  const [profiles, properties, projects, requests, milestones, expenses, quoteItems, variations, payments, costs, invoices, inbox, sms, settings, products, tradePrices, sources, orders, orderItems, orderNotes, leads, texts, quoteTemplates] =
     await Promise.all(TABLES.map((t) => db.select(t)))
   const byProject = (rows: Row[]) => {
     const m = new Map<string, Row[]>()
@@ -727,6 +736,16 @@ export async function fetchAll(db: DbAdapter): Promise<AppData> {
       openedBy: opt(r.opened_by as string | null),
       openedAt: r.opened_at as string,
     })),
+    quoteTemplates: quoteTemplates
+      .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+      .map((r) => ({
+        id: r.id as string,
+        name: r.name as string,
+        items: (r.items as QuoteTemplate['items']) ?? [],
+        inclusions: r.inclusions as string,
+        exclusions: r.exclusions as string,
+        createdAt: r.created_at as string,
+      })),
   }
 }
 
@@ -746,5 +765,6 @@ export function emptyData(): AppData {
     orders: [],
     leads: [],
     texts: [],
+    quoteTemplates: [],
   }
 }
