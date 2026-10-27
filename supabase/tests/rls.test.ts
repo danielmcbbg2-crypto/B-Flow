@@ -1141,11 +1141,9 @@ describe('quotes pipeline', () => {
 })
 
 describe('project workspace: schedule, diary, defects, documents', () => {
-  let tom: DbAdapter
   before(async () => {
     uid.tom = await inviteAuthUser('tom@gallagherplumbing.com.au')
     await asUser(uid.tom, 'select activate_my_account()')
-    tom = adapter(uid.tom)
   })
   const pr1 = async (db: DbAdapter) => (await fetchAll(db)).projects.find((p) => p.id === 'pr-1')
 
