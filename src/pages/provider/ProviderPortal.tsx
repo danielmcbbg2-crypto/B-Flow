@@ -1,16 +1,16 @@
 import { useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { CalendarDays, FolderKanban, Home, Inbox as InboxIcon, Receipt, ShoppingBag, Wrench, Check, Plus } from 'lucide-react'
 import { GridTile, PortalShell, type NavItem } from '../../components/PortalShell'
-import { Calendar } from '../../components/Calendar'
+import { Calendar, type CalEvent } from '../../components/Calendar'
 import { Empty, Field, Modal, PageHeader, PhotoInput, Sep, Status, Tabs } from '../../components/ui'
 import { ProjectStatusText } from '../../components/status'
-import { ProjectProgress, RequestDetail, RequestRow, useLinkedCalendar } from '../../components/works'
+import { ProjectProgress, RequestDetail, RequestRow } from '../../components/works'
 import { doneBy, useLookup, useStore } from '../../lib/store'
 import { PortalStore } from '../store/Shop'
 import { SiteHeader, SiteView, fmtTime } from '../../components/ProjectSite'
 import { useHashRoute } from '../../lib/router'
 import { REQUEST_STATUS_LABEL, type Expense, type RequestStatus } from '../../lib/types'
-import { cx, fmtDate, fmtDateTime, money, todayISO, uid } from '../../lib/utils'
+import { cx, fmtDate, fmtDateTime, money, todayISO, toISODate, uid } from '../../lib/utils'
 
 export function ProviderPortal({ section }: { section: string }) {
   const { data, user } = useStore()
@@ -82,7 +82,7 @@ function Overview({ unread }: { unread: number }) {
         <GridTile href="#/provider/inbox" icon={InboxIcon} emphasis={unread > 0} title="Inbox" description="Work orders to acknowledge and messages from the office." meta={<><span className="num">{unread}</span> need attention</>} />
         <GridTile href="#/provider/hub" icon={Wrench} title="Maintenance Hub" description="Your live work orders: update status and upload completion photos." meta={<><span className="num">{live.length}</span> live<Sep /><span className="num">{todays}</span> today</>} />
         <GridTile href="#/provider/projects" icon={FolderKanban} title="Live projects" description="Your bookings, the site diary, defects to fix and the job's documents." meta={<><span className="num">{liveProjects.length}</span> active<Sep /><span className="num">{a.bookings.length}</span> bookings</>} />
-        <GridTile href="#/provider/calendar" icon={CalendarDays} title="Project calendar" description="Maintenance visits and project milestones on one calendar. Drag to reschedule." />
+        <GridTile href="#/provider/calendar" icon={CalendarDays} title="Calendar" description="Your maintenance visits and project bookings, and who else is booked on your projects. Move your own." />
         <GridTile href="#/provider/budget" icon={Receipt} title="Budget & expenses" description="Submit materials, labour and hire costs against project budgets." meta={<><span className="num">{pendingExp}</span> awaiting approval</>} />
       </div>
       {a.bookings.length > 0 && (
@@ -383,27 +383,133 @@ function ProjectList() {
   )
 }
 
+const DAY_MS = 86_400_000
+const shiftDate = (iso: string, days: number) => toISODate(new Date(new Date(`${iso}T00:00:00`).getTime() + days * DAY_MS))
+const daysBetween = (a: string, b: string) => Math.round((new Date(`${b}T00:00:00`).getTime() - new Date(`${a}T00:00:00`).getTime()) / DAY_MS)
+
+/**
+ * The trade's own maintenance orders and project bookings, which they can move (drag, or click and
+ * pick a day), plus other trades' bookings on the same projects so they know who else is on site.
+ * Nothing from other jobs, and nothing else can be moved. The office is told when they move one.
+ */
 function ProviderCalendar() {
-  const { canAct } = useStore()
+  const { user, update, canAct } = useStore()
   const a = useAssigned()
   const lk = useLookup()
-  const cal = useLinkedCalendar(a.requests, a.projects)
+  // The trade can always move their own; an admin in their dashboard needs the office permission.
+  const canMove = (ev: CalEvent) => !ev.locked && canAct(ev.kind === 'request' ? 'canDispatchJobs' : 'canManageProjects')
+  const anyMovable = canAct('canDispatchJobs') || canAct('canManageProjects')
   const [openId, setOpenId] = useState<string | null>(null)
+  const [picked, setPicked] = useState<CalEvent | null>(null)
+  const [moveTo, setMoveTo] = useState('')
+  const live = (status: string) => status === 'approved' || status === 'in_progress'
+  const events = useMemo<CalEvent[]>(() => {
+    const evs: CalEvent[] = []
+    for (const r of a.requests) {
+      if (!r.scheduledDate) continue
+      const prop = lk.property(r.propertyId)
+      evs.push({ id: `r:${r.id}`, date: r.scheduledDate, title: `#${r.number} ${r.title}`, kind: 'request', urgent: r.urgency === 'urgent', done: r.status === 'completed', subtitle: prop ? `${prop.address}, ${prop.suburb}` : undefined })
+    }
+    for (const p of a.worksOn) {
+      if (!live(p.status)) continue
+      for (const t of p.tasks) {
+        const mine = t.assigneeId === user?.id
+        // Only bookings: tasks with no trade yet aren't anyone's.
+        if (!t.assigneeId) continue
+        const days = daysBetween(t.startDate, t.endDate) + 1
+        const who = mine ? '' : `${lk.user(t.assigneeId)?.name ?? 'Another trade'}: `
+        evs.push({
+          id: `t:${p.id}:${t.id}`,
+          date: t.startDate,
+          title: `${who}${t.title}${days > 1 ? ` (${days} days)` : ''}`,
+          kind: 'booking',
+          locked: !mine,
+          done: t.status === 'done',
+          subtitle: `P-${p.number} ${p.title}`,
+        })
+      }
+    }
+    return evs
+  }, [a, lk, user])
+
+  const move = (ev: CalEvent, date: string) => {
+    if (!canMove(ev) || !date) return
+    update((d) => {
+      const [kind, x, y] = ev.id.split(':')
+      if (kind === 'r') {
+        const r = d.requests.find((q) => q.id === x && q.assignedProviderId === user?.id)
+        if (r) r.scheduledDate = date
+      } else if (kind === 't') {
+        const t = d.projects.find((p) => p.id === x)?.tasks.find((q) => q.id === y && q.assigneeId === user?.id)
+        if (t) {
+          // The booking keeps its length.
+          const by = daysBetween(t.startDate, date)
+          t.startDate = date
+          t.endDate = shiftDate(t.endDate, by)
+        }
+      }
+    })
+  }
+  const projectOf = (ev: CalEvent) => (ev.kind === 'booking' ? ev.id.split(':')[1] : undefined)
+
   return (
     <>
-      <PageHeader title="Project calendar" subtitle="Maintenance visits and renovation milestones, synced with your work orders." />
+      <PageHeader title="Calendar" subtitle="Your maintenance visits and project bookings, and who else is booked on your projects. Move your own by dragging, or click one to pick a new day." />
       <Calendar
-        events={cal.events}
-        onMove={
-          // In an opened dashboard the admin's own permissions apply, as on the admin calendar.
-          canAct('canDispatchJobs') || canAct('canManageProjects')
-            ? (ev, date) => {
-                if (canAct(ev.kind === 'request' ? 'canDispatchJobs' : 'canManageProjects')) cal.onMove(ev, date)
-              }
-            : undefined
-        }
-        onOpen={(ev) => ev.kind === 'request' && setOpenId(ev.id.slice(2))}
+        events={events}
+        onMove={anyMovable ? move : undefined}
+        onOpen={(ev) => {
+          setPicked(ev)
+          setMoveTo(ev.date)
+        }}
       />
+      <Modal open={!!picked} onClose={() => setPicked(null)} title={picked?.title ?? ''}>
+        {picked && (
+          <div className="space-y-4">
+            {picked.subtitle && <p className="text-sm text-slate-600">{picked.subtitle}</p>}
+            {picked.locked ? (
+              <p className="text-sm text-slate-600">
+                Another trade's booking on your project, on <span className="num font-semibold">{fmtDate(picked.date)}</span>. Only they or the office can move it.
+              </p>
+            ) : !canMove(picked) ? (
+              <p className="text-sm text-slate-600">
+                On <span className="num font-semibold">{fmtDate(picked.date)}</span>. Your admin account needs “{picked.kind === 'request' ? 'Dispatch & assign jobs' : 'Manage projects & quotes'}” to move it here.
+              </p>
+            ) : (
+              <form
+                className="flex flex-wrap items-end gap-3"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  if (moveTo !== picked.date) move(picked, moveTo)
+                  setPicked(null)
+                }}
+              >
+                <Field label={picked.kind === 'request' ? 'Visit day' : 'Start day'}>
+                  <input type="date" className="input num" required value={moveTo} onChange={(e) => setMoveTo(e.target.value)} />
+                </Field>
+                <button className="btn-primary" disabled={!moveTo || moveTo === picked.date}>Move</button>
+                <p className="w-full text-xs text-slate-500">The office is told when you move a booking.</p>
+              </form>
+            )}
+            <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
+              {picked.kind === 'request' ? (
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={() => {
+                    setOpenId(picked.id.slice(2))
+                    setPicked(null)
+                  }}
+                >
+                  Open job
+                </button>
+              ) : (
+                <a className="btn-ghost" href={`#/provider/projects/${projectOf(picked)}`}>Open project</a>
+              )}
+            </div>
+          </div>
+        )}
+      </Modal>
       <RequestDetail r={lk.request(openId ?? undefined)} open={!!openId} onClose={() => setOpenId(null)} />
     </>
   )

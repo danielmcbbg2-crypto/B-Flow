@@ -6,8 +6,10 @@ export interface CalEvent {
   id: string
   date: string
   title: string
-  kind: 'request' | 'milestone'
+  kind: 'request' | 'milestone' | 'booking'
   done?: boolean
+  /** Shown but can't be dragged (e.g. another trade's booking). */
+  locked?: boolean
   urgent?: boolean
   subtitle?: string
 }
@@ -16,6 +18,8 @@ const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
 /** Background, left edge and text colour of an event chip. Strike-through for done items is added by the caller. */
 function chipTone(ev: CalEvent) {
+  if (ev.kind === 'booking')
+    return cx('border-l-[3px] text-left font-medium', ev.locked ? 'border-dashed border-slate-300 bg-white text-slate-500' : 'border-sky-700 bg-sky-50 text-slate-900')
   const bg = ev.kind === 'milestone' ? 'bg-white ring-1 ring-inset ring-slate-200' : ev.urgent ? 'bg-accent-soft' : 'bg-slate-100'
   const edge = ev.done
     ? 'border-slate-300 text-slate-600'
@@ -81,7 +85,7 @@ export function Calendar({
     setDragOver(null)
     const id = e.dataTransfer.getData('text/plain')
     const ev = events.find((x) => x.id === id)
-    if (ev && ev.date !== date) onMove?.(ev, date)
+    if (ev && !ev.locked && ev.date !== date) onMove?.(ev, date)
   }
 
   return (
@@ -173,7 +177,7 @@ export function Calendar({
                     {list.map((ev) => (
                       <button
                         key={ev.id}
-                        draggable={!!onMove}
+                        draggable={!!onMove && !ev.locked}
                         onDragStart={(e) => e.dataTransfer.setData('text/plain', ev.id)}
                         onClick={() => onOpen?.(ev)}
                         title={ev.subtitle ? `${ev.title} — ${ev.subtitle}` : ev.title}
@@ -181,7 +185,7 @@ export function Calendar({
                           'block w-full truncate px-1.5 py-1 text-[11px] leading-tight',
                           chipTone(ev),
                           ev.done && DONE,
-                          onMove && 'cursor-grab active:cursor-grabbing',
+                          onMove && !ev.locked && 'cursor-grab active:cursor-grabbing',
                         )}
                       >
                         {ev.title}
@@ -197,10 +201,12 @@ export function Calendar({
       <div className="flex flex-wrap gap-4 border-t border-slate-200 px-4 py-2.5 text-xs text-slate-500">
         <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 bg-slate-900" />Maintenance visit</span>
         <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 bg-accent" />Urgent visit</span>
-        <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 bg-slate-400" />Project milestone</span>
+        {events.some((e) => e.kind === 'milestone') && <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 bg-slate-400" />Project milestone</span>}
+        {events.some((e) => e.kind === 'booking' && !e.locked) && <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 bg-sky-700" />Your project booking</span>}
+        {events.some((e) => e.kind === 'booking' && e.locked) && <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 border border-dashed border-slate-400" />Other trades on your projects</span>}
         {onMove && (
           // Native drag and drop needs a mouse, and the phone agenda has no grid to drop onto.
-          <span className="ml-auto max-sm:hidden [@media(pointer:coarse)]:hidden">Drag an item to reschedule. The linked work order or milestone updates too.</span>
+          <span className="ml-auto max-sm:hidden [@media(pointer:coarse)]:hidden">Drag an item to reschedule. The linked work order, booking or milestone updates too.</span>
         )}
       </div>
     </div>
