@@ -12,6 +12,7 @@ import { navigate } from '../../lib/router'
 import { CostsPanel, PaymentsPanel, QuoteBuilder, VariationsPanel } from './ProjectCommercials'
 import { DefectsPanel, DiaryPanel, DocumentsPanel, Fact, SchedulePanel } from './ProjectWorkspace'
 import { useHashRoute } from '../../lib/router'
+import { BookingReminders } from './BookingReminders'
 
 /**
  * The diary, defects and documents are saved as they're added (by the office, trades and the
@@ -123,6 +124,9 @@ export function AdminProjects() {
         <Stat label="Contract value" value={money(active.reduce((s, p) => s + contractTotal(p), 0))} hint="active, inc GST" />
         <Stat label="Ready to claim" value={money(ready.reduce((s, x) => s + x.amount, 0))} hint={`${ready.length} payment stage${ready.length === 1 ? '' : 's'}`} />
         <Stat label="Behind schedule" value={overdue.length} hint="with an overdue milestone" />
+      </div>
+      <div className="mb-6">
+        <BookingReminders />
       </div>
       {pendingExpenses.length > 0 && (
         <section className="card mb-6 overflow-hidden">
