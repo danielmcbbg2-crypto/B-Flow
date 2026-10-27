@@ -8,7 +8,19 @@ import { useStore } from '../lib/store'
  * Android alike.
  */
 export function smsHref(phone: string, body: string): string {
-  return `sms:${phone.replace(/[^\d+]/g, '')}?&body=${encodeURIComponent(body)}`
+  return `sms:${intlNumber(phone)}?&body=${encodeURIComponent(body)}`
+}
+
+/**
+ * Australian numbers in international form (0433 555 642 → +61433555642), so Messages reads them the
+ * same on any device, whatever its region (a Mac set to another country misreads 04… numbers).
+ */
+export function intlNumber(phone: string): string {
+  const p = phone.replace(/[^\d+]/g, '')
+  if (p.startsWith('+')) return p
+  if (/^0[2-578]\d{8}$/.test(p)) return `+61${p.slice(1)}`
+  if (/^61[2-578]\d{8}$/.test(p)) return `+${p}`
+  return p
 }
 
 /**
