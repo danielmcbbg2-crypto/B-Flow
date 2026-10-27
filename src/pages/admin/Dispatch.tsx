@@ -149,7 +149,7 @@ function AssignForm({ r, onClose }: { r: MaintenanceRequest; onClose: () => void
           <p className="text-sm text-slate-600">
             {text.name} has the work order in their portal. Text them from your phone:
           </p>
-          <TextComposer phone={text.phone} initial={text.message} sendLabel={`Text ${text.name.split(' ')[0]}`} />
+          <TextComposer phone={text.phone} initial={text.message} event={`Work order #${r.number}`} sendLabel={`Text ${text.name.split(' ')[0]}`} />
           <div className="flex justify-end border-t border-slate-100 pt-4">
             <button type="button" className="btn-primary" onClick={onClose}>Done</button>
           </div>

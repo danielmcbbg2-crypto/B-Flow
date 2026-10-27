@@ -49,7 +49,7 @@ In **Edge Functions → Deploy a new function → Via Editor**, create these fun
 
 ### 4. Text messages (from your own phone)
 
-Texts to trades, clients and website requests go from **your own mobile number**: wherever the portal texts someone (Admin → **Text messages**, the step after dispatching a job, **Text** on a website request, **Text it** on an invite), it opens Messages on your iPhone (or a Mac signed in to Messages) with the number and text filled in. Check it, tap Send, and the conversation stays in your Messages with replies coming to your phone as usual. Nothing to set up. On a Windows computer, use **Copy text** and send it from your phone.
+Texts to trades, clients and website requests go from **your own mobile number**: wherever the portal texts someone (Admin → **Text messages**, the step after dispatching a job, **Text** on a website request, **Text it** on an invite), it opens Messages on your iPhone (or a Mac signed in to Messages) with the number and text filled in. Check it, tap Send, and the conversation stays in your Messages with replies coming to your phone as usual. Nothing to set up. On a Windows computer, use **Copy text** and send it from your phone. Every text opened (or copied) from the portal is kept in the **Text log** on that page: who opened it, to whom, for what and the text. The portal can't see whether you tapped Send, so your Messages app is the record of what was actually sent. Invite and password texts are logged without their sign-in link, and log entries can't be changed or deleted.
 
 ### 4b. Automatic alerts (optional, kept secret on the server)
 

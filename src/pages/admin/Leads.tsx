@@ -186,6 +186,7 @@ function LeadDetail({ lead, onClose }: { lead: Lead; onClose: () => void }) {
           {lead.phone && (
             <TextButton
               phone={lead.phone}
+              event={`Website request #${lead.number}`}
               label="Text"
               className={lead.contactBy === 'phone' ? 'btn-primary' : 'btn-ghost'}
               message={`Hi ${lead.name.split(' ')[0]}, it's Next Phase Maintenance about your ${lead.services[0]?.replace(/ Services$/, '').toLowerCase() ?? 'maintenance'} request (#${lead.number}). `}

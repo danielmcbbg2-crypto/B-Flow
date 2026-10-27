@@ -11,6 +11,7 @@ import type {
   Expense,
   InboxMessage,
   Lead,
+  TextLogEntry,
   MaintenanceRequest,
   Milestone,
   OrderItem,
@@ -53,6 +54,7 @@ export const TABLES = [
   'order_items',
   'order_notes',
   'leads',
+  'text_log',
 ] as const
 export type TableName = (typeof TABLES)[number]
 
@@ -314,6 +316,15 @@ const leadRow = (l: Lead): Row => ({
   created_at: l.createdAt,
 })
 
+const textRow = (t: TextLogEntry): Row => ({
+  id: t.id,
+  recipient_phone: t.to,
+  message: t.message,
+  trigger_event: t.event,
+  opened_by: nul(t.openedBy),
+  opened_at: t.openedAt,
+})
+
 const orderItemRow = (orderId: string, i: OrderItem): Row => ({
   id: i.id,
   order_id: orderId,
@@ -371,6 +382,8 @@ const SPECS: Spec[] = [
   { table: 'order_notes', rows: (d) => d.orders.filter((o) => o.adminNotes).map((o) => ({ id: o.id, notes: o.adminNotes })) },
   // Leads only arrive through submit_lead; the office changes their status and notes.
   { table: 'leads', rows: (d) => d.leads.map(leadRow), readonly: ['number'] },
+  // Who opened each text, and when, is set by the database; entries are never changed.
+  { table: 'text_log', rows: (d) => d.texts.map(textRow), readonly: ['opened_by', 'opened_at'] },
 ]
 
 const strip = (row: Row, cols: string[] = []) => {
@@ -658,7 +671,7 @@ const ordersFromRows = (orders: Row[], items: Row[], notes: Row[]): StoreOrder[]
 }
 
 export async function fetchAll(db: DbAdapter): Promise<AppData> {
-  const [profiles, properties, projects, requests, milestones, expenses, quoteItems, variations, payments, costs, invoices, inbox, sms, settings, products, tradePrices, sources, orders, orderItems, orderNotes, leads] =
+  const [profiles, properties, projects, requests, milestones, expenses, quoteItems, variations, payments, costs, invoices, inbox, sms, settings, products, tradePrices, sources, orders, orderItems, orderNotes, leads, texts] =
     await Promise.all(TABLES.map((t) => db.select(t)))
   const byProject = (rows: Row[]) => {
     const m = new Map<string, Row[]>()
@@ -706,6 +719,14 @@ export async function fetchAll(db: DbAdapter): Promise<AppData> {
       clientId: opt(r.client_id as string | null),
       createdAt: r.created_at as string,
     })),
+    texts: texts.sort(newestFirst('opened_at')).map((r) => ({
+      id: r.id as string,
+      to: r.recipient_phone as string,
+      message: r.message as string,
+      event: r.trigger_event as string,
+      openedBy: opt(r.opened_by as string | null),
+      openedAt: r.opened_at as string,
+    })),
   }
 }
 
@@ -724,5 +745,6 @@ export function emptyData(): AppData {
     products: [],
     orders: [],
     leads: [],
+    texts: [],
   }
 }

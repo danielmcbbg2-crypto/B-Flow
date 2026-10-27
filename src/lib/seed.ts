@@ -22,7 +22,7 @@ function stamp(offsetDays: number, hour = 9): string {
 const DEMO_HASH = '0ead2060b65992dca4769af601a1b3a35ef38cfad2c2c465bb160ea764157c5d'
 
 // Bumped when the stored demo data changes; older saved demo data is replaced.
-export const DATA_VERSION = 6
+export const DATA_VERSION = 7
 
 export function createSeed(): AppData {
   return {
@@ -529,5 +529,6 @@ export function createSeed(): AppData {
         createdAt: stamp(-2, 14),
       },
     ],
+    texts: [],
   }
 }

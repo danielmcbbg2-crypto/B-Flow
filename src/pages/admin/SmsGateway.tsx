@@ -47,7 +47,7 @@ export function SmsGateway() {
             </Field>
           </div>
           {to.phone.replace(/\D/g, '').length >= 8 ? (
-            <TextComposer key={to.key || 'typed'} phone={to.phone} initial={toContact ? `Hi ${toContact.name.split(' ')[0]}, it's Next Phase Maintenance. ` : 'Hi, it’s Next Phase Maintenance. '} />
+            <TextComposer key={to.key || 'typed'} phone={to.phone} event={toContact ? `Text to ${toContact.name}` : 'Text'} initial={toContact ? `Hi ${toContact.name.split(' ')[0]}, it's Next Phase Maintenance. ` : 'Hi, it’s Next Phase Maintenance. '} />
           ) : (
             <p className="text-sm text-slate-500">Choose someone or type a mobile number.</p>
           )}
@@ -64,6 +64,49 @@ export function SmsGateway() {
           </p>
         </section>
       </div>
+
+      <section className="mb-8">
+        <h2 className="mb-1 font-bold">Text log</h2>
+        <p className="mb-3 text-sm text-slate-500">
+          Every text opened in Messages from the portal: who opened it, to whom and when. The portal can't see whether you tapped Send; your Messages
+          app has the conversation. Entries can't be changed or deleted.
+        </p>
+        {data.texts.length === 0 ? (
+          <Empty title="No texts yet">Texts you open from the portal are listed here.</Empty>
+        ) : (
+          <div className="card overflow-x-auto">
+            <table className="w-full min-w-[760px]">
+              <thead className="border-b border-slate-200 bg-slate-50">
+                <tr>
+                  <th className="th">Opened</th>
+                  <th className="th">By</th>
+                  <th className="th">To</th>
+                  <th className="th">For</th>
+                  <th className="th">Text</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {data.texts.slice(0, 200).map((t) => {
+                  const digits = t.to.replace(/\D/g, '')
+                  const who = data.users.find((u) => u.phone && u.phone.replace(/\D/g, '') === digits)
+                  return (
+                    <tr key={t.id}>
+                      <td className="td num whitespace-nowrap text-slate-600">{fmtDateTime(t.openedAt)}</td>
+                      <td className="td whitespace-nowrap">{data.users.find((u) => u.id === t.openedBy)?.name ?? '—'}</td>
+                      <td className="td whitespace-nowrap">
+                        {who && <p>{who.name}</p>}
+                        <p className="num text-xs text-slate-500">{t.to}</p>
+                      </td>
+                      <td className="td whitespace-nowrap">{t.event}</td>
+                      <td className="td max-w-sm whitespace-pre-wrap text-slate-700">{t.message}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
       <details className="card mb-8 p-6">
         <summary className="cursor-pointer font-bold">Automatic alerts (optional)</summary>

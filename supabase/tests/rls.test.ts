@@ -1076,3 +1076,24 @@ describe('website maintenance requests', () => {
     )
   })
 })
+
+describe('text log', () => {
+  test('admins record texts opened in Messages; the database says who and when', async () => {
+    await mutate(admin, (d) => {
+      d.texts.unshift({ id: 'tx-1', to: '0433 555 642', message: 'Work order #1', event: 'Work order #1', openedBy: 'u-client-1', openedAt: '2001-01-01T00:00:00Z' })
+    })
+    const t = (await fetchAll(admin)).texts.find((x) => x.id === 'tx-1')!
+    assert.equal(t.openedBy, 'u-admin')
+    assert.ok(new Date(t.openedAt).getFullYear() > 2001)
+  })
+
+  test("entries can't be changed or deleted, and only admins see or add them", async () => {
+    const upd = await asUser(uid.admin, `update text_log set message = 'changed' where id = 'tx-1'`)
+    assert.equal(upd.rowCount, 0)
+    const del = await asUser(uid.admin, `delete from text_log where id = 'tx-1'`)
+    assert.equal(del.rowCount, 0)
+    assert.equal((await fetchAll(admin)).texts.find((x) => x.id === 'tx-1')!.message, 'Work order #1')
+    assert.equal((await fetchAll(sarah)).texts.length, 0)
+    await assert.rejects(asUser(uid.sarah, `insert into text_log (recipient_phone, message) values ('0400000000', 'x')`), /row-level security/)
+  })
+})
