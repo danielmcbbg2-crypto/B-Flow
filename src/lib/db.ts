@@ -86,15 +86,8 @@ const opt = <T>(v: T | null | undefined): T | undefined => (v === null ? undefin
 const nul = <T>(v: T | undefined): T | null => (v === undefined ? null : v)
 const num = (v: unknown): number => (typeof v === 'number' ? v : Number(v))
 
-export const DEFAULT_SMS: SmsSettings = {
-  provider: 'server',
-  fromNumber: '',
-  webhookUrl: '',
-  recipients: [],
-  notifyOnNewRequest: true,
-  notifyOnUrgentOnly: false,
-  notifyProviderOnAssign: true,
-}
+import { DEFAULT_SMS } from './types'
+export { DEFAULT_SMS }
 
 // ───────────── to rows ─────────────
 
@@ -340,6 +333,9 @@ const settingsRow = (d: AppData): Row => ({
     notifyOnNewRequest: d.smsSettings.notifyOnNewRequest,
     notifyOnUrgentOnly: d.smsSettings.notifyOnUrgentOnly,
     notifyProviderOnAssign: d.smsSettings.notifyProviderOnAssign,
+    bookingReminderTexts: d.smsSettings.bookingReminderTexts,
+    autoReply: d.smsSettings.autoReply,
+    autoReplyMessage: d.smsSettings.autoReplyMessage.slice(0, 480),
   },
   bank: d.bank,
 })

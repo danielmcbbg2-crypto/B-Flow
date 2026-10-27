@@ -4,7 +4,7 @@ import { TextButton } from '../../components/TextMessage'
 import { fmtTime } from '../../components/ProjectSite'
 import { BRAND } from '../../lib/brand'
 import { useLookup, useStore } from '../../lib/store'
-import type { TextLogEntry, UserAccount as Profile } from '../../lib/types'
+import type { UserAccount as Profile } from '../../lib/types'
 import { cx, todayISO, toISODate } from '../../lib/utils'
 
 /** A booked start on a given day: a project task or a scheduled maintenance job. */
@@ -104,11 +104,13 @@ export function BookingReminders() {
   const tomorrow = addDays(todayISO(), 1)
   const [day, setDay] = useState(tomorrow)
   const bookings = useBookings(day)
+  // A reminder has gone if someone opened it in Messages (text log) or ClickSend sent it automatically.
   const sentBy = useMemo(() => {
-    const m = new Map<string, TextLogEntry>()
-    for (const t of data.texts) if (t.event.startsWith('Booking reminder · ') && !m.has(t.event)) m.set(t.event, t)
+    const m = new Map<string, { at: string; by?: string; auto?: boolean }>()
+    for (const t of data.texts) if (t.event.startsWith('Booking reminder · ') && !m.has(t.event)) m.set(t.event, { at: t.openedAt, by: t.openedBy })
+    for (const t of data.sms) if (t.status === 'dispatched' && t.triggerEvent.startsWith('Booking reminder · ') && !m.has(t.triggerEvent)) m.set(t.triggerEvent, { at: t.timestamp, auto: true })
     return m
-  }, [data.texts])
+  }, [data.texts, data.sms])
   const toSend = bookings.reduce(
     (n, b) => n + (b.trade?.phone && !sentBy.has(reminderEvent(b, day, 'trade')) ? 1 : 0) + (b.client?.phone && !sentBy.has(reminderEvent(b, day, 'client')) ? 1 : 0),
     0,
@@ -123,8 +125,8 @@ export function BookingReminders() {
         <span className="text-sm text-slate-700">{p.name}</span>
         {sent ? (
           <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700">
-            <Check size={13} aria-hidden="true" /> Texted {new Date(sent.openedAt).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })}
-            {sent.openedBy && sent.openedBy !== p.id ? ` by ${lk.user(sent.openedBy)?.name.split(' ')[0] ?? 'office'}` : ''}
+            <Check size={13} aria-hidden="true" /> {sent.auto ? 'Auto-texted' : 'Texted'} {new Date(sent.at).toLocaleTimeString('en-AU', { hour: 'numeric', minute: '2-digit' })}
+            {sent.by && sent.by !== p.id ? ` by ${lk.user(sent.by)?.name.split(' ')[0] ?? 'office'}` : ''}
           </span>
         ) : !p.phone ? (
           <span className="text-xs text-slate-400">No mobile on file</span>
@@ -192,7 +194,7 @@ export function BookingReminders() {
         </ul>
       )}
       <p className="mt-2 text-xs text-slate-500">
-        Texts open in Messages from your own number. Trades and clients with a portal login also get a reminder in their portal inbox automatically the afternoon before.
+        Texts open in Messages from your own number. Trades and clients with a portal login also get a reminder in their portal inbox the afternoon before, and everyone with a mobile is texted automatically (via ClickSend) if that's switched on under Text messages.
       </p>
     </section>
   )

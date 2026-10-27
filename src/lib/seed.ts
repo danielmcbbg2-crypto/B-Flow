@@ -1,7 +1,7 @@
 import { blankCommercials } from './quote'
 import type { AppData } from './types'
 import { toISODate } from './utils'
-import { DEFAULT_PERMISSIONS } from './types'
+import { DEFAULT_PERMISSIONS, DEFAULT_SMS } from './types'
 
 /** ISO date (YYYY-MM-DD) offset from today, so sample data always looks current. */
 function day(offset: number): string {
@@ -506,15 +506,7 @@ export function createSeed(): AppData {
         detail: 'No SMS gateway configured — logged only.',
       },
     ],
-    smsSettings: {
-      provider: 'none',
-      fromNumber: '',
-      webhookUrl: '',
-      recipients: [],
-      notifyOnNewRequest: true,
-      notifyOnUrgentOnly: false,
-      notifyProviderOnAssign: true,
-    },
+    smsSettings: { ...DEFAULT_SMS, provider: 'none' },
     bank: { accountName: 'Next Phase Maintenance', bsb: '', accountNumber: '' },
     inbox: [
       {
