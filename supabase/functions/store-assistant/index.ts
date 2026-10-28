@@ -5,6 +5,8 @@
 //       each product page.
 //   { action: 'draft', product, instructions? }  reads the product's page and drafts an original
 //       listing (title, description, specs, category, suggested price) for the admin to review.
+//   { action: 'images', url, title? }  makes new photos of the product from the supplier's (with
+//       Google's Gemini image model; needs GEMINI_API_KEY) and returns their links.
 //
 // Both answer as lines of JSON: { type: 'progress', text } while working (what it's searching for
 // or reading), then { type: 'result', data } or { type: 'error', error }.
@@ -14,6 +16,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.49.4'
 import Anthropic from 'npm:@anthropic-ai/sdk@0.131.0'
 import { pagePhoto } from './photo.ts'
+import { recreatePhotos } from './images.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -191,6 +194,7 @@ function apiError(e: unknown): string {
   if (e instanceof Anthropic.PermissionDeniedError) return 'The Anthropic account doesn’t allow this request. Check its settings and credit.'
   if (e instanceof Anthropic.RateLimitError) return 'The AI service is busy. Try again in a minute.'
   if (e instanceof Anthropic.APIError) return `The AI service returned an error (${e.status ?? 'network'}). Try again shortly.`
+  if ((e as Error).name === 'AbortError' || (e as Error).name === 'TimeoutError') return 'That took too long. Try again.'
   return (e as Error).message
 }
 
@@ -253,11 +257,35 @@ Deno.serve(async (req) => {
   if (!me || me.role !== 'admin' || !me.permissions.includes('canManageStore')) {
     return json({ error: 'You need the “Manage store & orders” permission' }, 403)
   }
+  const body = await req.json().catch(() => ({}))
+
+  if (body.action === 'images') {
+    const url = String(body.url ?? '')
+    if (!/^https?:\/\/\S+$/.test(url)) return json({ error: 'Give the supplier’s product link.' }, 400)
+    if (!Deno.env.get('GEMINI_API_KEY')) {
+      return json({ error: 'New photos need a Google Gemini API key: add it to the Supabase secrets as GEMINI_API_KEY.', code: 'images_not_configured' }, 503)
+    }
+    const title = String(body.title ?? '').slice(0, 160)
+    return streamed((signal, progress) =>
+      recreatePhotos(
+        url,
+        title,
+        async (bytes, type) => {
+          const path = `ai/${crypto.randomUUID()}.${type === 'image/jpeg' ? 'jpg' : type === 'image/webp' ? 'webp' : 'png'}`
+          const { error } = await db.storage.from('photos').upload(path, bytes, { contentType: type })
+          if (error) throw new Error(`A new photo couldn’t be saved (${error.message}).`)
+          return db.storage.from('photos').getPublicUrl(path).data.publicUrl
+        },
+        signal,
+        progress,
+      ),
+    )
+  }
+
   if (!Deno.env.get('ANTHROPIC_API_KEY')) {
     return json({ error: 'The AI assistant isn’t set up yet: add an Anthropic API key to the Supabase secrets as ANTHROPIC_API_KEY.', code: 'not_configured' }, 503)
   }
   const client = new Anthropic()
-  const body = await req.json().catch(() => ({}))
 
   if (body.action === 'find') {
     const query = String(body.query ?? '').trim().slice(0, 300)

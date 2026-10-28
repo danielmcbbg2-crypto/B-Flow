@@ -24,6 +24,8 @@ import type {
   Product,
   Project,
   ProjectCost,
+  ProductSource,
+  SupplierStock,
   Property,
   QuickBooksInvoice,
   QuoteItem,
@@ -456,7 +458,15 @@ const SPECS: Spec[] = [
     rows: (d) =>
       d.products
         .filter((p) => p.source)
-        .map((p) => ({ id: p.id, supplier: p.source!.supplier, source_url: p.source!.url, cost: nul(p.source!.cost), notes: p.source!.notes })),
+        .map((p) => ({
+          id: p.id,
+          supplier: p.source!.supplier,
+          source_url: p.source!.url,
+          cost: nul(p.source!.cost),
+          notes: p.source!.notes,
+          track_stock: p.source!.trackStock ?? true,
+          out_of_stock_as: p.source!.outOfStockAs ?? 'out_of_stock',
+        })),
   },
   // Orders are placed by the database (place_order); store managers only change the status, and
   // keep their notes in order_notes (keyed by the order's id), which customers can't read.
@@ -781,7 +791,22 @@ export const productsFromRows = (products: Row[], tradePrices: Row[] = [], sourc
         status: r.status as Product['status'],
         stock: r.stock as Product['stock'],
         source: s
-          ? { supplier: s.supplier as string, url: s.source_url as string, cost: s.cost === null ? undefined : num(s.cost), notes: s.notes as string }
+          ? {
+              supplier: s.supplier as string,
+              url: s.source_url as string,
+              cost: s.cost === null ? undefined : num(s.cost),
+              notes: s.notes as string,
+              trackStock: (s.track_stock as boolean | undefined) ?? true,
+              outOfStockAs: (s.out_of_stock_as as ProductSource['outOfStockAs']) ?? 'out_of_stock',
+              supplierStock: {
+                status: ((s.stock_status as SupplierStock['status'] | undefined) ?? 'unknown'),
+                qty: s.stock_qty === null || s.stock_qty === undefined ? undefined : num(s.stock_qty),
+                price: s.supplier_price === null || s.supplier_price === undefined ? undefined : num(s.supplier_price),
+                note: (s.stock_note as string | undefined) ?? '',
+                checkedAt: opt(s.stock_checked_at as string | null | undefined),
+                changedAt: opt(s.stock_changed_at as string | null | undefined),
+              },
+            }
           : undefined,
         createdBy: opt(r.created_by as string | null),
         createdAt: r.created_at as string,

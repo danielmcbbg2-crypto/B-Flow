@@ -1383,3 +1383,69 @@ describe("trades' calendar", () => {
     assert.equal((await asUser(uid.tom, `update requests set scheduled_date = current_date + 9 where id = $1`, [other.rows[0].id])).rowCount, 0)
   })
 })
+
+describe('supplier stock tracking', () => {
+  const apply = (status: string, qty: number | null = null, price: number | null = null, note = '') =>
+    pool.query<{ r: string }>(`select apply_supplier_stock('sp-1', $1, $2, $3, $4) r`, [status, qty, price, note]).then((x) => x.rows[0].r)
+  const product = async () => (await pool.query<{ stock: string }>(`select stock from products where id = 'sp-1'`)).rows[0].stock
+  const source = async () =>
+    (await pool.query<{ stock_status: string; stock_qty: number | null; supplier_price: string | null; stock_auto: boolean }>(`select stock_status, stock_qty, supplier_price, stock_auto from product_sources where id = 'sp-1'`)).rows[0]
+  const told = async (like: string) => (await pool.query(`select 1 from inbox where user_id = 'u-admin' and title like $1`, [like])).rowCount
+
+  test("the app can't write stock readings; a new supplier link starts afresh", async () => {
+    await pool.query(`update products set stock = 'in_stock', status = 'published' where id = 'sp-1'`)
+    await apply('in_stock', 12, 799)
+    await asUser(uid.admin, `update product_sources set stock_status = 'out_of_stock', stock_qty = 0, notes = 'checked' where id = 'sp-1'`)
+    assert.deepEqual(await source(), { stock_status: 'in_stock', stock_qty: 12, supplier_price: '799.00', stock_auto: false })
+    await asUser(uid.admin, `update product_sources set source_url = 'https://example.com/vanity-900-v2' where id = 'sp-1'`)
+    assert.equal((await source()).stock_status, 'unknown')
+    await assert.rejects(asUser(uid.admin, `select apply_supplier_stock('sp-1', 'in_stock', 1, 1, '')`), /permission denied/)
+  })
+
+  test('out at the supplier: the listing shows out of stock and store managers are told; back in: it switches back', async () => {
+    await pool.query(`update product_sources set supplier = 'Bathware Wholesale' where id = 'sp-1'`)
+    await apply('in_stock', 5)
+    assert.equal(await apply('out_of_stock', 0, null, 'Page says: sold out'), 'changed')
+    assert.equal(await product(), 'out_of_stock')
+    assert.equal((await source()).stock_auto, true)
+    assert.equal(await told('Out of stock at Bathware Wholesale: %'), 1)
+    assert.equal(await apply('out_of_stock', 0), 'same', 'no repeat message')
+    assert.equal(await told('Out of stock at Bathware Wholesale: %'), 1)
+    assert.equal(await apply('in_stock', 8), 'changed')
+    assert.equal(await product(), 'in_stock')
+    assert.equal(await told('Back in stock at Bathware Wholesale: %'), 1)
+  })
+
+  test("a page that can't be read keeps the last reading; low stock is flagged once", async () => {
+    assert.equal(await apply('unknown', null, null, 'Page not reachable'), 'unknown')
+    assert.equal((await source()).stock_status, 'in_stock')
+    await apply('low', 2)
+    assert.equal(await told('Running low at Bathware Wholesale: %'), 1)
+    assert.equal(await product(), 'in_stock')
+  })
+
+  test('"To order" instead, if chosen; a listing the office changed itself is left alone', async () => {
+    await asUser(uid.admin, `update product_sources set out_of_stock_as = 'to_order' where id = 'sp-1'`)
+    await apply('in_stock', 3)
+    await apply('out_of_stock', 0)
+    assert.equal(await product(), 'to_order')
+    await apply('in_stock', 3)
+    assert.equal(await product(), 'in_stock')
+    // The office marks it out of stock itself: the tracker doesn't put it back.
+    await pool.query(`update products set stock = 'out_of_stock' where id = 'sp-1'`)
+    await apply('out_of_stock', 0)
+    await apply('in_stock', 4)
+    assert.equal(await product(), 'out_of_stock')
+    // Tracking off: readings are kept, nothing changes.
+    await asUser(uid.admin, `update product_sources set track_stock = false where id = 'sp-1'`)
+    await pool.query(`update products set stock = 'in_stock' where id = 'sp-1'`)
+    await apply('out_of_stock', 0)
+    assert.equal(await product(), 'in_stock')
+  })
+
+  test('only store managers see the stock check runs', async () => {
+    await pool.query(`insert into stock_check_runs (checked) values (3)`)
+    assert.equal((await asUser(uid.admin, `select 1 from stock_check_runs`)).rowCount, 1)
+    assert.equal((await asUser(uid.tom, `select 1 from stock_check_runs`)).rowCount, 0)
+  })
+})
