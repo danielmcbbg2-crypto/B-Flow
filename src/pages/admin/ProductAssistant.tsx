@@ -17,6 +17,10 @@ const parsePrice = (s: string) => {
 
 const isWebLink = (url: string) => /^https?:\/\//i.test(url)
 
+/** The option that's about colour or finish, if any (its choices each get a photo). */
+const COLOUR = /colou?r|finish|shade|tone/i
+export const colourOption = (l: Pick<DraftListing, 'options'>) => (l.options ?? []).slice(0, 3).find((o) => COLOUR.test(o.name))
+
 /**
  * The supplier's variants as the listing's options. Each choice's extra cost is how much more the
  * supplier charges for it than for the option's cheapest choice (so the cheapest adds nothing); the
@@ -157,10 +161,11 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product, notice?: s
     try {
       const l = await draftListing(found, instructions, (t) => current() && setProgress(t), signal)
       if (!current()) return
+      const colours = (colourOption(l)?.choices ?? []).map((c) => c.label)
       // Photos and stock don't stop the listing: what fails is noted for the admin.
       const [photos, stock] = await Promise.all([
         makePhotos
-          ? recreatePhotos(found.url, l.title, (l.photos ?? []).filter(isWebLink), (t) => current() && setProgress(t), signal).catch((err: Error & { code?: string }) => {
+          ? recreatePhotos(found.url, l.title, (l.photos ?? []).filter(isWebLink), (t) => current() && setProgress(t), signal, colours).catch((err: Error & { code?: string }) => {
               if (err.name === 'AbortError') throw err
               return { error: err.code === 'images_not_configured' ? 'New photos weren’t made: add a Google Gemini API key (GEMINI_API_KEY) to the Supabase secrets.' : `New photos weren’t made: ${err.message}` }
             })
@@ -174,6 +179,12 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product, notice?: s
       const clean = (t: string) => withoutSupplier(t, keys)
       const specs = l.specs.map(clean).filter(Boolean)
       const variants = draftOptions(l, stock?.price)
+      // Each colour's own photo on its choice.
+      const colourImages = photos && 'colourImages' in photos ? (photos.colourImages ?? {}) : {}
+      const colourName = colourOption(l)?.name
+      for (const o of variants.options) if (o.name === colourName) for (const v of o.values) if (colourImages[v.label]) v.image = colourImages[v.label]
+      const colourErrors = photos && 'colourErrors' in photos ? (photos.colourErrors ?? []) : []
+      const madeColours = Object.keys(colourImages).length
       // Automatic pricing needs something to work from: the supplier's price as read by the stock
       // check, or else the price the AI read on the page, entered as the cost.
       const aiPrice = parsePrice(l.suggested_price)
@@ -208,6 +219,9 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product, notice?: s
             cost !== undefined && `Cost: the supplier's price couldn't be read automatically, so it's set to the price the AI read on their page (${money(cost)}) and the prices are worked out from that. Check it, and clear it once the stock check reads their price so prices follow the supplier.`,
             found.price && `Price shown in search: ${found.price}`,
             images.length > 0 && `Photos: made by AI from the supplier's photos on ${new Date().toLocaleDateString('en-AU')}. Check they match the product before publishing.`,
+            madeColours > 0 && `Colour photos: one for each ${colourName?.toLowerCase()} (${madeColours} of ${colours.length}), shown when a customer picks it. Check each matches the real colour.`,
+            colours.length > 6 && `Only the first 6 ${colourName?.toLowerCase()} choices got a photo; add the rest by hand.`,
+            colourErrors.length > 0 && `Some colour photos weren't made: ${colourErrors.join('; ')}`,
             photos && 'error' in photos && photos.error,
             stock &&
               (stock.status === 'unknown'

@@ -255,7 +255,15 @@ interface StoreValue {
   /** Store managers: the AI assistant drafts a listing from a found product, for review. */
   draftListing: (product: FoundProduct, instructions?: string, onProgress?: (text: string) => void, signal?: AbortSignal) => Promise<DraftListing>
   /** New photos of the product on a supplier page, made by AI from the supplier's photos (store managers). */
-  recreatePhotos: (url: string, title: string, photos: string[], onProgress?: (text: string) => void, signal?: AbortSignal) => Promise<{ images: string[]; references: string[] }>
+  /** New photos of a product from the supplier's; `colours` (its colour or finish choices) each get a studio shot. */
+  recreatePhotos: (
+    url: string,
+    title: string,
+    photos: string[],
+    onProgress?: (text: string) => void,
+    signal?: AbortSignal,
+    colours?: string[],
+  ) => Promise<{ images: string[]; references: string[]; colourImages?: Record<string, string>; colourErrors?: string[] }>
   /**
    * What a supplier's page says about stock now. With a product id, the reading is saved (and the
    * listing switched if it ran out or came back); with a link, it's only read.
@@ -1217,15 +1225,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [],
   )
 
-  const recreatePhotos = useCallback(async (url: string, title: string, photos: string[], onProgress?: (text: string) => void, signal?: AbortSignal) => {
-    if (supabase) return streamFunction<{ images: string[]; references: string[] }>('store-assistant', { action: 'images', url, title, photos }, onProgress, signal)
+  const recreatePhotos = useCallback(async (url: string, title: string, photos: string[], onProgress?: (text: string) => void, signal?: AbortSignal, colours: string[] = []) => {
+    type Made = { images: string[]; references: string[]; colourImages?: Record<string, string>; colourErrors?: string[] }
+    if (supabase) return streamFunction<Made>('store-assistant', { action: 'images', url, title, photos, colours }, onProgress, signal)
+    const wanted = colours.slice(0, 6)
+    const total = 2 + wanted.length
     onProgress?.('Finding the supplier’s photos…')
     await demoWait(300, signal)
-    onProgress?.('Creating new photo 1 of 2 (studio shot)…')
+    onProgress?.(`Creating new photo 1 of ${total} (studio shot)…`)
     await demoWait(300, signal)
-    onProgress?.('Creating new photo 2 of 2 (in a room)…')
+    onProgress?.(`Creating new photo 2 of ${total} (in a room)…`)
     await demoWait(300, signal)
-    return { images: [demoPhoto('New studio photo (demo)', 210), demoPhoto('New room photo (demo)', 35)], references: [] }
+    const colourImages: Record<string, string> = {}
+    for (const [i, c] of wanted.entries()) {
+      onProgress?.(`Creating new photo ${3 + i} of ${total} (${c})…`)
+      await demoWait(200, signal)
+      colourImages[c] = demoPhoto(`${c} (demo)`, (i * 67) % 360)
+    }
+    return { images: [demoPhoto('New studio photo (demo)', 210), demoPhoto('New room photo (demo)', 35)], references: [], colourImages, colourErrors: [] } as Made
   }, [])
 
   const checkSupplierStock = useCallback(

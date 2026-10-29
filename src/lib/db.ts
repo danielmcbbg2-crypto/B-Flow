@@ -357,7 +357,7 @@ const productRow = (p: Product): Row => ({
   price: p.price,
   images: p.images,
   // The client and trade add-ons are set by the database (with the client and trade prices).
-  options: (p.options ?? []).map((g) => ({ id: g.id, name: g.name, values: g.values.map((v) => ({ id: v.id, label: v.label, price: v.price, available: v.available })) })),
+  options: (p.options ?? []).map((g) => ({ id: g.id, name: g.name, values: g.values.map((v) => ({ id: v.id, label: v.label, price: v.price, available: v.available, ...(v.image ? { image: v.image } : {}) })) })),
   status: p.status,
   stock: p.stock,
   created_by: nul(p.createdBy),
@@ -813,7 +813,7 @@ export const productsFromRows = (products: Row[], tradePrices: Row[] = [], sourc
           values: g.values.map((v) => {
             const c = clientAdds.get(r.id as string)?.[v.id]
             const t = tradeAdds.get(r.id as string)?.[v.id]
-            return { id: v.id, label: v.label, price: num(v.price), available: v.available !== false, clientPrice: c === undefined ? undefined : num(c), tradePrice: t === undefined ? undefined : num(t) }
+            return { id: v.id, label: v.label, price: num(v.price), available: v.available !== false, clientPrice: c === undefined ? undefined : num(c), tradePrice: t === undefined ? undefined : num(t), ...(typeof v.image === 'string' && v.image ? { image: v.image } : {}) }
           }),
         })),
         status: r.status as Product['status'],

@@ -72,9 +72,19 @@ async function generate(refs: { type: string; b64: string }[], prompt: string, s
   throw new Error(`Gemini didn't return a photo${why ? ` (${why})` : ''}${said ? `: ${said.slice(0, 160)}` : ''}.`)
 }
 
+/** A studio shot of the product in one of its colours or finishes (the same product otherwise). */
+const colourShot = (title: string, colour: string) => `Create a brand-new, original e-commerce product photograph of ${title || 'the product shown in the reference photos'} in the colour or finish "${colour}".
+Show exactly the same product, changing only its colour or finish to ${colour} (keep any parts that clearly stay the same, such as a basin, glass or chrome hardware, unless the colour names them).
+${KEEP}
+Shoot it from a three-quarter front view, centred and filling about 80% of the frame, on a seamless soft warm-grey studio background with soft, even lighting and a gentle shadow on the floor.`
+
+/** At most this many colour photos per product (each takes Gemini 10 to 20 seconds). */
+export const MAX_COLOURS = 6
+
 /**
  * Makes new photos (a studio shot and one in a room) of the product on `pageUrl`, from up to two of
- * the supplier's photos, and stores them in the public "photos" bucket. Returns their links.
+ * the supplier's photos, and a studio shot in each of `colours` (its colour or finish choices), and
+ * stores them in the public "photos" bucket. Returns their links (the colours' by name).
  */
 export async function recreatePhotos(
   pageUrl: string,
@@ -83,7 +93,8 @@ export async function recreatePhotos(
   upload: (bytes: Uint8Array, type: string) => Promise<string>,
   signal: AbortSignal,
   progress: (text: string) => void,
-): Promise<{ images: string[]; references: string[] }> {
+  colours: string[] = [],
+): Promise<{ images: string[]; references: string[]; colourImages: Record<string, string>; colourErrors: string[] }> {
   progress('Finding the supplier’s photos…')
   const found = [...new Set([...(await pagePhotos(pageUrl, signal)), ...extra])]
   const refs: { type: string; b64: string; url: string }[] = []
@@ -109,10 +120,26 @@ export async function recreatePhotos(
     )
   }
   const images: string[] = []
+  const wanted = colours.slice(0, MAX_COLOURS)
+  const total = SHOTS.length + wanted.length
   for (const [i, shot] of SHOTS.entries()) {
-    progress(`Creating new photo ${i + 1} of ${SHOTS.length} (${shot.name === 'studio' ? 'studio shot' : 'in a room'})…`)
+    progress(`Creating new photo ${i + 1} of ${total} (${shot.name === 'studio' ? 'studio shot' : 'in a room'})…`)
     const made = await generate(refs, shot.prompt(title), signal)
     images.push(await upload(made.bytes, made.type))
   }
-  return { images, references: refs.map((r) => r.url) }
+  // One for each colour: a colour that fails doesn't stop the others (or the listing).
+  const colourImages: Record<string, string> = {}
+  const colourErrors: string[] = []
+  for (const [i, colour] of wanted.entries()) {
+    progress(`Creating new photo ${SHOTS.length + i + 1} of ${total} (${colour})…`)
+    try {
+      const made = await generate(refs, colourShot(title, colour), signal)
+      colourImages[colour] = await upload(made.bytes, made.type)
+    } catch (e) {
+      if (signal.aborted) throw e
+      console.error(`store-assistant colour photo "${colour}" failed:`, (e as Error).message)
+      colourErrors.push(`${colour}: ${(e as Error).message}`)
+    }
+  }
+  return { images, references: refs.map((r) => r.url), colourImages, colourErrors }
 }
