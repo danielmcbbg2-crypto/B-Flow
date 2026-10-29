@@ -170,6 +170,10 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product, notice?: s
       const images = photos && 'images' in photos ? photos.images : []
       const specs = l.specs.filter(Boolean)
       const variants = draftOptions(l, stock?.price)
+      // Automatic pricing needs something to work from: the supplier's price as read by the stock
+      // check, or else the price the AI read on the page, entered as the cost.
+      const aiPrice = parsePrice(l.suggested_price)
+      const cost = stock?.price === undefined && aiPrice > 0 ? aiPrice : undefined
       onDraft({
         id: uid('sp'),
         title: l.title,
@@ -190,12 +194,14 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product, notice?: s
           trackStock: true,
           outOfStockAs: 'out_of_stock',
           autoPrice: true,
+          cost,
           optionCosts: variants.optionCosts,
           // The supplier's price as read now: the draft is priced from it at the store's margins.
           supplierStock: stock ?? undefined,
           notes: [
             l.notes && `AI draft notes: ${l.notes}`,
             ...variants.notes,
+            cost !== undefined && `Cost: the supplier's price couldn't be read automatically, so it's set to the price the AI read on their page (${money(cost)}) and the prices are worked out from that. Check it, and clear it once the stock check reads their price so prices follow the supplier.`,
             found.price && `Price shown in search: ${found.price}`,
             images.length > 0 && `Photos: made by AI from the supplier's photos on ${new Date().toLocaleDateString('en-AU')}. Check they match the product before publishing.`,
             photos && 'error' in photos && photos.error,

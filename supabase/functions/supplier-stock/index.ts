@@ -12,7 +12,7 @@
 // ANTHROPIC_API_KEY secret; without it such pages stay "unknown").
 import { createClient } from 'npm:@supabase/supabase-js@2.49.4'
 import Anthropic from 'npm:@anthropic-ai/sdk@0.131.0'
-import { fingerprint, fromShopify, pageText, readStock, type Reading } from './stock.ts'
+import { findPrice, fingerprint, fromShopify, pageText, readStock, type Reading } from './stock.ts'
 import { safeFetch } from './web.ts'
 
 const cors = {
@@ -92,13 +92,26 @@ async function check(url: string, lastHash: string): Promise<Reading & { hash?: 
       /* use what the page says */
     }
   }
-  if (stated) return stated
   const text = pageText(html)
   const hash = await fingerprint(text)
+  if (stated) {
+    if (stated.price !== null) return stated
+    // Stock is plain but the price isn't in the stock data: look for it elsewhere on the page, then
+    // (when the page has changed) ask Claude for it.
+    const price = findPrice(html)
+    if (price !== null) return { ...stated, price }
+    if (hash === lastHash) return { ...stated, hash }
+    try {
+      const ai = await askClaude(text, page.url)
+      return { ...stated, price: ai?.price ?? null, hash }
+    } catch {
+      return { ...stated, hash }
+    }
+  }
   if (hash === lastHash) return { status: 'unknown', qty: null, price: null, note: 'The page hasn’t changed and doesn’t say plainly.', hash }
   try {
     const ai = await askClaude(text, page.url)
-    if (ai) return { ...ai, hash }
+    if (ai) return { ...ai, price: ai.price ?? findPrice(html), hash }
   } catch (e) {
     const status = e instanceof Anthropic.APIError ? ` (error ${e.status ?? 'network'})` : ''
     return { status: 'unknown', qty: null, price: null, note: `The AI couldn’t read the page${status}.` }

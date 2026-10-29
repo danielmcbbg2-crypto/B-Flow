@@ -69,6 +69,40 @@ function fromJsonLd(html: string): Reading | null {
   return best && best.status !== 'unknown' ? best : null
 }
 
+/**
+ * The product's price wherever the page states it: its product data (an offer's price, lowest price
+ * or price specification), price meta tags, microdata, or the shop's own price attributes (Magento's
+ * data-price-amount). null if it doesn't state one.
+ */
+export function findPrice(html: string): number | null {
+  for (const m of html.matchAll(/<script\b[^>]*type\s*=\s*["']?application\/ld\+json["']?[^>]*>([\s\S]*?)<\/script>/gi)) {
+    let data: unknown
+    try {
+      data = JSON.parse(m[1].trim())
+    } catch {
+      continue
+    }
+    for (const o of walk(data)) {
+      if (!isType(o, 'Offer') && !isType(o, 'AggregateOffer')) continue
+      const spec = o.priceSpecification as Record<string, unknown> | Record<string, unknown>[] | undefined
+      const p = num(o.price ?? o.lowPrice ?? (Array.isArray(spec) ? spec[0]?.price : spec?.price))
+      if (p) return p
+    }
+  }
+  const patterns = [
+    /property\s*=\s*["'](?:product|og):price:amount["'][^>]*content\s*=\s*["']([\d.,]+)["']/i,
+    /content\s*=\s*["']([\d.,]+)["'][^>]*property\s*=\s*["'](?:product|og):price:amount["']/i,
+    /itemprop\s*=\s*["']price["'][^>]*content\s*=\s*["']([\d.,]+)["']/i,
+    /content\s*=\s*["']([\d.,]+)["'][^>]*itemprop\s*=\s*["']price["']/i,
+    /data-price-amount\s*=\s*["']([\d.]+)["']/i,
+  ]
+  for (const re of patterns) {
+    const p = num(html.match(re)?.[1].replace(/,/g, ''))
+    if (p) return p
+  }
+  return null
+}
+
 /** From microdata or meta tags (itemprop="availability", product:availability). */
 function fromTags(html: string): Reading | null {
   const m =
