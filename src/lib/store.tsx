@@ -1203,6 +1203,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         sku: '',
         suggested_price: product.price.replace(/[^0-9.]/g, ''),
         notes: 'Demo mode: this draft is a sample. In live mode the assistant reads the product page and writes an original description.',
+        // A sample of the variants a page might offer, priced from the price shown.
+        options: (() => {
+          const base = Number(product.price.replace(/[^0-9.]/g, '')) || 500
+          return [
+            { name: 'Width', choices: [{ label: '750 mm', price: base.toFixed(2), available: true }, { label: '900 mm', price: (base + 150).toFixed(2), available: true }] },
+            { name: 'Colour', choices: [{ label: 'White', price: base.toFixed(2), available: true }, { label: 'Black', price: (base + 80).toFixed(2), available: false }] },
+          ]
+        })(),
+        optionsFrom: 'page',
       }
     },
     [],
@@ -1222,6 +1231,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const checkSupplierStock = useCallback(
     async (target: { productId: string } | { url: string }): Promise<SupplierStock> => {
       if (supabase) {
+        // A product just saved is checked once it has reached the database.
+        if ('productId' in target) await queue.current
         const { data: auth } = await supabase.auth.getSession()
         const res = await fetch(`${FUNCTIONS_URL}/supplier-stock`, {
           method: 'POST',

@@ -18,6 +18,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2.49.4'
 import Anthropic from 'npm:@anthropic-ai/sdk@0.131.0'
 import { pagePhoto } from './photo.ts'
 import { recreatePhotos } from './images.ts'
+import { shopVariants, type DraftOption } from './variants.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -54,6 +55,7 @@ You draft listings for the store for the owner to review. Read the product page 
 - suggested_price: the retail price in AUD including GST as shown on the page, or an empty string if none is shown.
 - notes: anything the owner should check before publishing (missing specs, price excluding GST, lead times, conflicting details).
 - photos: the web addresses of the main product photos on the page (up to 4, largest versions, not logos or icons), so new photos can be made from them.
+- options: the choices the page offers for this product (variants), such as size, colour, finish or handle (up to 3 options, each with its choices as the page names them). For each choice give the price of the product with that choice and the cheapest choice of every other option, in AUD as shown, or an empty string if the page doesn't show it; mark a choice unavailable only if the page says it's sold out or unavailable. Leave options empty if the page offers no choices; don't invent any.
 Only state facts the page supports. If the page can't be read, draft from the details provided and say so in notes.`
 
 const FIND_TOOL = {
@@ -107,8 +109,33 @@ const DRAFT_TOOL = {
         items: { type: 'string' },
         description: 'Up to 4 full web addresses (https://…) of the main product photos on the page, largest version available, best first; empty if none',
       },
+      options: {
+        type: 'array',
+        description: 'The choices offered for this product (variants), up to 3; empty if none',
+        items: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'e.g. "Size", "Colour"' },
+            choices: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  label: { type: 'string', description: 'As the page names it, e.g. "900 mm"' },
+                  price: { type: 'string', description: 'Price in AUD of the product with this choice (and the cheapest of the other options), e.g. "1249.00", or empty if not shown' },
+                  available: { type: 'boolean' },
+                },
+                required: ['label', 'price', 'available'],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ['name', 'choices'],
+          additionalProperties: false,
+        },
+      },
     },
-    required: ['title', 'description', 'specs', 'category', 'brand', 'sku', 'suggested_price', 'notes', 'photos'],
+    required: ['title', 'description', 'specs', 'category', 'brand', 'sku', 'suggested_price', 'notes', 'photos', 'options'],
     additionalProperties: false,
   },
 }
@@ -248,6 +275,21 @@ function streamed(work: (signal: AbortSignal, progress: (text: string) => void) 
   return new Response(body, { headers: { ...cors, 'Content-Type': 'application/x-ndjson' } })
 }
 
+/** Options as the store takes them: up to 3, each named, with 2 to 30 distinct choices. */
+function cleanOptions(options: DraftOption[]): DraftOption[] {
+  return options
+    .map((o) => {
+      const seen = new Set<string>()
+      const choices = (Array.isArray(o?.choices) ? o.choices : [])
+        .map((c) => ({ label: String(c?.label ?? '').trim().slice(0, 80), price: String(c?.price ?? '').trim().slice(0, 30), available: c?.available !== false }))
+        .filter((c) => c.label && !seen.has(c.label.toLowerCase()) && seen.add(c.label.toLowerCase()))
+        .slice(0, 30)
+      return { name: String(o?.name ?? '').trim().slice(0, 60), choices }
+    })
+    .filter((o) => o.name && o.choices.length >= 2)
+    .slice(0, 3)
+}
+
 const hostOf = (url: string) => {
   try {
     return new URL(url).hostname.replace(/^www\./, '')
@@ -347,9 +389,11 @@ Deno.serve(async (req) => {
         signal,
         progress,
       )
-      const listing = toolInput(message, DRAFT_TOOL.name)
+      const listing = toolInput<{ options?: DraftOption[]; notes: string }>(message, DRAFT_TOOL.name)
       if (!listing) throw new Error('The assistant couldn’t draft this listing. Try again or add it by hand.')
-      return { listing }
+      // The shop's own variant data, where it publishes it, is exact: it wins over what was read.
+      const shop = await shopVariants(url, signal)
+      return { listing: { ...listing, options: cleanOptions(shop ?? listing.options ?? []), optionsFrom: shop ? 'shop' : 'page' } }
     })
   }
 
