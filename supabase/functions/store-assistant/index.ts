@@ -5,8 +5,9 @@
 //       each product page.
 //   { action: 'draft', product, instructions? }  reads the product's page and drafts an original
 //       listing (title, description, specs, category, suggested price) for the admin to review.
-//   { action: 'images', url, title? }  makes new photos of the product from the supplier's (with
-//       Google's Gemini image model; needs GEMINI_API_KEY) and returns their links.
+//   { action: 'images', url, title?, photos? }  makes new photos of the product from the supplier's
+//       (with Google's Gemini image model; needs GEMINI_API_KEY) and returns their links. `photos`
+//       are photo links already found on the page (by the draft), tried as well.
 //
 // Both answer as lines of JSON: { type: 'progress', text } while working (what it's searching for
 // or reading), then { type: 'result', data } or { type: 'error', error }.
@@ -52,6 +53,7 @@ You draft listings for the store for the owner to review. Read the product page 
 - category, brand and sku/model from the page.
 - suggested_price: the retail price in AUD including GST as shown on the page, or an empty string if none is shown.
 - notes: anything the owner should check before publishing (missing specs, price excluding GST, lead times, conflicting details).
+- photos: the web addresses of the main product photos on the page (up to 4, largest versions, not logos or icons), so new photos can be made from them.
 Only state facts the page supports. If the page can't be read, draft from the details provided and say so in notes.`
 
 const FIND_TOOL = {
@@ -100,8 +102,13 @@ const DRAFT_TOOL = {
       sku: { type: 'string' },
       suggested_price: { type: 'string', description: 'Retail price in AUD inc. GST as shown on the page, e.g. "1249.00", or empty' },
       notes: { type: 'string' },
+      photos: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Up to 4 full web addresses (https://…) of the main product photos on the page, largest version available, best first; empty if none',
+      },
     },
-    required: ['title', 'description', 'specs', 'category', 'brand', 'sku', 'suggested_price', 'notes'],
+    required: ['title', 'description', 'specs', 'category', 'brand', 'sku', 'suggested_price', 'notes', 'photos'],
     additionalProperties: false,
   },
 }
@@ -221,6 +228,8 @@ function streamed(work: (signal: AbortSignal, progress: (text: string) => void) 
       try {
         send({ type: 'result', data: await work(abort.signal, (text) => send({ type: 'progress', text })) })
       } catch (e) {
+        // In the function's logs too, so a failure can be looked into.
+        console.error('store-assistant failed:', (e as Error)?.message ?? e)
         send({ type: 'error', error: apiError(e) })
       } finally {
         clearInterval(keepAlive)
@@ -266,10 +275,13 @@ Deno.serve(async (req) => {
       return json({ error: 'New photos need a Google Gemini API key: add it to the Supabase secrets as GEMINI_API_KEY.', code: 'images_not_configured' }, 503)
     }
     const title = String(body.title ?? '').slice(0, 160)
+    // Photo links the listing draft found on the page, used as well as the ones read here.
+    const extra = (Array.isArray(body.photos) ? body.photos : []).map(String).filter((u: string) => /^https?:\/\/\S+$/.test(u)).slice(0, 6)
     return streamed((signal, progress) =>
       recreatePhotos(
         url,
         title,
+        extra,
         async (bytes, type) => {
           const path = `ai/${crypto.randomUUID()}.${type === 'image/jpeg' ? 'jpg' : type === 'image/webp' ? 'webp' : 'png'}`
           const { error } = await db.storage.from('photos').upload(path, bytes, { contentType: type })

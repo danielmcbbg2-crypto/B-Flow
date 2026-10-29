@@ -740,15 +740,17 @@ describe('store', () => {
   test('anyone can order; prices come from the database (trade for service providers)', async () => {
     const guest = await asAnon<{ r: { number: number; total: string } }>(order([{ product_id: 'sp-1', qty: 1 }, { product_id: 'sp-2', qty: 2 }, { product_id: 'sp-1', qty: 1 }], 'jo@example.com'))
     assert.ok(guest.rows[0].r.number >= 5001)
-    assert.equal(Number(guest.rows[0].r.total), 2 * 1200 + 2 * 800)
+    // The vanity has a cost ($700), so it's priced by the price structure: $1,000 public (30% margin),
+    // $934 for clients (25%), $844 for trades (17%), rounded up to the dollar.
+    assert.equal(Number(guest.rows[0].r.total), 2 * 1000 + 2 * 800)
     const g = await pool.query(`select customer_id, trade, status from orders where number = $1`, [guest.rows[0].r.number])
     assert.deepEqual(g.rows[0], { customer_id: null, trade: false, status: 'new' })
     assert.equal((await pool.query(`select count(*)::int n from order_items where order_id = (select id from orders where number = $1)`, [guest.rows[0].r.number])).rows[0].n, 2)
 
     const tia = await asUser<{ r: { number: number; total: string } }>(uid.tia, order([{ product_id: 'sp-1', qty: 2 }, { product_id: 'sp-2', qty: 1 }], 'tia@example.com'))
-    assert.equal(Number(tia.rows[0].r.total), 2 * 950 + 800)
+    assert.equal(Number(tia.rows[0].r.total), 2 * 844 + 800)
     const sarahOrder = await asUser<{ r: { number: number; total: string } }>(uid.sarah, order([{ product_id: 'sp-1', qty: 1 }], 'sarah@whitfieldproperty.com.au'))
-    assert.equal(Number(sarahOrder.rows[0].r.total), 1200)
+    assert.equal(Number(sarahOrder.rows[0].r.total), 934)
 
     // Members see their own orders and items; nobody else's.
     const mine = await asUser<{ number: number }>(uid.sarah, `select number from orders`)
@@ -820,7 +822,8 @@ describe('store through the app', () => {
       const v = d.products.find((p) => p.id === 'sp-2')!
       v.price = 820
       v.tradePrice = 650
-      v.source = { supplier: 'Glass Co', url: 'https://example.com/screen', cost: 400, notes: '' }
+      // Priced by hand: automatic pricing off.
+      v.source = { supplier: 'Glass Co', url: 'https://example.com/screen', cost: 400, notes: '', autoPrice: false }
       d.products.push({
         id: 'sp-new', title: 'Towel rail', description: '', category: 'Accessories', brand: '', sku: 'TR-1', price: 99,
         images: [], status: 'published', stock: 'in_stock', createdAt: new Date().toISOString(),
@@ -1447,5 +1450,69 @@ describe('supplier stock tracking', () => {
     await pool.query(`insert into stock_check_runs (checked) values (3)`)
     assert.equal((await asUser(uid.admin, `select 1 from stock_check_runs`)).rowCount, 1)
     assert.equal((await asUser(uid.tom, `select 1 from stock_check_runs`)).rowCount, 0)
+  })
+})
+
+describe('price structure', () => {
+  const prices = async (id: string) => {
+    const r = await pool.query<{ p: string; c: string | null; t: string | null }>(
+      `select p.price p, (select price from product_client_prices where id = p.id) c, (select price from product_trade_prices where id = p.id) t from products p where p.id = $1`,
+      [id],
+    )
+    return [Number(r.rows[0].p), r.rows[0].c === null ? null : Number(r.rows[0].c), r.rows[0].t === null ? null : Number(r.rows[0].t)]
+  }
+  const history = async (id: string) =>
+    (await pool.query<{ reason: string; public_price: string }>(`select reason, public_price from product_price_history where product_id = $1 order by at, id`, [id])).rows
+
+  test('a product with a cost gets its three prices from the margins (30% public, 25% clients, 17% trades), rounded up to the dollar', async () => {
+    await asUser(uid.admin, `insert into products (id, title, category, price, status) values ('pp-1', 'Oak vanity 1200', 'Vanities', 1, 'published')`)
+    await asUser(uid.admin, `insert into product_sources (id, supplier, cost) values ('pp-1', 'Acme', 1000)`)
+    assert.deepEqual(await prices('pp-1'), [1429, 1334, 1205])
+    assert.equal((await history('pp-1')).at(-1)!.reason, 'Priced automatically')
+  })
+
+  test("with no cost entered, the supplier's price is the cost; when it changes the prices follow and the office is told", async () => {
+    await asUser(uid.admin, `insert into products (id, title, category, price, status) values ('pp-2', 'Basin mixer', 'Tapware', 1, 'published')`)
+    await asUser(uid.admin, `insert into product_sources (id, supplier, source_url) values ('pp-2', 'TapCo', 'https://example.com/mixer')`)
+    assert.deepEqual(await prices('pp-2'), [1, null, null], 'nothing to base it on yet')
+    await pool.query(`select apply_supplier_stock('pp-2', 'in_stock', 5, 210, '')`)
+    assert.deepEqual(await prices('pp-2'), [300, 280, 254])
+    await pool.query(`select apply_supplier_stock('pp-2', 'in_stock', 5, 231, '')`)
+    assert.deepEqual(await prices('pp-2'), [330, 308, 279])
+    const told = await pool.query<{ body: string }>(`select body from inbox where user_id = 'u-admin' and title = 'Supplier price up: Basin mixer'`)
+    assert.equal(told.rowCount, 1)
+    assert.match(told.rows[0].body, /^TapCo now charges \$231\.00 \(was \$210\.00\)\. Your prices are now \$330 public, \$308 for clients and \$279 for trades\.$/)
+    assert.deepEqual((await history('pp-2')).map((h) => h.reason).slice(-2), ['Supplier price changed', 'Supplier price changed'])
+  })
+
+  test("automatic prices can't be overridden from the app; switched off, prices are set by hand and recorded", async () => {
+    await asUser(uid.admin, `update products set price = 5 where id = 'pp-1'`)
+    await asUser(uid.admin, `update product_trade_prices set price = 5 where id = 'pp-1'`)
+    assert.deepEqual(await prices('pp-1'), [1429, 1334, 1205])
+    await asUser(uid.admin, `update product_sources set auto_price = false where id = 'pp-1'`)
+    await asUser(uid.admin, `update products set price = 1499 where id = 'pp-1'`)
+    assert.deepEqual(await prices('pp-1'), [1499, 1334, 1205])
+    const h = (await history('pp-1')).at(-1)!
+    assert.deepEqual([h.reason, Number(h.public_price)], ['Price set by hand', 1499])
+    assert.equal((await pool.query(`select changed_by from product_price_history where product_id = 'pp-1' order by at desc, id desc limit 1`)).rows[0].changed_by, 'u-admin')
+    await asUser(uid.admin, `update product_sources set auto_price = true where id = 'pp-1'`)
+    assert.deepEqual(await prices('pp-1'), [1429, 1334, 1205])
+  })
+
+  test('new margins reprice every automatically priced product', async () => {
+    await asUser(uid.admin, `update settings set pricing = '{"public": 35, "client": 25, "trade": 15}'`)
+    assert.deepEqual(await prices('pp-1'), [1539, 1334, 1177])
+    assert.equal((await history('pp-1')).at(-1)!.reason, 'Margins changed')
+    await assert.rejects(asUser(uid.admin, `update settings set pricing = '{"public": 120, "client": 25, "trade": 15}'`), /pricing_margins/)
+    await asUser(uid.admin, `update settings set pricing = '{"public": 30, "client": 25, "trade": 17}'`)
+  })
+
+  test("clients see the client price of published products, nobody else does; the history is the office's", async () => {
+    assert.deepEqual((await asUser<{ id: string }>(uid.sarah, `select id from product_client_prices where id like 'pp-%' order by id`)).rows.map((r) => r.id), ['pp-1', 'pp-2'])
+    assert.equal((await asUser(uid.tia, `select 1 from product_client_prices`)).rowCount, 0)
+    assert.equal((await asAnon(`select 1 from product_client_prices`)).rowCount, 0)
+    assert.equal((await asUser(uid.sarah, `select 1 from product_price_history`)).rowCount, 0)
+    assert.ok(((await asUser(uid.admin, `select 1 from product_price_history`)).rowCount ?? 0) > 3)
+    await assert.rejects(asUser(uid.admin, `select auto_price_for('pp-1', 'trade')`), /permission denied/)
   })
 })

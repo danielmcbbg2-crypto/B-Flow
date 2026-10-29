@@ -26,6 +26,7 @@ import type {
   ProjectCost,
   ProductSource,
   SupplierStock,
+  Pricing,
   Property,
   QuickBooksInvoice,
   QuoteItem,
@@ -60,6 +61,7 @@ export const TABLES = [
   'settings',
   'products',
   'product_trade_prices',
+  'product_client_prices',
   'product_sources',
   'orders',
   'order_items',
@@ -67,6 +69,7 @@ export const TABLES = [
   'leads',
   'text_log',
   'quote_templates',
+  'product_price_history',
 ] as const
 export type TableName = (typeof TABLES)[number]
 
@@ -88,7 +91,7 @@ const opt = <T>(v: T | null | undefined): T | undefined => (v === null ? undefin
 const nul = <T>(v: T | undefined): T | null => (v === undefined ? null : v)
 const num = (v: unknown): number => (typeof v === 'number' ? v : Number(v))
 
-import { DEFAULT_SMS } from './types'
+import { DEFAULT_PRICING, DEFAULT_SMS } from './types'
 export { DEFAULT_SMS }
 
 // ───────────── to rows ─────────────
@@ -340,6 +343,7 @@ const settingsRow = (d: AppData): Row => ({
     autoReplyMessage: d.smsSettings.autoReplyMessage.slice(0, 480),
   },
   bank: d.bank,
+  pricing: d.pricing,
 })
 
 const productRow = (p: Product): Row => ({
@@ -454,6 +458,10 @@ const SPECS: Spec[] = [
     rows: (d) => d.products.filter((p) => p.tradePrice !== undefined).map((p) => ({ id: p.id, price: p.tradePrice })),
   },
   {
+    table: 'product_client_prices',
+    rows: (d) => d.products.filter((p) => p.clientPrice !== undefined).map((p) => ({ id: p.id, price: p.clientPrice })),
+  },
+  {
     table: 'product_sources',
     rows: (d) =>
       d.products
@@ -464,6 +472,7 @@ const SPECS: Spec[] = [
           source_url: p.source!.url,
           cost: nul(p.source!.cost),
           notes: p.source!.notes,
+          auto_price: p.source!.autoPrice ?? true,
           track_stock: p.source!.trackStock ?? true,
           out_of_stock_as: p.source!.outOfStockAs ?? 'out_of_stock',
         })),
@@ -771,8 +780,9 @@ const smsFromRow = (r: Row): SmsNotification => ({
 const newestFirst = (k: string) => (a: Row, b: Row) => String(b[k]).localeCompare(String(a[k]))
 
 /** Loads everything the signed-in person is allowed to see. */
-export const productsFromRows = (products: Row[], tradePrices: Row[] = [], sources: Row[] = []): Product[] => {
+export const productsFromRows = (products: Row[], tradePrices: Row[] = [], sources: Row[] = [], clientPrices: Row[] = []): Product[] => {
   const trade = new Map(tradePrices.map((r) => [r.id as string, num(r.price)]))
+  const client = new Map(clientPrices.map((r) => [r.id as string, num(r.price)]))
   const source = new Map(sources.map((r) => [r.id as string, r]))
   return products
     .sort((a, b) => String(a.title).localeCompare(String(b.title)))
@@ -787,6 +797,7 @@ export const productsFromRows = (products: Row[], tradePrices: Row[] = [], sourc
         sku: r.sku as string,
         price: num(r.price),
         tradePrice: trade.get(r.id as string),
+        clientPrice: client.get(r.id as string),
         images: (r.images as string[]) ?? [],
         status: r.status as Product['status'],
         stock: r.stock as Product['stock'],
@@ -796,6 +807,7 @@ export const productsFromRows = (products: Row[], tradePrices: Row[] = [], sourc
               url: s.source_url as string,
               cost: s.cost === null ? undefined : num(s.cost),
               notes: s.notes as string,
+              autoPrice: (s.auto_price as boolean | undefined) ?? true,
               trackStock: (s.track_stock as boolean | undefined) ?? true,
               outOfStockAs: (s.out_of_stock_as as ProductSource['outOfStockAs']) ?? 'out_of_stock',
               supplierStock: {
@@ -849,7 +861,7 @@ const ordersFromRows = (orders: Row[], items: Row[], notes: Row[]): StoreOrder[]
 }
 
 export async function fetchAll(db: DbAdapter): Promise<AppData> {
-  const [profiles, properties, projects, requests, milestones, expenses, quoteItems, variations, payments, costs, tasks, diary, defects, documents, invoices, inbox, sms, settings, products, tradePrices, sources, orders, orderItems, orderNotes, leads, texts, quoteTemplates] =
+  const [profiles, properties, projects, requests, milestones, expenses, quoteItems, variations, payments, costs, tasks, diary, defects, documents, invoices, inbox, sms, settings, products, tradePrices, clientPrices, sources, orders, orderItems, orderNotes, leads, texts, quoteTemplates, priceHistory] =
     await Promise.all(TABLES.map((t) => db.select(t)))
   // Projects a trade is booked on but isn't the project's own trade for: their tasks, diary,
   // defects and documents come with the tables above, and this adds the project's name and address.
@@ -875,7 +887,7 @@ export async function fetchAll(db: DbAdapter): Promise<AppData> {
   const di = byProject(diary)
   const de = byProject(defects)
   const dc = byProject(documents)
-  const s = settings[0] as { sms?: Partial<SmsSettings>; bank?: AppData['bank'] } | undefined
+  const s = settings[0] as { sms?: Partial<SmsSettings>; bank?: AppData['bank']; pricing?: Partial<Pricing> } | undefined
   return {
     version: DATA_VERSION,
     users: profiles.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at))).map(userFromRow),
@@ -890,7 +902,21 @@ export async function fetchAll(db: DbAdapter): Promise<AppData> {
     inbox: inbox.sort(newestFirst('created_at')).map(inboxFromRow),
     smsSettings: { ...DEFAULT_SMS, ...(s?.sms ?? {}) },
     bank: s?.bank ?? { accountName: 'Next Phase Maintenance', bsb: '', accountNumber: '' },
-    products: productsFromRows(products, tradePrices, sources),
+    pricing: { ...DEFAULT_PRICING, ...(s?.pricing ?? {}) },
+    priceHistory: priceHistory
+      .sort((a, b) => String(b.at).localeCompare(String(a.at)))
+      .map((r) => ({
+        id: r.id as string,
+        productId: r.product_id as string,
+        at: r.at as string,
+        reason: r.reason as string,
+        costBasis: r.cost_basis === null || r.cost_basis === undefined ? undefined : num(r.cost_basis),
+        publicPrice: r.public_price === null || r.public_price === undefined ? undefined : num(r.public_price),
+        clientPrice: r.client_price === null || r.client_price === undefined ? undefined : num(r.client_price),
+        tradePrice: r.trade_price === null || r.trade_price === undefined ? undefined : num(r.trade_price),
+        changedBy: opt(r.changed_by as string | null),
+      })),
+    products: productsFromRows(products, tradePrices, sources, clientPrices),
     orders: ordersFromRows(orders, orderItems, orderNotes),
     leads: leads.sort(newestFirst('created_at')).map((r) => ({
       id: r.id as string,
@@ -943,6 +969,8 @@ export function emptyData(): AppData {
     inbox: [],
     smsSettings: DEFAULT_SMS,
     bank: { accountName: 'Next Phase Maintenance', bsb: '', accountNumber: '' },
+    pricing: DEFAULT_PRICING,
+    priceHistory: [],
     products: [],
     orders: [],
     leads: [],

@@ -430,6 +430,8 @@ export interface Product {
   price: number
   /** Price for signed-in service providers, when set. Only they and store managers can see it. */
   tradePrice?: number
+  /** Price for signed-in clients, when set. Only they and store managers can see it. */
+  clientPrice?: number
   /** Public image links (uploaded photos). */
   images: string[]
   status: 'draft' | 'published' | 'archived'
@@ -446,6 +448,8 @@ export interface ProductSource {
   /** What it costs the business, inc. GST. */
   cost?: number
   notes: string
+  /** Set the three prices from the cost (or the supplier's price) at the store's margins (on unless switched off). */
+  autoPrice?: boolean
   /** Check the supplier's page for stock every 6 hours (on unless switched off). */
   trackStock?: boolean
   /** What the listing switches to when the supplier runs out. */
@@ -534,6 +538,8 @@ export interface DraftListing {
   suggested_price: string
   /** Things to check before publishing. */
   notes: string
+  /** Photo links found on the page (newer drafts). */
+  photos?: string[]
 }
 
 export type LeadStatus = 'new' | 'contacted' | 'won' | 'lost'
@@ -601,4 +607,31 @@ export interface AppData {
   leads: Lead[]
   texts: TextLogEntry[]
   quoteTemplates: QuoteTemplate[]
+  /** The store's margins (store managers). */
+  pricing: Pricing
+  /** Every change to products' prices (store managers). */
+  priceHistory: PriceChange[]
+}
+
+/** Margins on the selling price, in %: 30 means price = cost ÷ 0.70. */
+export interface Pricing {
+  /** Visitors and anyone not signed in. */
+  public: number
+  /** Signed-in clients. */
+  client: number
+  /** Signed-in service providers. */
+  trade: number
+}
+export const DEFAULT_PRICING: Pricing = { public: 30, client: 25, trade: 17 }
+
+export interface PriceChange {
+  id: string
+  productId: string
+  at: string
+  reason: string
+  costBasis?: number
+  publicPrice?: number
+  clientPrice?: number
+  tradePrice?: number
+  changedBy?: string
 }

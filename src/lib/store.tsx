@@ -253,7 +253,7 @@ interface StoreValue {
   /** Store managers: the AI assistant drafts a listing from a found product, for review. */
   draftListing: (product: FoundProduct, instructions?: string, onProgress?: (text: string) => void, signal?: AbortSignal) => Promise<DraftListing>
   /** New photos of the product on a supplier page, made by AI from the supplier's photos (store managers). */
-  recreatePhotos: (url: string, title: string, onProgress?: (text: string) => void, signal?: AbortSignal) => Promise<{ images: string[]; references: string[] }>
+  recreatePhotos: (url: string, title: string, photos: string[], onProgress?: (text: string) => void, signal?: AbortSignal) => Promise<{ images: string[]; references: string[] }>
   /**
    * What a supplier's page says about stock now. With a product id, the reading is saved (and the
    * listing switched if it ran out or came back); with a link, it's only read.
@@ -959,7 +959,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (unavailable.length) throw new Error(`No longer available: ${unavailable.map(({ p }) => p?.title ?? 'an item').join(', ')}`)
       const items = o.items.map((i) => {
         const p = d0.products.find((x) => x.id === i.productId)!
-        return { id: uid('oi'), productId: p.id, title: p.title, sku: p.sku, unitPrice: trade && p.tradePrice !== undefined ? p.tradePrice : p.price, qty: i.qty }
+        const client = user?.role === 'client' && user.status === 'active'
+        const unitPrice = trade && p.tradePrice !== undefined ? p.tradePrice : client && p.clientPrice !== undefined ? p.clientPrice : p.price
+        return { id: uid('oi'), productId: p.id, title: p.title, sku: p.sku, unitPrice, qty: i.qty }
       })
       const total = items.reduce((s, i) => s + i.unitPrice * i.qty, 0)
       const number = Math.max(5000, ...d0.orders.map((x) => x.number)) + 1
@@ -1182,8 +1184,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [],
   )
 
-  const recreatePhotos = useCallback(async (url: string, title: string, onProgress?: (text: string) => void, signal?: AbortSignal) => {
-    if (supabase) return streamFunction<{ images: string[]; references: string[] }>('store-assistant', { action: 'images', url, title }, onProgress, signal)
+  const recreatePhotos = useCallback(async (url: string, title: string, photos: string[], onProgress?: (text: string) => void, signal?: AbortSignal) => {
+    if (supabase) return streamFunction<{ images: string[]; references: string[] }>('store-assistant', { action: 'images', url, title, photos }, onProgress, signal)
     onProgress?.('Finding the supplier’s photos…')
     await demoWait(300, signal)
     onProgress?.('Creating new photo 1 of 2 (studio shot)…')

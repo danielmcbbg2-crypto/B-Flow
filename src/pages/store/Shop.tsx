@@ -12,9 +12,15 @@ import { cx, fmtDate, money } from '../../lib/utils'
 const STOCK_TONE: Record<Product['stock'], Tone> = { in_stock: 'green', to_order: 'outline', out_of_stock: 'red' }
 const ORDER_TONE: Record<OrderStatus, Tone> = { new: 'orange', confirmed: 'outline', paid: 'dark', fulfilled: 'green', cancelled: 'red' }
 
-/** Active service providers pay the trade price where one is set (place_order applies the same rule). */
+/**
+ * Signed-in service providers pay the trade price and signed-in clients the client price, where one
+ * is set; everyone else the public price (place_order applies the same rule).
+ */
 export function unitPrice(p: Product, user: UserAccount | null): number {
-  return user?.role === 'provider' && user.status === 'active' && p.tradePrice !== undefined ? p.tradePrice : p.price
+  if (user?.status !== 'active') return p.price
+  if (user.role === 'provider' && p.tradePrice !== undefined) return p.tradePrice
+  if (user.role === 'client' && p.clientPrice !== undefined) return p.clientPrice
+  return p.price
 }
 
 /** Published products: from the signed-in person's data, or loaded for a visitor. */
@@ -42,7 +48,7 @@ function Price({ p, user, large }: { p: Product; user: UserAccount | null; large
       {money(price)}
       {price !== p.price && (
         <span className="ml-2 align-middle text-xs font-normal text-slate-500">
-          Trade price <span className="line-through">{money(p.price)}</span>
+          {user?.role === 'provider' ? 'Trade price' : 'Member price'} <span className="line-through">{money(p.price)}</span>
         </span>
       )}
     </span>
