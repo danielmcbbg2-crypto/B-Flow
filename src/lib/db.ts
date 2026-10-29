@@ -24,6 +24,7 @@ import type {
   Product,
   Project,
   ProjectCost,
+  ProductOption,
   ProductSource,
   SupplierStock,
   Pricing,
@@ -355,6 +356,8 @@ const productRow = (p: Product): Row => ({
   sku: p.sku,
   price: p.price,
   images: p.images,
+  // The client and trade add-ons are set by the database (with the client and trade prices).
+  options: (p.options ?? []).map((g) => ({ id: g.id, name: g.name, values: g.values.map((v) => ({ id: v.id, label: v.label, price: v.price, available: v.available })) })),
   status: p.status,
   stock: p.stock,
   created_by: nul(p.createdBy),
@@ -413,6 +416,7 @@ const orderItemRow = (orderId: string, i: OrderItem): Row => ({
   sku: i.sku,
   unit_price: i.unitPrice,
   qty: i.qty,
+  options: i.options ?? '',
 })
 
 interface Spec {
@@ -475,6 +479,7 @@ const SPECS: Spec[] = [
           auto_price: p.source!.autoPrice ?? true,
           track_stock: p.source!.trackStock ?? true,
           out_of_stock_as: p.source!.outOfStockAs ?? 'out_of_stock',
+          option_costs: p.source!.optionCosts ?? {},
         })),
   },
   // Orders are placed by the database (place_order); store managers only change the status, and
@@ -783,6 +788,9 @@ const newestFirst = (k: string) => (a: Row, b: Row) => String(b[k]).localeCompar
 export const productsFromRows = (products: Row[], tradePrices: Row[] = [], sources: Row[] = [], clientPrices: Row[] = []): Product[] => {
   const trade = new Map(tradePrices.map((r) => [r.id as string, num(r.price)]))
   const client = new Map(clientPrices.map((r) => [r.id as string, num(r.price)]))
+  type Amounts = Record<string, number>
+  const tradeAdds = new Map(tradePrices.map((r) => [r.id as string, (r.option_prices as Amounts | undefined) ?? {}]))
+  const clientAdds = new Map(clientPrices.map((r) => [r.id as string, (r.option_prices as Amounts | undefined) ?? {}]))
   const source = new Map(sources.map((r) => [r.id as string, r]))
   return products
     .sort((a, b) => String(a.title).localeCompare(String(b.title)))
@@ -799,6 +807,15 @@ export const productsFromRows = (products: Row[], tradePrices: Row[] = [], sourc
         tradePrice: trade.get(r.id as string),
         clientPrice: client.get(r.id as string),
         images: (r.images as string[]) ?? [],
+        options: ((r.options as ProductOption[] | undefined) ?? []).map((g) => ({
+          id: g.id,
+          name: g.name,
+          values: g.values.map((v) => {
+            const c = clientAdds.get(r.id as string)?.[v.id]
+            const t = tradeAdds.get(r.id as string)?.[v.id]
+            return { id: v.id, label: v.label, price: num(v.price), available: v.available !== false, clientPrice: c === undefined ? undefined : num(c), tradePrice: t === undefined ? undefined : num(t) }
+          }),
+        })),
         status: r.status as Product['status'],
         stock: r.stock as Product['stock'],
         source: s
@@ -810,6 +827,7 @@ export const productsFromRows = (products: Row[], tradePrices: Row[] = [], sourc
               autoPrice: (s.auto_price as boolean | undefined) ?? true,
               trackStock: (s.track_stock as boolean | undefined) ?? true,
               outOfStockAs: (s.out_of_stock_as as ProductSource['outOfStockAs']) ?? 'out_of_stock',
+              optionCosts: Object.fromEntries(Object.entries((s.option_costs as Record<string, number> | undefined) ?? {}).map(([k, v]) => [k, num(v)])),
               supplierStock: {
                 status: ((s.stock_status as SupplierStock['status'] | undefined) ?? 'unknown'),
                 qty: s.stock_qty === null || s.stock_qty === undefined ? undefined : num(s.stock_qty),
@@ -838,6 +856,7 @@ const ordersFromRows = (orders: Row[], items: Row[], notes: Row[]): StoreOrder[]
       sku: i.sku as string,
       unitPrice: num(i.unit_price),
       qty: i.qty as number,
+      options: (i.options as string | undefined) || undefined,
     })
     byOrder.set(i.order_id as string, list)
   }

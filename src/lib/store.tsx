@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { RealtimeChannel, Session } from '@supabase/supabase-js'
 import type {
+  OrderItem,
   AppData,
   DraftListing,
   FoundProduct,
@@ -147,7 +148,8 @@ type InboxDraft = Omit<InboxMessage, 'id' | 'createdAt' | 'read' | 'acknowledged
 
 /** A store order as the checkout sends it; prices are worked out by the database. */
 export interface OrderInput {
-  items: { productId: string; qty: number }[]
+  /** options: option id → value id, one for each of the product's options. */
+  items: { productId: string; qty: number; options?: Record<string, string> }[]
   name: string
   email: string
   phone: string
@@ -931,7 +933,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     async (o: OrderInput): Promise<{ number: number; total: number }> => {
       if (supabase) {
         const { data: res, error } = await supabase.rpc('place_order', {
-          p_items: o.items.map((i) => ({ product_id: i.productId, qty: i.qty })),
+          p_items: o.items.map((i) => ({ product_id: i.productId, qty: i.qty, options: i.options ?? {} })),
           p_name: o.name,
           p_email: o.email,
           p_phone: o.phone,
@@ -953,16 +955,38 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (o.items.length === 0) throw new Error('Your cart is empty')
       if (o.items.length > 30) throw new Error('Up to 30 different products per order. Please split it into two orders.')
       const trade = user?.role === 'provider' && user.status === 'active'
-      const unavailable = o.items
-        .map((i) => ({ i, p: d0.products.find((p) => p.id === i.productId) }))
-        .filter(({ p }) => !p || p.status !== 'published' || p.stock === 'out_of_stock')
-      if (unavailable.length) throw new Error(`No longer available: ${unavailable.map(({ p }) => p?.title ?? 'an item').join(', ')}`)
-      const items = o.items.map((i) => {
-        const p = d0.products.find((x) => x.id === i.productId)!
-        const client = user?.role === 'client' && user.status === 'active'
-        const unitPrice = trade && p.tradePrice !== undefined ? p.tradePrice : client && p.clientPrice !== undefined ? p.clientPrice : p.price
-        return { id: uid('oi'), productId: p.id, title: p.title, sku: p.sku, unitPrice, qty: i.qty }
-      })
+      const client = user?.role === 'client' && user.status === 'active'
+      // The same product with the same choices is one line.
+      const merged = new Map<string, { productId: string; qty: number; options: Record<string, string> }>()
+      for (const i of o.items) {
+        const options = i.options ?? {}
+        const key = `${i.productId}|${JSON.stringify(Object.entries(options).sort())}`
+        const had = merged.get(key)
+        merged.set(key, { productId: i.productId, options, qty: (had?.qty ?? 0) + i.qty })
+      }
+      const bad: string[] = []
+      const items: OrderItem[] = []
+      for (const i of merged.values()) {
+        const p = d0.products.find((x) => x.id === i.productId)
+        if (!p || p.status !== 'published' || p.stock === 'out_of_stock') {
+          bad.push(p?.title ?? 'an item')
+          continue
+        }
+        const opts = p.options ?? []
+        if (Object.keys(i.options).some((k) => !opts.some((g) => g.id === k))) throw new Error(`The options chosen for ${p.title} have changed. Remove it and add it again.`)
+        let extra = 0
+        const chosen: string[] = []
+        for (const g of opts) {
+          const v = g.values.find((x) => x.id === i.options[g.id])
+          if (!v) throw new Error(`Choose the ${g.name.toLowerCase()} for ${p.title}`)
+          if (!v.available) bad.push(`${p.title} (${v.label})`)
+          extra += (trade && p.tradePrice !== undefined ? v.tradePrice : client && p.clientPrice !== undefined ? v.clientPrice : undefined) ?? v.price
+          chosen.push(`${g.name}: ${v.label}`)
+        }
+        const base = trade && p.tradePrice !== undefined ? p.tradePrice : client && p.clientPrice !== undefined ? p.clientPrice : p.price
+        items.push({ id: uid('oi'), productId: p.id, title: p.title, sku: p.sku, unitPrice: base + extra, qty: i.qty, options: chosen.join(' · ') || undefined })
+      }
+      if (bad.length) throw new Error(`No longer available: ${bad.join(', ')}`)
       const total = items.reduce((s, i) => s + i.unitPrice * i.qty, 0)
       const number = Math.max(5000, ...d0.orders.map((x) => x.number)) + 1
       update((d) => {

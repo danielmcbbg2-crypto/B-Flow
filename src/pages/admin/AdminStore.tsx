@@ -1,11 +1,11 @@
 import { useState, type FormEvent } from 'react'
-import { ExternalLink, Package, Plus, RefreshCw } from 'lucide-react'
+import { ExternalLink, Package, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { Empty, Field, Modal, PageHeader, PhotoInput, Status, Tabs, type Tone } from '../../components/ui'
 import { useLookup, useStore } from '../../lib/store'
-import { ORDER_STATUS_LABEL, STOCK_LABEL, STORE_CATEGORIES, SUPPLIER_STOCK_LABEL, type OrderStatus, type Product, type ProductSource, type StoreOrder, type SupplierStock } from '../../lib/types'
+import { ORDER_STATUS_LABEL, STOCK_LABEL, STORE_CATEGORIES, SUPPLIER_STOCK_LABEL, type OrderStatus, type Pricing, type Product, type ProductOption, type ProductSource, type StoreOrder, type SupplierStock } from '../../lib/types'
 import { cx, fmtDate, fmtDateTime, money, uid } from '../../lib/utils'
 import { ProductAssistant } from './ProductAssistant'
-import { autoPrices, marginOf } from '../../lib/pricing'
+import { autoOptions, autoPrices, manualOptions, marginOf, optionAddOn } from '../../lib/pricing'
 
 const ORDER_TONE: Record<OrderStatus, Tone> = { new: 'orange', confirmed: 'outline', paid: 'dark', fulfilled: 'green', cancelled: 'red' }
 const PRODUCT_TONE: Record<Product['status'], Tone> = { draft: 'slate', published: 'green', archived: 'red' }
@@ -28,6 +28,7 @@ export const EMPTY_PRODUCT = (): Product => ({
   description: '',
   category: 'Vanities',
   brand: '',
+  options: [],
   sku: '',
   price: 0,
   images: [],
@@ -141,7 +142,7 @@ function Orders() {
                       {o.trade ? ' · trade prices' : ''}
                     </p>
                   </td>
-                  <td className="td text-sm text-slate-600">{o.items.map((i) => `${i.qty} × ${i.title}`).join(', ')}</td>
+                  <td className="td text-sm text-slate-600">{o.items.map((i) => `${i.qty} × ${i.title}${i.options ? ` (${i.options})` : ''}`).join(', ')}</td>
                   <td className="td num text-right">{money(o.total)}</td>
                   <td className="td"><Status tone={ORDER_TONE[o.status]}>{ORDER_STATUS_LABEL[o.status]}</Status></td>
                   <td className="td text-right"><button className="btn-ghost px-3 py-1.5" onClick={() => setOpenId(o.id)}>Open</button></td>
@@ -191,7 +192,7 @@ function OrderDetail({ order, onClose }: { order: StoreOrder; onClose: () => voi
         <tbody className="divide-y divide-slate-100">
           {order.items.map((i) => (
             <tr key={i.id}>
-              <td className="py-2">{i.title}{i.sku && <span className="ml-2 text-xs text-slate-500">{i.sku}</span>}</td>
+              <td className="py-2">{i.title}{i.sku && <span className="ml-2 text-xs text-slate-500">{i.sku}</span>}{i.options && <span className="block text-xs text-slate-600">{i.options}</span>}</td>
               <td className="num py-2 text-right text-slate-600">{i.qty} × {money(i.unitPrice)}</td>
               <td className="num py-2 text-right font-semibold">{money(i.qty * i.unitPrice)}</td>
             </tr>
@@ -239,7 +240,7 @@ function PriceStructure() {
       // The database re-prices them too; this shows it straight away.
       for (const p of d.products) {
         const a = autoPrices(p, next)
-        if (a) Object.assign(p, { price: a.price, clientPrice: a.clientPrice, tradePrice: a.tradePrice })
+        if (a) Object.assign(p, { price: a.price, clientPrice: a.clientPrice, tradePrice: a.tradePrice, options: autoOptions(p.options ?? [], p.source?.optionCosts ?? {}, next) })
       }
     })
     setEditing(false)
@@ -356,6 +357,113 @@ function Products({ onEdit }: { onEdit: (p: Product) => void }) {
 
 const optNumber = (v: string) => (v.trim() === '' ? undefined : Number(v))
 
+/** An option being edited: what each value adds is kept as typed (cost or price, by value id). */
+interface OptionDraft {
+  options: ProductOption[]
+  costs: Record<string, string>
+  prices: Record<string, string>
+}
+
+/**
+ * The product's options (e.g. Size, Colour) and their values. With automatic pricing each value
+ * has an extra cost, and what it adds for each tier follows from the margins; priced by hand, each
+ * value has an extra price, the same for everyone.
+ */
+function OptionsEditor({ draft, onChange, auto, pricing }: { draft: OptionDraft; onChange: (d: OptionDraft) => void; auto: boolean; pricing: Pricing }) {
+  const { options } = draft
+  const setOptions = (next: ProductOption[]) => onChange({ ...draft, options: next })
+  const setOption = (id: string, patch: Partial<ProductOption>) => setOptions(options.map((g) => (g.id === id ? { ...g, ...patch } : g)))
+  const newValue = () => ({ id: uid('val'), label: '', price: 0, available: true })
+  return (
+    <div className="space-y-3 rounded-md border border-slate-200 p-4 sm:col-span-2" aria-label="Options">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold">Options</p>
+          <p className="text-xs text-slate-500">
+            Choices the customer makes, like size or colour.{' '}
+            {auto
+              ? 'Enter what each choice costs you extra; it\u2019s added to the price at your margins.'
+              : 'Enter what each choice adds to the price (the same for everyone).'}
+          </p>
+        </div>
+        {options.length < 3 && (
+          <button type="button" className="btn-ghost px-3 py-1 text-xs" onClick={() => setOptions([...options, { id: uid('opt'), name: '', values: [newValue()] }])}>
+            <Plus size={14} /> Add option
+          </button>
+        )}
+      </div>
+      {options.map((g, gi) => (
+        <div key={g.id} className="space-y-2 rounded-md bg-slate-50 p-3">
+          <div className="flex items-end gap-2">
+            <Field label={`Option ${gi + 1}`} className="flex-1">
+              <input className="input py-1" placeholder="e.g. Size" value={g.name} onChange={(e) => setOption(g.id, { name: e.target.value })} />
+            </Field>
+            <button type="button" className="mb-1.5 text-slate-500 hover:text-red-600" aria-label={`Remove option ${g.name || gi + 1}`} onClick={() => setOptions(options.filter((x) => x.id !== g.id))}>
+              <Trash2 size={16} />
+            </button>
+          </div>
+          <table className="w-full text-sm">
+            <thead className="text-left text-xs text-slate-500">
+              <tr>
+                <th className="pb-1 font-medium">Choice</th>
+                <th className="w-32 pb-1 font-medium">{auto ? 'Extra cost' : 'Extra price'}</th>
+                {auto && <th className="pb-1 font-medium">Adds (public / clients / trades)</th>}
+                <th className="w-20 pb-1 font-medium">Available</th>
+                <th className="w-6" />
+              </tr>
+            </thead>
+            <tbody>
+              {g.values.map((v) => {
+                const typed = (auto ? draft.costs : draft.prices)[v.id] ?? ''
+                const n = Number(typed)
+                return (
+                  <tr key={v.id}>
+                    <td className="py-1 pr-2">
+                      <input className="input py-1" aria-label="Choice" placeholder="e.g. 900 mm" value={v.label} onChange={(e) => setOption(g.id, { values: g.values.map((x) => (x.id === v.id ? { ...x, label: e.target.value } : x)) })} />
+                    </td>
+                    <td className="py-1 pr-2">
+                      <input
+                        className="input num py-1"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        aria-label={auto ? 'Extra cost' : 'Extra price'}
+                        placeholder="0"
+                        value={typed}
+                        onChange={(e) => onChange({ ...draft, [auto ? 'costs' : 'prices']: { ...(auto ? draft.costs : draft.prices), [v.id]: e.target.value } })}
+                      />
+                    </td>
+                    {auto && (
+                      <td className="num py-1 pr-2 text-xs text-slate-600">
+                        {n > 0 ? `+${money(optionAddOn(n, pricing.public))} / +${money(optionAddOn(n, pricing.client))} / +${money(optionAddOn(n, pricing.trade))}` : '—'}
+                      </td>
+                    )}
+                    <td className="py-1 pr-2">
+                      <input type="checkbox" className="h-4 w-4 accent-slate-900" aria-label={`${v.label || 'Choice'} available`} checked={v.available} onChange={(e) => setOption(g.id, { values: g.values.map((x) => (x.id === v.id ? { ...x, available: e.target.checked } : x)) })} />
+                    </td>
+                    <td className="py-1">
+                      {g.values.length > 1 && (
+                        <button type="button" className="text-slate-500 hover:text-red-600" aria-label={`Remove ${v.label || 'choice'}`} onClick={() => setOption(g.id, { values: g.values.filter((x) => x.id !== v.id) })}>
+                          <Trash2 size={15} />
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+          {g.values.length < 30 && (
+            <button type="button" className="text-xs font-semibold text-slate-700 underline" onClick={() => setOption(g.id, { values: [...g.values, newValue()] })}>
+              Add a choice
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export function ProductEditor({ product, notice, onClose, onSaved }: { product: Product; notice?: string; onClose: () => void; onSaved: () => void }) {
   const { data, update } = useStore()
   const isNew = !data.products.some((p) => p.id === product.id)
@@ -367,6 +475,11 @@ export function ProductEditor({ product, notice, onClose, onSaved }: { product: 
     cost: product.source?.cost !== undefined ? String(product.source.cost) : '',
   })
   const [autoPrice, setAutoPrice] = useState(product.source?.autoPrice ?? true)
+  const [optionDraft, setOptionDraft] = useState<OptionDraft>(() => ({
+    options: product.options ?? [],
+    costs: Object.fromEntries(Object.entries(product.source?.optionCosts ?? {}).map(([k, v]) => [k, String(v)])),
+    prices: Object.fromEntries((product.options ?? []).flatMap((g) => g.values.map((v) => [v.id, v.price ? String(v.price) : '']))),
+  }))
   const [source, setSource] = useState({
     supplier: product.source?.supplier ?? '',
     url: product.source?.url ?? '',
@@ -413,10 +526,19 @@ export function ProductEditor({ product, notice, onClose, onSaved }: { product: 
     if (clientPrice !== undefined && !(clientPrice >= 0)) return setError('Enter a valid client price, or leave it empty.')
     if (cost !== undefined && !(cost >= 0)) return setError('Enter a valid cost, or leave it empty.')
     if (p.status === 'published' && !p.description.trim()) return setError('Add a description before publishing.')
+    const opts = optionDraft.options.map((g) => ({ ...g, name: g.name.trim(), values: g.values.map((v) => ({ ...v, label: v.label.trim() })) }))
+    if (opts.some((g) => !g.name || g.values.some((v) => !v.label))) return setError('Give each option a name and each choice a label (or remove the empty ones).')
+    if (opts.some((g) => g.values.every((v) => !v.available))) return setError('Each option needs at least one available choice.')
+    const amount = (m: Record<string, string>, id: string) => (m[id]?.trim() ? Number(m[id]) : 0)
+    if (opts.some((g) => g.values.some((v) => !(amount(auto ? optionDraft.costs : optionDraft.prices, v.id) >= 0)))) return setError('Enter each extra amount as a number (or leave it empty).')
+    const optionCosts = Object.fromEntries(opts.flatMap((g) => g.values.filter((v) => amount(optionDraft.costs, v.id) > 0).map((v) => [v.id, amount(optionDraft.costs, v.id)])))
+    // The database works the add-ons out again; this shows them straight away.
+    const options = auto ? autoOptions(opts, optionCosts, data.pricing) : manualOptions(opts.map((g) => ({ ...g, values: g.values.map((v) => ({ ...v, price: amount(optionDraft.prices, v.id) })) })))
     const hasSource = !!(source.supplier.trim() || source.url.trim() || source.notes.trim() || cost !== undefined)
     const next: Product = {
       ...p,
       title: p.title.trim(),
+      options,
       price,
       tradePrice,
       clientPrice,
@@ -429,6 +551,7 @@ export function ProductEditor({ product, notice, onClose, onSaved }: { product: 
             autoPrice,
             trackStock: source.trackStock,
             outOfStockAs: source.outOfStockAs,
+            optionCosts,
             supplierStock: product.source?.url === source.url.trim() ? reading : undefined,
           }
         : undefined,
@@ -482,6 +605,7 @@ export function ProductEditor({ product, notice, onClose, onSaved }: { product: 
             {!auto && cost !== undefined && price > 0 && ` Public margin on the cost: ${marginOf(price, cost)}%.`} Client prices are for signed-in clients; trade prices for signed-in trades.
           </p>
         </div>
+        <OptionsEditor draft={optionDraft} onChange={setOptionDraft} auto={!!auto} pricing={data.pricing} />
         <Field label="Description" className="sm:col-span-2">
           <textarea className="input min-h-[120px]" value={p.description} onChange={(e) => set({ description: e.target.value })} />
         </Field>
