@@ -102,7 +102,7 @@ function Working({ text, onStop }: { text: string; onStop: () => void }) {
  * admin to check and publish.
  */
 export function ProductAssistant({ onDraft }: { onDraft: (p: Product, notice?: string) => void }) {
-  const { findProducts, draftListing, recreatePhotos, checkSupplierStock } = useStore()
+  const { findProducts, draftListing, recreatePhotos, colourPhoto, checkSupplierStock } = useStore()
   const [link, setLink] = useState('')
   const [makePhotos, setMakePhotos] = useState(true)
   const [query, setQuery] = useState('')
@@ -165,7 +165,24 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product, notice?: s
       // Photos and stock don't stop the listing: what fails is noted for the admin.
       const [photos, stock] = await Promise.all([
         makePhotos
-          ? recreatePhotos(found.url, l.title, (l.photos ?? []).filter(isWebLink), (t) => current() && setProgress(t), signal, colours).catch((err: Error & { code?: string }) => {
+          ? recreatePhotos(found.url, l.title, (l.photos ?? []).filter(isWebLink), (t) => current() && setProgress(t), signal)
+              .then(async (made) => {
+                // Then each colour's photo, one request at a time (each is a Gemini call of its own).
+                const colourImages: Record<string, string> = {}
+                const colourErrors: string[] = []
+                for (const [i, colour] of colours.slice(0, 6).entries()) {
+                  if (!current()) break
+                  setProgress(`Creating colour photo ${i + 1} of ${Math.min(colours.length, 6)} (${colour})…`)
+                  try {
+                    colourImages[colour] = await colourPhoto(found.url, l.title, colour, (l.photos ?? []).filter(isWebLink), undefined, signal)
+                  } catch (err) {
+                    if ((err as Error).name === 'AbortError') throw err
+                    colourErrors.push(`${colour}: ${(err as Error).message}`)
+                  }
+                }
+                return { ...made, colourImages, colourErrors }
+              })
+              .catch((err: Error & { code?: string }) => {
               if (err.name === 'AbortError') throw err
               return { error: err.code === 'images_not_configured' ? 'New photos weren’t made: add a Google Gemini API key (GEMINI_API_KEY) to the Supabase secrets.' : `New photos weren’t made: ${err.message}` }
             })

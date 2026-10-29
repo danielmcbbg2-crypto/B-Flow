@@ -9,6 +9,8 @@
 //       supplier's (with Google's Gemini image model; needs GEMINI_API_KEY) and returns their links.
 //       `photos` are photo links already found on the page (by the draft), tried as well; `colours`
 //       are its colour or finish choices, each of which gets a studio shot of its own.
+//   { action: 'colour', url, title?, colour }  one studio shot of the product in that colour or
+//       finish (the app asks for each colour in turn, so no one request runs out of time).
 //
 // Both answer as lines of JSON: { type: 'progress', text } while working (what it's searching for
 // or reading), then { type: 'result', data } or { type: 'error', error }.
@@ -18,7 +20,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.49.4'
 import Anthropic from 'npm:@anthropic-ai/sdk@0.131.0'
 import { pagePhoto } from './photo.ts'
-import { recreatePhotos } from './images.ts'
+import { colourPhotos, recreatePhotos, referencePhotos } from './images.ts'
 import { shopVariants, type DraftOption } from './variants.ts'
 
 const cors = {
@@ -311,7 +313,7 @@ Deno.serve(async (req) => {
   }
   const body = await req.json().catch(() => ({}))
 
-  if (body.action === 'images') {
+  if (body.action === 'images' || body.action === 'colour') {
     const url = String(body.url ?? '')
     if (!/^https?:\/\/\S+$/.test(url)) return json({ error: 'Give the supplier’s product link.' }, 400)
     if (!Deno.env.get('GEMINI_API_KEY')) {
@@ -321,22 +323,23 @@ Deno.serve(async (req) => {
     // Photo links the listing draft found on the page, used as well as the ones read here.
     const extra = (Array.isArray(body.photos) ? body.photos : []).map(String).filter((u: string) => /^https?:\/\/\S+$/.test(u)).slice(0, 6)
     const colours = [...new Set((Array.isArray(body.colours) ? body.colours : []).map((c: unknown) => String(c).trim().slice(0, 80)).filter(Boolean))] as string[]
-    return streamed((signal, progress) =>
-      recreatePhotos(
-        url,
-        title,
-        extra,
-        async (bytes, type) => {
-          const path = `ai/${crypto.randomUUID()}.${type === 'image/jpeg' ? 'jpg' : type === 'image/webp' ? 'webp' : 'png'}`
-          const { error } = await db.storage.from('photos').upload(path, bytes, { contentType: type })
-          if (error) throw new Error(`A new photo couldn’t be saved (${error.message}).`)
-          return db.storage.from('photos').getPublicUrl(path).data.publicUrl
-        },
-        signal,
-        progress,
-        colours,
-      ),
-    )
+    const upload = async (bytes: Uint8Array, type: string) => {
+      const path = `ai/${crypto.randomUUID()}.${type === 'image/jpeg' ? 'jpg' : type === 'image/webp' ? 'webp' : 'png'}`
+      const { error } = await db.storage.from('photos').upload(path, bytes, { contentType: type })
+      if (error) throw new Error(`A new photo couldn’t be saved (${error.message}).`)
+      return db.storage.from('photos').getPublicUrl(path).data.publicUrl
+    }
+    if (body.action === 'colour') {
+      const colour = String(body.colour ?? '').trim().slice(0, 80)
+      if (!colour) return json({ error: 'Which colour?' }, 400)
+      return streamed(async (signal, progress) => {
+        const refs = await referencePhotos(url, extra, signal)
+        const made = await colourPhotos(refs, title, [colour], upload, signal, () => progress(`Creating the ${colour} photo…`))
+        if (!made.colourImages[colour]) throw new Error(made.colourErrors[0] ?? `The ${colour} photo couldn’t be made.`)
+        return { image: made.colourImages[colour] }
+      })
+    }
+    return streamed((signal, progress) => recreatePhotos(url, title, extra, upload, signal, progress, colours))
   }
 
   if (!Deno.env.get('ANTHROPIC_API_KEY')) {

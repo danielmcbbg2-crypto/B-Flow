@@ -2,6 +2,7 @@
 // the same product, photographed afresh (new angle, background, lighting and setting), so the store
 // doesn't republish the supplier's own pictures. Needs the GEMINI_API_KEY secret; GEMINI_IMAGE_MODEL
 // picks the model (default below).
+import { decodeBase64, encodeBase64 } from 'jsr:@std/encoding@1.0.10/base64'
 import { pagePhotos, safeFetch } from './photo.ts'
 
 const DEFAULT_MODEL = 'gemini-2.5-flash-image'
@@ -25,11 +26,8 @@ Use a new room, styling and camera angle of your own, in natural daylight, with 
   },
 ]
 
-const toBase64 = (bytes: Uint8Array) => {
-  let s = ''
-  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
-  return btoa(s)
-}
+// The built-in converters: photos are megabytes, and a function only gets a little CPU time.
+const toBase64 = encodeBase64
 /** What an image really is, from its first bytes (some servers label everything octet-stream). */
 function imageType(b: Uint8Array): string | null {
   if (b[0] === 0xff && b[1] === 0xd8) return 'image/jpeg'
@@ -38,7 +36,7 @@ function imageType(b: Uint8Array): string | null {
   if (b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70 && b[8] === 0x61 && b[9] === 0x76 && b[10] === 0x69 && b[11] === 0x66) return 'image/avif'
   return null
 }
-const fromBase64 = (b64: string) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+const fromBase64 = decodeBase64
 
 type Part = { text?: string; inlineData?: { mimeType?: string; data?: string }; inline_data?: { mime_type?: string; data?: string } }
 
