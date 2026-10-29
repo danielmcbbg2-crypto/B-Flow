@@ -264,6 +264,8 @@ interface StoreValue {
     signal?: AbortSignal,
     colours?: string[],
   ) => Promise<{ images: string[]; references: string[]; colourImages?: Record<string, string>; colourErrors?: string[] }>
+  /** One new studio photo of a product in one of its colours or finishes; returns its link. */
+  colourPhoto: (url: string, title: string, colour: string, photos: string[], onProgress?: (text: string) => void, signal?: AbortSignal) => Promise<string>
   /**
    * What a supplier's page says about stock now. With a product id, the reading is saved (and the
    * listing switched if it ran out or came back); with a link, it's only read.
@@ -1245,6 +1247,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return { images: [demoPhoto('New studio photo (demo)', 210), demoPhoto('New room photo (demo)', 35)], references: [], colourImages, colourErrors: [] } as Made
   }, [])
 
+  const colourPhoto = useCallback(async (url: string, title: string, colour: string, photos: string[], onProgress?: (text: string) => void, signal?: AbortSignal) => {
+    if (supabase) return (await streamFunction<{ image: string }>('store-assistant', { action: 'colour', url, title, colour, photos }, onProgress, signal)).image
+    onProgress?.(`Creating the ${colour} photo…`)
+    await demoWait(200, signal)
+    return demoPhoto(`${colour} (demo)`, [...colour].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 0))
+  }, [])
+
   const checkSupplierStock = useCallback(
     async (target: { productId: string } | { url: string }): Promise<SupplierStock> => {
       if (supabase) {
@@ -1409,6 +1418,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     findProducts,
     draftListing,
     recreatePhotos,
+    colourPhoto,
     checkSupplierStock,
     assignRequest,
     pushInbox,
