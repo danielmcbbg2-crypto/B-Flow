@@ -51,12 +51,12 @@ You draft listings for the store for the owner to review. Read the product page 
 - title: clear and specific (brand, product type, key size or finish), under 80 characters.
 - description: 80 to 160 words in plain Australian English, written in your own words (never copy the supplier's text): what it is, who it suits, finish and materials, and what is included. End with one sentence saying Next Phase Maintenance can supply and install it.
 - specs: short facts stated on the page (dimensions, material, finish, WELS or other ratings, warranty), one per item.
-- category, brand and sku/model from the page.
+- category, brand and sku/model from the page. brand is the maker's brand only: leave it empty if the page doesn't name a maker separate from the shop selling it.
 - suggested_price: the retail price in AUD including GST as shown on the page, or an empty string if none is shown.
 - notes: anything the owner should check before publishing (missing specs, price excluding GST, lead times, conflicting details).
 - photos: the web addresses of the main product photos on the page (up to 4, largest versions, not logos or icons), so new photos can be made from them.
 - options: the choices the page offers for this product (variants), such as size, colour, finish or handle (up to 3 options, each with its choices as the page names them). For each choice give the price of the product with that choice and the cheapest choice of every other option, in AUD as shown, or an empty string if the page doesn't show it; mark a choice unavailable only if the page says it's sold out or unavailable. Leave options empty if the page offers no choices; don't invent any.
-Only state facts the page supports. If the page can't be read, draft from the details provided and say so in notes.`
+Never name the shop or supplier selling the product (or its website) in the title, description, brand or specs: customers buy from Next Phase Maintenance. Only state facts the page supports. If the page can't be read, draft from the details provided and say so in notes.`
 
 const FIND_TOOL = {
   name: 'report_products',

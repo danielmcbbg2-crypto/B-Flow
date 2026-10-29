@@ -1195,7 +1195,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       onProgress?.(`Reading ${product.supplier}…`)
       await demoWait(400, signal)
       return {
-        title: product.name || `Sample product from ${product.supplier}`,
+        title: product.name || 'Sample product',
         description: `${product.summary || 'A sample description.'}\n\nNext Phase Maintenance can supply and install it.`,
         specs: ['Sample spec: check the supplier page'],
         category: product.category,

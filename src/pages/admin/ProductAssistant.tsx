@@ -5,6 +5,7 @@ import { useStore } from '../../lib/store'
 import { CLOUD } from '../../lib/supabase'
 import { STORE_CATEGORIES, type DraftListing, type FoundProduct, type Product, type ProductOption, type SupplierStock } from '../../lib/types'
 import { money, uid } from '../../lib/utils'
+import { squash, supplierKeys, withoutSupplier } from '../../lib/supplierName'
 
 const SUGGESTIONS = ['Frameless shower screens 900 mm', 'Wall-hung timber vanities 750 to 900 mm', 'Matte black basin mixers', 'LED bathroom mirrors with demister']
 
@@ -168,7 +169,10 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product, notice?: s
       ])
       if (!current()) return
       const images = photos && 'images' in photos ? photos.images : []
-      const specs = l.specs.filter(Boolean)
+      // No supplier's name anywhere customers see it.
+      const keys = supplierKeys(found.supplier, found.url)
+      const clean = (t: string) => withoutSupplier(t, keys)
+      const specs = l.specs.map(clean).filter(Boolean)
       const variants = draftOptions(l, stock?.price)
       // Automatic pricing needs something to work from: the supplier's price as read by the stock
       // check, or else the price the AI read on the page, entered as the cost.
@@ -176,10 +180,10 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product, notice?: s
       const cost = stock?.price === undefined && aiPrice > 0 ? aiPrice : undefined
       onDraft({
         id: uid('sp'),
-        title: l.title,
-        description: [l.description.trim(), specs.length ? specs.map((s) => `• ${s}`).join('\n') : ''].filter(Boolean).join('\n\n'),
+        title: clean(l.title),
+        description: [clean(l.description).trim(), specs.length ? specs.map((s) => `• ${s}`).join('\n') : ''].filter(Boolean).join('\n\n'),
         category: (STORE_CATEGORIES as readonly string[]).includes(l.category) ? l.category : 'Other',
-        brand: l.brand,
+        brand: keys.includes(squash(l.brand)) ? '' : clean(l.brand),
         sku: l.sku,
         // Only the drafted retail price (inc. GST); otherwise the admin enters one.
         price: parsePrice(l.suggested_price),
