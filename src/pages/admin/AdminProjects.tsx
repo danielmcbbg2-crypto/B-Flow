@@ -10,7 +10,7 @@ import { contractTotal, nextInvoiceNumber, paymentAmounts, projectFinancials, qu
 import { fmtDate, money, toISODate, todayISO, uid } from '../../lib/utils'
 import { navigate } from '../../lib/router'
 import { CostsPanel, PaymentsPanel, QuoteBuilder, VariationsPanel } from './ProjectCommercials'
-import { DefectsPanel, DiaryPanel, DocumentsPanel, Fact, SchedulePanel } from './ProjectWorkspace'
+import { DefectsPanel, DiaryPanel, DocumentsPanel, Fact, ScheduleSummary, SchedulePanel } from './ProjectWorkspace'
 import { useHashRoute } from '../../lib/router'
 import { BookingReminders } from './BookingReminders'
 
@@ -594,6 +594,39 @@ export function ProjectEditor({
       <Tabs value={tab} onChange={setTab} tabs={tabs} />
     </>
   )
+  // Payment claims fall due at milestones: on the project page they're kept with the payments.
+  const milestonesEditor = (
+    <div className="sm:col-span-2">
+      <span className="label">Milestones</span>
+      <ul className="divide-y divide-slate-100 rounded-md border border-slate-200">
+        {p.milestones.map((m) => (
+          <li key={m.id} className="flex items-center gap-3 px-3 py-2 text-sm">
+            <input type="checkbox" className="h-4 w-4 accent-slate-900" checked={m.done} onChange={() => set({ milestones: p.milestones.map((x) => (x.id === m.id ? { ...x, done: !x.done } : x)) })} />
+            <span className="flex-1">{m.title}</span>
+            <input type="date" className="input num w-auto py-1" value={m.date} onChange={(e) => set({ milestones: p.milestones.map((x) => (x.id === m.id ? { ...x, date: e.target.value } : x)) })} />
+            <button type="button" className="text-slate-500 hover:text-red-600" onClick={() => set({ milestones: p.milestones.filter((x) => x.id !== m.id) })} aria-label="Remove milestone">
+              <Trash2 size={15} />
+            </button>
+          </li>
+        ))}
+        <li className="flex flex-wrap items-center gap-2 px-3 py-2">
+          <input className="input flex-1 py-1" placeholder="New milestone" value={ms.title} onChange={(e) => setMs({ ...ms, title: e.target.value })} />
+          <input type="date" className="input num w-auto py-1" value={ms.date} onChange={(e) => setMs({ ...ms, date: e.target.value })} />
+          <button
+            type="button"
+            className="btn-ghost px-2.5 py-1"
+            disabled={!ms.title.trim()}
+            onClick={() => {
+              set({ milestones: [...p.milestones, { id: uid('m'), title: ms.title.trim(), date: ms.date, done: false }].sort((a, b) => a.date.localeCompare(b.date)) })
+              setMs({ title: '', date: ms.date })
+            }}
+          >
+            <Plus size={15} /> Add
+          </button>
+        </li>
+      </ul>
+    </div>
+  )
   const body = (
     <>
       {tab === 'diary' && <DiaryPanel projectId={p.id} />}
@@ -639,40 +672,14 @@ export function ProjectEditor({
               <textarea className="input min-h-[100px]" value={p.scopeOfWorks} onChange={(e) => set({ scopeOfWorks: e.target.value })} />
             </Field>
             <div className="sm:col-span-2">
-              <span className="label">Milestones</span>
-              <ul className="divide-y divide-slate-100 rounded-md border border-slate-200">
-                {p.milestones.map((m) => (
-                  <li key={m.id} className="flex items-center gap-3 px-3 py-2 text-sm">
-                    <input type="checkbox" className="h-4 w-4 accent-slate-900" checked={m.done} onChange={() => set({ milestones: p.milestones.map((x) => (x.id === m.id ? { ...x, done: !x.done } : x)) })} />
-                    <span className="flex-1">{m.title}</span>
-                    <input type="date" className="input num w-auto py-1" value={m.date} onChange={(e) => set({ milestones: p.milestones.map((x) => (x.id === m.id ? { ...x, date: e.target.value } : x)) })} />
-                    <button type="button" className="text-slate-500 hover:text-red-600" onClick={() => set({ milestones: p.milestones.filter((x) => x.id !== m.id) })} aria-label="Remove milestone">
-                      <Trash2 size={15} />
-                    </button>
-                  </li>
-                ))}
-                <li className="flex flex-wrap items-center gap-2 px-3 py-2">
-                  <input className="input flex-1 py-1" placeholder="New milestone" value={ms.title} onChange={(e) => setMs({ ...ms, title: e.target.value })} />
-                  <input type="date" className="input num w-auto py-1" value={ms.date} onChange={(e) => setMs({ ...ms, date: e.target.value })} />
-                  <button
-                    type="button"
-                    className="btn-ghost px-2.5 py-1"
-                    disabled={!ms.title.trim()}
-                    onClick={() => {
-                      set({ milestones: [...p.milestones, { id: uid('m'), title: ms.title.trim(), date: ms.date, done: false }].sort((a, b) => a.date.localeCompare(b.date)) })
-                      setMs({ title: '', date: ms.date })
-                    }}
-                  >
-                    <Plus size={15} /> Add
-                  </button>
-                </li>
-              </ul>
+              {asPage ? <ScheduleSummary p={p} onEdit={() => setTab('schedule')} /> : milestonesEditor}
             </div>
           </div>
         )}
         {tab === 'schedule' && <SchedulePanel p={p} set={set} />}
         {tab === 'quote' && <QuoteBuilder p={p} set={set} />}
         {tab === 'variations' && <VariationsPanel p={p} set={set} original={saved} />}
+        {tab === 'payments' && asPage && <div className="mb-5">{milestonesEditor}</div>}
         {tab === 'payments' && <PaymentsPanel p={p} set={set} invoices={data.invoices} dirty={dirty} canInvoice={can('canManageInvoices')} onClaim={claim} />}
         {tab === 'costs' && <CostsPanel p={p} set={set} invoices={data.invoices} />}
         {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
