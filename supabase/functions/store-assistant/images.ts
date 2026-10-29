@@ -30,6 +30,14 @@ const toBase64 = (bytes: Uint8Array) => {
   for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
   return btoa(s)
 }
+/** What an image really is, from its first bytes (some servers label everything octet-stream). */
+function imageType(b: Uint8Array): string | null {
+  if (b[0] === 0xff && b[1] === 0xd8) return 'image/jpeg'
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'image/png'
+  if (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50) return 'image/webp'
+  if (b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70 && b[8] === 0x61 && b[9] === 0x76 && b[10] === 0x69 && b[11] === 0x66) return 'image/avif'
+  return null
+}
 const fromBase64 = (b64: string) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
 
 type Part = { text?: string; inlineData?: { mimeType?: string; data?: string }; inline_data?: { mime_type?: string; data?: string } }
@@ -48,6 +56,7 @@ async function generate(refs: { type: string; b64: string }[], prompt: string, s
     }),
   })
   const body = await res.json().catch(() => ({}))
+  if (!res.ok) console.error(`Gemini ${res.status} for ${model}:`, JSON.stringify(body).slice(0, 500))
   if (res.status === 400 && /api key/i.test(JSON.stringify(body))) throw new Error('The Gemini API key was rejected. Check the GEMINI_API_KEY secret.')
   if (res.status === 403) throw new Error('Gemini refused the request: check the API key and that billing is set up for image generation.')
   if (res.status === 429) throw new Error('Gemini is busy or out of quota. Try again in a minute.')
@@ -70,23 +79,35 @@ async function generate(refs: { type: string; b64: string }[], prompt: string, s
 export async function recreatePhotos(
   pageUrl: string,
   title: string,
+  extra: string[],
   upload: (bytes: Uint8Array, type: string) => Promise<string>,
   signal: AbortSignal,
   progress: (text: string) => void,
 ): Promise<{ images: string[]; references: string[] }> {
   progress('Finding the supplier’s photos…')
-  const found = await pagePhotos(pageUrl, signal)
+  const found = [...new Set([...(await pagePhotos(pageUrl, signal)), ...extra])]
   const refs: { type: string; b64: string; url: string }[] = []
-  for (const url of found) {
+  const skipped: string[] = []
+  for (const url of found.slice(0, 8)) {
     if (refs.length === 2) break
     try {
-      const img = await safeFetch(url, AbortSignal.any([signal, AbortSignal.timeout(15000)]), 'image/*', 8_000_000)
-      if (/^image\/(jpeg|png|webp)$/.test(img.type) && img.bytes.length > 2000) refs.push({ type: img.type, b64: toBase64(img.bytes), url })
-    } catch {
-      /* try the next one */
+      // Ask for formats Gemini reads (many image servers would otherwise send AVIF).
+      const img = await safeFetch(url, AbortSignal.any([signal, AbortSignal.timeout(15000)]), 'image/jpeg,image/png,image/webp;q=0.9,*/*;q=0.5', 8_000_000)
+      const type = imageType(img.bytes) ?? img.type
+      if (/^image\/(jpeg|png|webp)$/.test(type) && img.bytes.length > 2000) refs.push({ type, b64: toBase64(img.bytes), url })
+      else skipped.push(`${type || 'unknown type'}, ${img.bytes.length} bytes`)
+    } catch (e) {
+      skipped.push((e as Error).message)
     }
   }
-  if (!refs.length) throw new Error('No product photo could be found on that page, so there’s nothing to work from. Add photos by hand.')
+  console.log(`store-assistant photos for ${pageUrl}: ${found.length} found, ${refs.length} usable${skipped.length ? `; skipped: ${skipped.join(' | ')}` : ''}`)
+  if (!refs.length) {
+    throw new Error(
+      found.length
+        ? `The supplier’s photos couldn’t be downloaded (${skipped[0] ?? 'unknown reason'}), so there’s nothing to work from. Add photos by hand.`
+        : 'No product photo could be found on that page (the site may block automatic visits), so there’s nothing to work from. Add photos by hand.',
+    )
+  }
   const images: string[] = []
   for (const [i, shot] of SHOTS.entries()) {
     progress(`Creating new photo ${i + 1} of ${SHOTS.length} (${shot.name === 'studio' ? 'studio shot' : 'in a room'})…`)

@@ -1,7 +1,7 @@
 import { blankCommercials } from './quote'
 import type { AppData } from './types'
 import { toISODate } from './utils'
-import { DEFAULT_PERMISSIONS, DEFAULT_SMS } from './types'
+import { DEFAULT_PERMISSIONS, DEFAULT_PRICING, DEFAULT_SMS } from './types'
 
 /** ISO date (YYYY-MM-DD) offset from today, so sample data always looks current. */
 function day(offset: number): string {
@@ -22,7 +22,7 @@ function stamp(offsetDays: number, hour = 9): string {
 const DEMO_HASH = '0ead2060b65992dca4769af601a1b3a35ef38cfad2c2c465bb160ea764157c5d'
 
 // Bumped when the stored demo data changes; older saved demo data is replaced.
-export const DATA_VERSION = 9
+export const DATA_VERSION = 10
 
 export function createSeed(): AppData {
   return {
@@ -508,6 +508,8 @@ export function createSeed(): AppData {
     ],
     smsSettings: { ...DEFAULT_SMS, provider: 'none' },
     bank: { accountName: 'Next Phase Maintenance', bsb: '', accountNumber: '' },
+    pricing: DEFAULT_PRICING,
+    priceHistory: [],
     inbox: [
       {
         id: 'n-1',
@@ -545,7 +547,7 @@ export function createSeed(): AppData {
         images: [],
         status: 'published',
         stock: 'in_stock',
-        source: { supplier: 'Bathware Wholesale', url: 'https://example.com/vanity-900', cost: 780, notes: '2-week lead time on oak' },
+        source: { supplier: 'Bathware Wholesale', url: 'https://example.com/vanity-900', cost: 780, notes: '2-week lead time on oak', autoPrice: false },
         createdBy: 'u-admin',
         createdAt: stamp(-20),
       },

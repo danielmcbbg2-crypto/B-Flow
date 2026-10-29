@@ -55,7 +55,7 @@ function Working({ text, onStop }: { text: string; onStop: () => void }) {
  * photo), then have one drafted into a listing that opens in the product editor as a draft for the
  * admin to check and publish.
  */
-export function ProductAssistant({ onDraft }: { onDraft: (p: Product) => void }) {
+export function ProductAssistant({ onDraft }: { onDraft: (p: Product, notice?: string) => void }) {
   const { findProducts, draftListing, recreatePhotos, checkSupplierStock } = useStore()
   const [link, setLink] = useState('')
   const [makePhotos, setMakePhotos] = useState(true)
@@ -118,7 +118,7 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product) => void })
       // Photos and stock don't stop the listing: what fails is noted for the admin.
       const [photos, stock] = await Promise.all([
         makePhotos
-          ? recreatePhotos(found.url, l.title, (t) => current() && setProgress(t), signal).catch((err: Error & { code?: string }) => {
+          ? recreatePhotos(found.url, l.title, (l.photos ?? []).filter(isWebLink), (t) => current() && setProgress(t), signal).catch((err: Error & { code?: string }) => {
               if (err.name === 'AbortError') throw err
               return { error: err.code === 'images_not_configured' ? 'New photos weren’t made: add a Google Gemini API key (GEMINI_API_KEY) to the Supabase secrets.' : `New photos weren’t made: ${err.message}` }
             })
@@ -146,6 +146,9 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product) => void })
           url: found.url,
           trackStock: true,
           outOfStockAs: 'out_of_stock',
+          autoPrice: true,
+          // The supplier's price as read now: the draft is priced from it at the store's margins.
+          supplierStock: stock ?? undefined,
           notes: [
             l.notes && `AI draft notes: ${l.notes}`,
             found.price && `Price shown in search: ${found.price}`,
@@ -161,7 +164,7 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product) => void })
             .join('\n'),
         },
         createdAt: new Date().toISOString(),
-      })
+      }, photos && 'error' in photos ? photos.error : undefined)
     } catch (err) {
       if (current()) fail(err)
     } finally {
