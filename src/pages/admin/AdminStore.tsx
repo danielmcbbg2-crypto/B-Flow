@@ -1,14 +1,25 @@
 import { useState, type FormEvent } from 'react'
-import { ExternalLink, Package, Plus } from 'lucide-react'
+import { ExternalLink, Package, Plus, RefreshCw } from 'lucide-react'
 import { Empty, Field, Modal, PageHeader, PhotoInput, Status, Tabs, type Tone } from '../../components/ui'
 import { useLookup, useStore } from '../../lib/store'
-import { ORDER_STATUS_LABEL, STOCK_LABEL, STORE_CATEGORIES, type OrderStatus, type Product, type StoreOrder } from '../../lib/types'
+import { ORDER_STATUS_LABEL, STOCK_LABEL, STORE_CATEGORIES, SUPPLIER_STOCK_LABEL, type OrderStatus, type Product, type ProductSource, type StoreOrder, type SupplierStock } from '../../lib/types'
 import { cx, fmtDate, fmtDateTime, money, uid } from '../../lib/utils'
 import { ProductAssistant } from './ProductAssistant'
 
 const ORDER_TONE: Record<OrderStatus, Tone> = { new: 'orange', confirmed: 'outline', paid: 'dark', fulfilled: 'green', cancelled: 'red' }
 const PRODUCT_TONE: Record<Product['status'], Tone> = { draft: 'slate', published: 'green', archived: 'red' }
 const PRODUCT_STATUS_LABEL: Record<Product['status'], string> = { draft: 'Draft', published: 'Published', archived: 'Archived' }
+const SUPPLIER_TONE: Record<SupplierStock['status'], Tone> = { in_stock: 'green', low: 'orange', out_of_stock: 'red', unknown: 'slate' }
+
+/** The supplier's stock as last read: "In stock · 12" with when, or why it couldn't be read. */
+function SupplierStockBadge({ s }: { s?: SupplierStock }) {
+  if (!s || (s.status === 'unknown' && !s.checkedAt)) return <span className="text-xs text-slate-400">Not checked yet</span>
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      <Status tone={SUPPLIER_TONE[s.status]}>{s.status === 'unknown' ? 'Couldn’t tell' : SUPPLIER_STOCK_LABEL[s.status]}{s.qty !== undefined ? ` · ${s.qty}` : ''}</Status>
+    </span>
+  )
+}
 
 export const EMPTY_PRODUCT = (): Product => ({
   id: uid('sp'),
@@ -243,7 +254,12 @@ function Products({ onEdit }: { onEdit: (p: Product) => void }) {
                   <td className="td text-sm text-slate-600">{p.category}</td>
                   <td className="td num text-right">{money(p.price)}</td>
                   <td className="td num text-right text-slate-600">{p.tradePrice !== undefined ? money(p.tradePrice) : '—'}</td>
-                  <td className="td text-sm text-slate-600">{STOCK_LABEL[p.stock]}</td>
+                  <td className="td text-sm text-slate-600">
+                    {STOCK_LABEL[p.stock]}
+                    {p.source?.url && p.source.trackStock !== false && (
+                      <span className="mt-1 block text-xs">Supplier: <SupplierStockBadge s={p.source.supplierStock} /></span>
+                    )}
+                  </td>
                   <td className="td"><Status tone={PRODUCT_TONE[p.status]}>{PRODUCT_STATUS_LABEL[p.status]}</Status></td>
                   <td className="td text-right"><button className="btn-ghost px-3 py-1.5" onClick={() => onEdit(p)}>Edit</button></td>
                 </tr>
@@ -267,7 +283,30 @@ export function ProductEditor({ product, onClose, onSaved }: { product: Product;
     tradePrice: product.tradePrice !== undefined ? String(product.tradePrice) : '',
     cost: product.source?.cost !== undefined ? String(product.source.cost) : '',
   })
-  const [source, setSource] = useState({ supplier: product.source?.supplier ?? '', url: product.source?.url ?? '', notes: product.source?.notes ?? '' })
+  const [source, setSource] = useState({
+    supplier: product.source?.supplier ?? '',
+    url: product.source?.url ?? '',
+    notes: product.source?.notes ?? '',
+    trackStock: product.source?.trackStock ?? true,
+    outOfStockAs: product.source?.outOfStockAs ?? ('out_of_stock' as NonNullable<ProductSource['outOfStockAs']>),
+  })
+  const { checkSupplierStock } = useStore()
+  const saved = data.products.find((x) => x.id === product.id)
+  const [reading, setReading] = useState<SupplierStock | undefined>(product.source?.supplierStock)
+  const [checking, setChecking] = useState(false)
+  const [checkError, setCheckError] = useState<string | null>(null)
+  // Checks the saved supplier link now (a changed link is checked once the product is saved).
+  const checkNow = async () => {
+    setChecking(true)
+    setCheckError(null)
+    try {
+      setReading(await checkSupplierStock({ productId: product.id }))
+    } catch (err) {
+      setCheckError((err as Error).message)
+    } finally {
+      setChecking(false)
+    }
+  }
   const [error, setError] = useState<string | null>(null)
   const set = (patch: Partial<Product>) => setP({ ...p, ...patch })
   const price = Number(nums.price)
@@ -286,7 +325,17 @@ export function ProductEditor({ product, onClose, onSaved }: { product: Product;
       title: p.title.trim(),
       price,
       tradePrice,
-      source: hasSource ? { supplier: source.supplier.trim(), url: source.url.trim(), cost, notes: source.notes.trim() } : undefined,
+      source: hasSource
+        ? {
+            supplier: source.supplier.trim(),
+            url: source.url.trim(),
+            cost,
+            notes: source.notes.trim(),
+            trackStock: source.trackStock,
+            outOfStockAs: source.outOfStockAs,
+            supplierStock: product.source?.url === source.url.trim() ? reading : undefined,
+          }
+        : undefined,
     }
     update((d) => {
       d.products = isNew ? [...d.products, next] : d.products.map((x) => (x.id === next.id ? next : x))
@@ -331,6 +380,43 @@ export function ProductEditor({ product, onClose, onSaved }: { product: Product;
             <input className="input num" type="number" min="0" step="0.01" value={nums.cost} onChange={(e) => setNums({ ...nums, cost: e.target.value })} />
           </Field>
           <Field label="Supplier link" className="sm:col-span-2"><input className="input" type="url" value={source.url} onChange={(e) => setSource({ ...source, url: e.target.value })} /></Field>
+          {source.url.trim() && (
+            <div className="space-y-2 rounded-md bg-slate-50 p-3 text-sm sm:col-span-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="font-semibold">Supplier stock</p>
+                {saved?.source?.url && saved.source.url === source.url.trim() ? (
+                  <button type="button" className="btn-ghost px-3 py-1 text-xs" disabled={checking} onClick={() => void checkNow()}>
+                    <RefreshCw size={13} className={checking ? 'animate-spin' : ''} /> {checking ? 'Checking…' : 'Check now'}
+                  </button>
+                ) : (
+                  <span className="text-xs text-slate-500">Checked once you save</span>
+                )}
+              </div>
+              {product.source?.url === source.url.trim() && (
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-600">
+                  <SupplierStockBadge s={reading} />
+                  {reading?.price !== undefined && <span className="num">Their price {money(reading.price)}</span>}
+                  {reading?.checkedAt && <span>Checked {fmtDateTime(reading.checkedAt)}</span>}
+                  {reading?.note && <span className="w-full text-slate-500">{reading.note}</span>}
+                </div>
+              )}
+              {checkError && <p className="text-xs text-red-600">{checkError}</p>}
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" className="h-4 w-4 accent-slate-900" checked={source.trackStock} onChange={(e) => setSource({ ...source, trackStock: e.target.checked })} />
+                Check the supplier's page every 6 hours and update this listing
+              </label>
+              {source.trackStock && (
+                <label className="flex flex-wrap items-center gap-2 text-sm">
+                  When they run out, show
+                  <select className="input w-auto py-1" aria-label="When they run out, show" value={source.outOfStockAs} onChange={(e) => setSource({ ...source, outOfStockAs: e.target.value as typeof source.outOfStockAs })}>
+                    <option value="out_of_stock">Out of stock</option>
+                    <option value="to_order">To order</option>
+                  </select>
+                  <span className="text-xs text-slate-500">(and switch back when they have it again)</span>
+                </label>
+              )}
+            </div>
+          )}
           <Field label="Notes" className="sm:col-span-2"><textarea className="input min-h-[60px]" value={source.notes} onChange={(e) => setSource({ ...source, notes: e.target.value })} /></Field>
           {cost !== undefined && price > 0 && (
             <p className="text-xs text-slate-500 sm:col-span-2">

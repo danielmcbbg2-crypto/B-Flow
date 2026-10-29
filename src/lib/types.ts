@@ -446,6 +446,26 @@ export interface ProductSource {
   /** What it costs the business, inc. GST. */
   cost?: number
   notes: string
+  /** Check the supplier's page for stock every 6 hours (on unless switched off). */
+  trackStock?: boolean
+  /** What the listing switches to when the supplier runs out. */
+  outOfStockAs?: 'out_of_stock' | 'to_order'
+  /** The last reading from the supplier's page (recorded by the server only). */
+  supplierStock?: SupplierStock
+}
+
+export type SupplierStockStatus = 'in_stock' | 'low' | 'out_of_stock' | 'unknown'
+export const SUPPLIER_STOCK_LABEL: Record<SupplierStockStatus, string> = { in_stock: 'In stock', low: 'Running low', out_of_stock: 'Out of stock', unknown: 'Not checked yet' }
+
+export interface SupplierStock {
+  status: SupplierStockStatus
+  qty?: number
+  /** The supplier's price as shown on their page. */
+  price?: number
+  /** How it was read, or why it couldn't be. */
+  note: string
+  checkedAt?: string
+  changedAt?: string
 }
 
 export interface OrderItem {

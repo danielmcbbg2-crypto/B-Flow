@@ -35,7 +35,7 @@ export function privateAddress(ip: string): boolean {
 }
 
 /** Where a name really points: refuses names that lead to private addresses (or can't be looked up). */
-async function resolvesPublic(host: string): Promise<boolean> {
+export async function resolvesPublic(host: string): Promise<boolean> {
   const dns = (globalThis as { Deno?: { resolveDns?: (h: string, t: 'A' | 'AAAA') => Promise<string[]> } }).Deno?.resolveDns
   if (!dns) return true // not available here: the name checks still apply
   const found = (await Promise.all([dns(host, 'A').catch(() => []), dns(host, 'AAAA').catch(() => [])])).flat()
@@ -47,6 +47,14 @@ const decodeEntities = (s: string) =>
 
 /** The main image a page declares for sharing (og:image and friends), as an absolute web address. */
 export function findImage(html: string, base: string): string {
+  return findImages(html, base)[0] ?? ''
+}
+
+/**
+ * The product photos a page declares (sharing images, then every image in its product details for
+ * search engines), as absolute web addresses, best first and without repeats.
+ */
+export function findImages(html: string, base: string): string[] {
   const attrs = (tag: string) => {
     const out: Record<string, string> = {}
     for (const m of tag.matchAll(/([a-zA-Z:_-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/g)) out[m[1].toLowerCase()] = m[2] ?? m[3] ?? m[4] ?? ''
@@ -61,7 +69,7 @@ export function findImage(html: string, base: string): string {
     const l = attrs(tag)
     if ((l.rel ?? '').toLowerCase() === 'image_src' && l.href) candidates.push(l.href)
   }
-  // Product details for search engines (JSON-LD) often list the photo too.
+  // Product details for search engines (JSON-LD) often list the photo too, sometimes several.
   const ld = html.match(/"image"\s*:\s*(?:\[\s*)?(?:\{[^{}]*?"(?:url|contentUrl)"\s*:\s*)?"([^"]+)"/)
   if (ld) {
     try {
@@ -70,15 +78,25 @@ export function findImage(html: string, base: string): string {
       /* not a usable value */
     }
   }
+  for (const list of html.matchAll(/"image"\s*:\s*\[([^\]]{0,4000})\]/g)) {
+    for (const m of list[1].matchAll(/"((?:https?:)?\/\/[^"]+)"/g)) {
+      try {
+        candidates.push(JSON.parse(`"${m[1]}"`))
+      } catch {
+        /* not a usable value */
+      }
+    }
+  }
+  const out: string[] = []
   for (const c of candidates) {
     try {
       const url = new URL(decodeEntities(c.trim()), base)
-      if ((url.protocol === 'https:' || url.protocol === 'http:') && fetchable(url)) return url.href
+      if ((url.protocol === 'https:' || url.protocol === 'http:') && fetchable(url) && !out.includes(url.href)) out.push(url.href)
     } catch {
       /* not a usable address */
     }
   }
-  return ''
+  return out
 }
 
 /** The photo from a product page, or '' (quickly: a few seconds at most, and only the page's start). */
@@ -118,4 +136,57 @@ export async function pagePhoto(pageUrl: string, signal: AbortSignal): Promise<s
     /* no photo, then */
   }
   return ''
+}
+
+const UA = 'Mozilla/5.0 (compatible; NextPhaseStore/1.0; +https://portal.nextphasemaintenance.com.au)'
+
+/**
+ * Fetches a public web address (following up to 3 redirects, each checked), and returns its bytes,
+ * up to `maxBytes`. Refuses local and private addresses.
+ */
+export async function safeFetch(start: string, signal: AbortSignal, accept: string, maxBytes: number): Promise<{ url: string; type: string; bytes: Uint8Array }> {
+  let url = new URL(start)
+  for (let hop = 0; hop < 4; hop++) {
+    if (!fetchable(url) || !(await resolvesPublic(url.hostname.replace(/\.+$/, '')))) throw new Error(`Can't open ${url.hostname}`)
+    const res = await fetch(url, { signal, redirect: 'manual', headers: { 'user-agent': UA, accept } })
+    if (res.status >= 300 && res.status < 400 && res.headers.get('location')) {
+      await res.body?.cancel()
+      url = new URL(res.headers.get('location')!, url)
+      continue
+    }
+    if (!res.ok || !res.body) {
+      await res.body?.cancel()
+      throw new Error(`${url.hostname} answered ${res.status}`)
+    }
+    const reader = res.body.getReader()
+    const chunks: Uint8Array[] = []
+    let size = 0
+    while (size < maxBytes) {
+      const { value, done } = await reader.read()
+      if (done) break
+      chunks.push(value)
+      size += value.length
+    }
+    await reader.cancel().catch(() => {})
+    const bytes = new Uint8Array(Math.min(size, maxBytes))
+    let at = 0
+    for (const c of chunks) {
+      const part = c.subarray(0, Math.max(0, bytes.length - at))
+      bytes.set(part, at)
+      at += part.length
+    }
+    return { url: url.href, type: (res.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase(), bytes }
+  }
+  throw new Error('Too many redirects')
+}
+
+/** Every product photo a page declares (best first), or [] if the page can't be read. */
+export async function pagePhotos(pageUrl: string, signal: AbortSignal): Promise<string[]> {
+  try {
+    const page = await safeFetch(pageUrl, AbortSignal.any([signal, AbortSignal.timeout(15000)]), 'text/html', 2_000_000)
+    if (!page.type.includes('html')) return []
+    return findImages(new TextDecoder().decode(page.bytes), page.url)
+  } catch {
+    return []
+  }
 }

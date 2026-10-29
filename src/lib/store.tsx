@@ -14,6 +14,7 @@ import type {
   Property,
   Role,
   StoreOrder,
+  SupplierStock,
   UserAccount,
 } from './types'
 import { BRAND, SITE_SERVICES } from './brand'
@@ -251,6 +252,13 @@ interface StoreValue {
   findProducts: (query: string, onProgress?: (text: string) => void, signal?: AbortSignal) => Promise<{ products: FoundProduct[]; note: string }>
   /** Store managers: the AI assistant drafts a listing from a found product, for review. */
   draftListing: (product: FoundProduct, instructions?: string, onProgress?: (text: string) => void, signal?: AbortSignal) => Promise<DraftListing>
+  /** New photos of the product on a supplier page, made by AI from the supplier's photos (store managers). */
+  recreatePhotos: (url: string, title: string, onProgress?: (text: string) => void, signal?: AbortSignal) => Promise<{ images: string[]; references: string[] }>
+  /**
+   * What a supplier's page says about stock now. With a product id, the reading is saved (and the
+   * listing switched if it ran out or came back); with a link, it's only read.
+   */
+  checkSupplierStock: (target: { productId: string } | { url: string }) => Promise<SupplierStock>
   /** Admins: create a project, with its client and property if they're new. Throws with a message if it can't be saved. */
   createProject: (p: NewProject) => Promise<Project>
   /** Message one person's inbox (admins). */
@@ -1161,8 +1169,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       onProgress?.(`Reading ${product.supplier}…`)
       await demoWait(400, signal)
       return {
-        title: product.name,
-        description: `${product.summary}\n\nNext Phase Maintenance can supply and install it.`,
+        title: product.name || `Sample product from ${product.supplier}`,
+        description: `${product.summary || 'A sample description.'}\n\nNext Phase Maintenance can supply and install it.`,
         specs: ['Sample spec: check the supplier page'],
         category: product.category,
         brand: product.brand,
@@ -1172,6 +1180,47 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
     },
     [],
+  )
+
+  const recreatePhotos = useCallback(async (url: string, title: string, onProgress?: (text: string) => void, signal?: AbortSignal) => {
+    if (supabase) return streamFunction<{ images: string[]; references: string[] }>('store-assistant', { action: 'images', url, title }, onProgress, signal)
+    onProgress?.('Finding the supplier’s photos…')
+    await demoWait(300, signal)
+    onProgress?.('Creating new photo 1 of 2 (studio shot)…')
+    await demoWait(300, signal)
+    onProgress?.('Creating new photo 2 of 2 (in a room)…')
+    await demoWait(300, signal)
+    return { images: [demoPhoto('New studio photo (demo)', 210), demoPhoto('New room photo (demo)', 35)], references: [] }
+  }, [])
+
+  const checkSupplierStock = useCallback(
+    async (target: { productId: string } | { url: string }): Promise<SupplierStock> => {
+      if (supabase) {
+        const { data: auth } = await supabase.auth.getSession()
+        const res = await fetch(`${FUNCTIONS_URL}/supplier-stock`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', apikey: ANON_KEY, Authorization: `Bearer ${auth.session?.access_token ?? ANON_KEY}` },
+          body: JSON.stringify(target),
+        })
+        const json = await res.json().catch(() => null)
+        if (!res.ok || !json) throw new Error(json?.error ?? `The stock check failed (${res.status}). Try again.`)
+        const r = (json.reading ?? json) as { status: SupplierStock['status']; qty: number | null; price: number | null; note: string }
+        const reading: SupplierStock = { status: r.status, qty: r.qty ?? undefined, price: r.price ?? undefined, note: r.note, checkedAt: new Date().toISOString() }
+        // The listing may have switched too: reload what the server saved.
+        if ('productId' in target) void refresh()
+        return reading
+      }
+      // Demo mode: a sample reading for a saved product; a new link isn't read.
+      if (!('productId' in target)) return { status: 'unknown', note: 'Demo mode: the supplier’s page isn’t checked.' }
+      const reading: SupplierStock = { status: 'in_stock', qty: 12, note: 'Demo mode: a sample reading. In live mode the supplier’s page is checked.', checkedAt: new Date().toISOString() }
+      if ('productId' in target)
+        update((d) => {
+          const p = d.products.find((x) => x.id === target.productId)
+          if (p?.source) p.source.supplierStock = { ...reading, changedAt: p.source.supplierStock?.changedAt }
+        })
+      return reading
+    },
+    [update, refresh],
   )
 
   // ───────────── accounts & files ─────────────
@@ -1305,6 +1354,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     deleteLead,
     findProducts,
     draftListing,
+    recreatePhotos,
+    checkSupplierStock,
     assignRequest,
     pushInbox,
     pushAdminInbox,

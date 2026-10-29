@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { ExternalLink, ImageOff, Search, Sparkles, Square } from 'lucide-react'
+import { ExternalLink, ImageOff, Link2, Search, Sparkles, Square } from 'lucide-react'
 import { Empty, Field, Modal } from '../../components/ui'
 import { useStore } from '../../lib/store'
 import { CLOUD } from '../../lib/supabase'
-import { STORE_CATEGORIES, type FoundProduct, type Product } from '../../lib/types'
+import { STORE_CATEGORIES, type FoundProduct, type Product, type SupplierStock } from '../../lib/types'
 import { uid } from '../../lib/utils'
 
 const SUGGESTIONS = ['Frameless shower screens 900 mm', 'Wall-hung timber vanities 750 to 900 mm', 'Matte black basin mixers', 'LED bathroom mirrors with demister']
@@ -56,7 +56,9 @@ function Working({ text, onStop }: { text: string; onStop: () => void }) {
  * admin to check and publish.
  */
 export function ProductAssistant({ onDraft }: { onDraft: (p: Product) => void }) {
-  const { findProducts, draftListing } = useStore()
+  const { findProducts, draftListing, recreatePhotos, checkSupplierStock } = useStore()
+  const [link, setLink] = useState('')
+  const [makePhotos, setMakePhotos] = useState(true)
   const [query, setQuery] = useState('')
   // What's running: a search, or drafting the product with this link.
   const [busy, setBusy] = useState<{ kind: 'find' } | { kind: 'draft'; url: string } | null>(null)
@@ -102,6 +104,10 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product) => void })
     }
   }
 
+  /**
+   * Drafts the listing for a product page, then (alongside) makes new photos from the supplier's and
+   * reads their stock, and opens it all in the product editor as a draft.
+   */
   const draft = async (found: FoundProduct) => {
     setPreview(null)
     const signal = begin({ kind: 'draft', url: found.url }, `Reading ${found.supplier || 'the product page'}…`)
@@ -109,6 +115,18 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product) => void })
     try {
       const l = await draftListing(found, instructions, (t) => current() && setProgress(t), signal)
       if (!current()) return
+      // Photos and stock don't stop the listing: what fails is noted for the admin.
+      const [photos, stock] = await Promise.all([
+        makePhotos
+          ? recreatePhotos(found.url, l.title, (t) => current() && setProgress(t), signal).catch((err: Error & { code?: string }) => {
+              if (err.name === 'AbortError') throw err
+              return { error: err.code === 'images_not_configured' ? 'New photos weren’t made: add a Google Gemini API key (GEMINI_API_KEY) to the Supabase secrets.' : `New photos weren’t made: ${err.message}` }
+            })
+          : null,
+        checkSupplierStock({ url: found.url }).catch(() => null as SupplierStock | null),
+      ])
+      if (!current()) return
+      const images = photos && 'images' in photos ? photos.images : []
       const specs = l.specs.filter(Boolean)
       onDraft({
         id: uid('sp'),
@@ -119,16 +137,25 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product) => void })
         sku: l.sku,
         // Only the drafted retail price (inc. GST); otherwise the admin enters one.
         price: parsePrice(l.suggested_price),
-        images: [],
+        images,
         status: 'draft',
-        stock: 'to_order',
+        // What the supplier's page says now; "To order" when it doesn't say.
+        stock: stock?.status === 'out_of_stock' ? 'out_of_stock' : stock?.status === 'in_stock' || stock?.status === 'low' ? 'in_stock' : 'to_order',
         source: {
           supplier: found.supplier,
           url: found.url,
+          trackStock: true,
+          outOfStockAs: 'out_of_stock',
           notes: [
             l.notes && `AI draft notes: ${l.notes}`,
             found.price && `Price shown in search: ${found.price}`,
-            found.image && isWebLink(found.image) && `Supplier photo: ${found.image} (check you may use it before adding it)`,
+            images.length > 0 && `Photos: made by AI from the supplier's photos on ${new Date().toLocaleDateString('en-AU')}. Check they match the product before publishing.`,
+            photos && 'error' in photos && photos.error,
+            stock &&
+              (stock.status === 'unknown'
+                ? `Supplier stock: couldn't tell from the page (${stock.note.replace(/\.$/, '')}). It's checked again every 6 hours once saved.`
+                : `Supplier stock when drafted: ${stock.status.replace(/_/g, ' ')}${stock.qty !== undefined ? ` (${stock.qty})` : ''}. ${stock.note}`),
+            images.length === 0 && found.image && isWebLink(found.image) && `Supplier photo: ${found.image} (check you may use it before adding it)`,
           ]
             .filter(Boolean)
             .join('\n'),
@@ -142,6 +169,20 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product) => void })
     }
   }
 
+  /** "Add from a link": the same, for a supplier page the admin already has. */
+  const fromLink = (e: FormEvent) => {
+    e.preventDefault()
+    const url = link.trim()
+    if (!isWebLink(url)) return setError({ text: 'Paste the full link to the product page (starting with https://).' })
+    let host = 'the supplier'
+    try {
+      host = new URL(url).hostname.replace(/^www\./, '')
+    } catch {
+      return setError({ text: 'That link doesn’t look right. Copy it from the browser’s address bar.' })
+    }
+    void draft({ name: '', brand: '', supplier: host, url, price: '', category: 'Other', summary: '' })
+  }
+
   const stop = () => {
     stopper.current?.abort()
     setBusy(null)
@@ -149,6 +190,40 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product) => void })
 
   return (
     <div className="space-y-5">
+      <form className="card space-y-3 p-5" onSubmit={fromLink}>
+        <div className="flex items-start gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center bg-slate-900 text-white"><Link2 size={20} /></span>
+          <div>
+            <h2 className="font-bold">Add a product from a supplier link</h2>
+            <p className="text-sm text-slate-600">
+              Paste the link to a product on a supplier's website. The assistant writes a new listing in your words, makes new photos of the product (so
+              you're not reusing the supplier's), and checks their stock. It opens as a draft for you to check; after that, the supplier's stock is
+              checked every 6 hours and the listing updates when they run out or get more.
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <label className="relative flex-1">
+            <Link2 size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden="true" />
+            <input className="input pl-9" type="url" placeholder="https://supplier.com.au/products/…" aria-label="Supplier product link" value={link} onChange={(e) => setLink(e.target.value)} />
+          </label>
+          <button className="btn-primary" disabled={!!busy || !link.trim()}>{busy?.kind === 'draft' && busy.url === link.trim() ? 'Working…' : 'Create listing'}</button>
+        </div>
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+          <label className="flex items-center gap-2">
+            <input type="checkbox" className="h-4 w-4 accent-slate-900" checked={makePhotos} onChange={(e) => setMakePhotos(e.target.checked)} />
+            Make new photos with AI
+          </label>
+          <input className="input min-w-0 flex-1 py-1.5" aria-label="Instructions for the listing (optional)" placeholder="Instructions (optional), e.g. mention we install across Melbourne" value={instructions} onChange={(e) => setInstructions(e.target.value)} />
+        </div>
+        {busy?.kind === 'draft' && busy.url === link.trim() && <Working text={progress} onStop={stop} />}
+        <p className="text-xs text-slate-500">
+          New photos are made by Google's Gemini image AI from the supplier's photos: the same product, shot fresh in a studio and in a room. They
+          reduce but don't remove copyright risk (the product's design and any brand names are still the maker's), so check the supplier is happy
+          for you to resell it, and that the photos match the real product.
+        </p>
+      </form>
+
       <form className="card space-y-3 p-5" onSubmit={find}>
         <div className="flex items-start gap-3">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center bg-accent text-slate-900"><Sparkles size={20} /></span>
