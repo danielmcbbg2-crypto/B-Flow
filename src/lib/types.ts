@@ -434,6 +434,8 @@ export interface Product {
   clientPrice?: number
   /** Public image links (uploaded photos). */
   images: string[]
+  /** Choices the customer makes (e.g. Size, Colour): one value of each. */
+  options: ProductOption[]
   status: 'draft' | 'published' | 'archived'
   stock: 'in_stock' | 'to_order' | 'out_of_stock'
   /** Store managers only: where it comes from. */
@@ -442,11 +444,32 @@ export interface Product {
   createdAt: string
 }
 
+/** A choice on a product, e.g. Size, with the values to pick from. */
+export interface ProductOption {
+  id: string
+  name: string
+  values: ProductOptionValue[]
+}
+
+export interface ProductOptionValue {
+  id: string
+  label: string
+  /** What it adds to the public price (set from its extra cost when the product is priced automatically). */
+  price: number
+  /** What it adds for signed-in clients and trades (seen by them and store managers only). */
+  clientPrice?: number
+  tradePrice?: number
+  /** Off: shown but can't be chosen. */
+  available: boolean
+}
+
 export interface ProductSource {
   supplier: string
   url: string
   /** What it costs the business, inc. GST. */
   cost?: number
+  /** What each option value costs the business extra (by value id). */
+  optionCosts?: Record<string, number>
   notes: string
   /** Set the three prices from the cost (or the supplier's price) at the store's margins (on unless switched off). */
   autoPrice?: boolean
@@ -479,6 +502,8 @@ export interface OrderItem {
   sku: string
   unitPrice: number
   qty: number
+  /** The options chosen, e.g. "Size: 900 mm · Colour: Oak". */
+  options?: string
 }
 
 export type OrderStatus = 'new' | 'confirmed' | 'paid' | 'fulfilled' | 'cancelled'

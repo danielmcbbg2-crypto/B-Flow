@@ -22,7 +22,7 @@ function stamp(offsetDays: number, hour = 9): string {
 const DEMO_HASH = '0ead2060b65992dca4769af601a1b3a35ef38cfad2c2c465bb160ea764157c5d'
 
 // Bumped when the stored demo data changes; older saved demo data is replaced.
-export const DATA_VERSION = 10
+export const DATA_VERSION = 11
 
 export function createSeed(): AppData {
   return {
@@ -545,6 +545,17 @@ export function createSeed(): AppData {
         price: 1249,
         tradePrice: 999,
         images: [],
+        options: [
+          {
+            id: 'opt-finish',
+            name: 'Finish',
+            values: [
+              { id: 'val-oak', label: 'Oak look', price: 0, available: true },
+              { id: 'val-white', label: 'Matte white', price: 80, available: true },
+              { id: 'val-black', label: 'Satin black', price: 120, available: false },
+            ],
+          },
+        ],
         status: 'published',
         stock: 'in_stock',
         source: { supplier: 'Bathware Wholesale', url: 'https://example.com/vanity-900', cost: 780, notes: '2-week lead time on oak', autoPrice: false },
@@ -561,6 +572,7 @@ export function createSeed(): AppData {
         price: 689,
         tradePrice: 549,
         images: [],
+        options: [],
         status: 'published',
         stock: 'to_order',
         createdBy: 'u-admin',
@@ -576,6 +588,7 @@ export function createSeed(): AppData {
         price: 189,
         tradePrice: 149,
         images: [],
+        options: [],
         status: 'published',
         stock: 'in_stock',
         createdBy: 'u-admin',
@@ -590,6 +603,7 @@ export function createSeed(): AppData {
         sku: 'SHW-TWIN-BN',
         price: 329,
         images: [],
+        options: [],
         status: 'published',
         stock: 'out_of_stock',
         createdBy: 'u-admin',
@@ -604,6 +618,7 @@ export function createSeed(): AppData {
         sku: 'MIR-LED-600',
         price: 279,
         images: [],
+        options: [],
         status: 'draft',
         stock: 'in_stock',
         createdBy: 'u-admin',

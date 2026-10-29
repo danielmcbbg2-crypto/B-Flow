@@ -1516,3 +1516,81 @@ describe('price structure', () => {
     await assert.rejects(asUser(uid.admin, `select auto_price_for('pp-1', 'trade')`), /permission denied/)
   })
 })
+
+describe('product options', () => {
+  const opts = (sizePrice = 0, oakPrice = 0, oakAvailable = true) =>
+    JSON.stringify([
+      { id: 'o-size', name: 'Size', values: [{ id: 'v-600', label: '600 mm', price: 0, available: true }, { id: 'v-900', label: '900 mm', price: sizePrice, available: true }] },
+      { id: 'o-col', name: 'Colour', values: [{ id: 'v-white', label: 'White', price: 0, available: true }, { id: 'v-oak', label: 'Oak', price: oakPrice, available: oakAvailable }] },
+    ])
+  const addOns = async (id: string) => {
+    const r = await pool.query<{ o: { values: { id: string; price: number }[] }[]; c: Record<string, number> | null; t: Record<string, number> | null }>(
+      `select p.options o, (select option_prices from product_client_prices where id = p.id) c, (select option_prices from product_trade_prices where id = p.id) t from products p where p.id = $1`,
+      [id],
+    )
+    const pub = Object.fromEntries(r.rows[0].o.flatMap((g) => g.values.map((v) => [v.id, Number(v.price)])))
+    return { pub, client: r.rows[0].c, trade: r.rows[0].t }
+  }
+  const buy = (who: string | null, items: unknown, email = 'opt@example.com') => {
+    const q = `select place_order('${JSON.stringify(items)}'::jsonb, 'Jo Buyer', '${email}', '0400 111 222', 'pickup') as r`
+    return who ? asUser<{ r: { id: string; total: string } }>(who, q) : asAnon<{ r: { id: string; total: string } }>(q)
+  }
+  const items = async (orderId: string) =>
+    (await pool.query<{ unit_price: string; options: string; qty: number }>(`select unit_price, options, qty from order_items where order_id = $1 order by unit_price`, [orderId])).rows.map(
+      (i) => [Number(i.unit_price), i.options, i.qty],
+    )
+
+  test('extra costs become add-ons at each tier’s margin; published options are public, costs and other tiers are not', async () => {
+    await asUser(uid.admin, `insert into products (id, title, category, price, status, options) values ('po-1', 'Vanity', 'Vanities', 1, 'published', '${opts()}')`)
+    await asUser(uid.admin, `insert into product_sources (id, supplier, cost, option_costs) values ('po-1', 'Acme', 1000, '{"v-900": 250, "v-oak": 120}')`)
+    const a = await addOns('po-1')
+    assert.deepEqual(a.pub, { 'v-600': 0, 'v-900': 358, 'v-white': 0, 'v-oak': 172 })
+    assert.deepEqual(a.client, { 'v-600': 0, 'v-900': 334, 'v-white': 0, 'v-oak': 160 })
+    assert.deepEqual(a.trade, { 'v-600': 0, 'v-900': 302, 'v-white': 0, 'v-oak': 145 })
+    // The app can't set the add-ons of an automatically priced product.
+    await asUser(uid.admin, `update products set options = '${opts(1, 1)}' where id = 'po-1'`)
+    assert.deepEqual((await addOns('po-1')).pub, { 'v-600': 0, 'v-900': 358, 'v-white': 0, 'v-oak': 172 })
+    // New extra costs reprice.
+    await asUser(uid.admin, `update product_sources set option_costs = '{"v-900": 350, "v-oak": 120}' where id = 'po-1'`)
+    assert.equal((await addOns('po-1')).pub['v-900'], 500)
+    assert.equal((await addOns('po-1')).trade!['v-900'], 422)
+    assert.equal((await asAnon<{ options: unknown }>(`select options from products where id = 'po-1'`)).rowCount, 1)
+    assert.equal((await asUser(uid.sarah, `select 1 from product_sources where id = 'po-1'`)).rowCount, 0)
+    assert.equal((await asUser(uid.sarah, `select 1 from product_trade_prices where id = 'po-1'`)).rowCount, 0)
+    await assert.rejects(asUser(uid.admin, `update product_sources set option_costs = '{"v-900": -5}' where id = 'po-1'`), /option_costs/)
+    await assert.rejects(asUser(uid.admin, `update products set options = '[{"id": "x", "name": "", "values": []}]' where id = 'po-1'`), /product_options/)
+  })
+
+  test('each customer pays their tier’s price plus add-ons, the choices are kept on the order, and the same product with other choices is its own line', async () => {
+    const choose = (size: string, col: string, qty = 1) => ({ product_id: 'po-1', qty, options: { 'o-size': size, 'o-col': col } })
+    const guest = (await buy(null, [choose('v-900', 'v-oak'), choose('v-600', 'v-white', 2), choose('v-900', 'v-oak')])).rows[0].r
+    // 1429 + 500 + 172 = 2101 (x2), 1429 (x2)
+    assert.deepEqual(await items(guest.id), [[1429, 'Size: 600 mm · Colour: White', 2], [2101, 'Size: 900 mm · Colour: Oak', 2]])
+    assert.equal(Number(guest.total), 7060)
+    const sarah = (await buy(uid.sarah, [choose('v-900', 'v-white')], 'sarah.w@example.com')).rows[0].r
+    assert.deepEqual(await items(sarah.id), [[1334 + 467, 'Size: 900 mm · Colour: White', 1]])
+    const tia = (await buy(uid.tia, [choose('v-600', 'v-oak')], 'tia@example.com')).rows[0].r
+    assert.deepEqual(await items(tia.id), [[1205 + 145, 'Size: 600 mm · Colour: Oak', 1]])
+  })
+
+  test('every option must be chosen, from values that exist and are still available', async () => {
+    await assert.rejects(buy(null, [{ product_id: 'po-1', qty: 1, options: { 'o-size': 'v-900' } }], 'o2@example.com'), /Choose the colour for Vanity/)
+    await assert.rejects(buy(null, [{ product_id: 'po-1', qty: 1 }], 'o2@example.com'), /Choose the size for Vanity/)
+    await assert.rejects(buy(null, [{ product_id: 'po-1', qty: 1, options: { 'o-size': 'v-900', 'o-col': 'v-pink' } }], 'o2@example.com'), /Choose the colour/)
+    await assert.rejects(buy(null, [{ product_id: 'po-1', qty: 1, options: { 'o-size': 'v-900', 'o-col': 'v-oak', 'o-x': 'y' } }], 'o2@example.com'), /have changed/)
+    await asUser(uid.admin, `update products set options = '${opts(0, 0, false)}' where id = 'po-1'`)
+    await assert.rejects(buy(null, [{ product_id: 'po-1', qty: 1, options: { 'o-size': 'v-900', 'o-col': 'v-oak' } }], 'o2@example.com'), /No longer available: Vanity \(Oak\)/)
+  })
+
+  test('priced by hand, the extra price applies to everyone', async () => {
+    await asUser(uid.admin, `update product_sources set auto_price = false where id = 'po-1'`)
+    await asUser(uid.admin, `update products set options = '${opts(400, 90)}' where id = 'po-1'`)
+    const a = await addOns('po-1')
+    assert.deepEqual(a.pub, { 'v-600': 0, 'v-900': 400, 'v-white': 0, 'v-oak': 90 })
+    assert.deepEqual(a.client, a.pub)
+    assert.deepEqual(a.trade, a.pub)
+    const tia = (await buy(uid.tia, [{ product_id: 'po-1', qty: 1, options: { 'o-size': 'v-900', 'o-col': 'v-oak' } }], 'tia@example.com')).rows[0].r
+    assert.deepEqual(await items(tia.id), [[1205 + 490, 'Size: 900 mm · Colour: Oak', 1]])
+    await assert.rejects(asUser(uid.admin, `select auto_option_prices('po-1', 'trade', '[]')`), /permission denied/)
+  })
+})

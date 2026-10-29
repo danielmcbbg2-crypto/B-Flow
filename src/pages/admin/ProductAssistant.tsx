@@ -138,6 +138,7 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product, notice?: s
         // Only the drafted retail price (inc. GST); otherwise the admin enters one.
         price: parsePrice(l.suggested_price),
         images,
+        options: [],
         status: 'draft',
         // What the supplier's page says now; "To order" when it doesn't say.
         stock: stock?.status === 'out_of_stock' ? 'out_of_stock' : stock?.status === 'in_stock' || stock?.status === 'low' ? 'in_stock' : 'to_order',

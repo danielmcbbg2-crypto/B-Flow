@@ -24,3 +24,26 @@ export function autoPrices(p: Pick<Product, 'source'>, pricing: Pricing) {
 
 /** The margin a price makes on a cost, in % (one decimal). */
 export const marginOf = (price: number, cost: number) => (price > 0 ? Math.round(((price - cost) / price) * 1000) / 10 : 0)
+
+/**
+ * What an option value adds at a margin, from its extra cost (option_add_on in the database):
+ * rounded up to the dollar, 0 when it costs nothing extra.
+ */
+export const optionAddOn = (cost: number | undefined, margin: number) => (cost !== undefined && cost > 0 ? (priceAtMargin(cost, margin) ?? 0) : 0)
+
+/** The options' add-ons for each tier from their extra costs (automatically priced products). */
+export function autoOptions(options: Product['options'], costs: Record<string, number>, pricing: Pricing): Product['options'] {
+  return options.map((g) => ({
+    ...g,
+    values: g.values.map((v) => ({
+      ...v,
+      price: optionAddOn(costs[v.id], pricing.public),
+      clientPrice: optionAddOn(costs[v.id], pricing.client),
+      tradePrice: optionAddOn(costs[v.id], pricing.trade),
+    })),
+  }))
+}
+
+/** Priced by hand: each value adds the same for everyone. */
+export const manualOptions = (options: Product['options']): Product['options'] =>
+  options.map((g) => ({ ...g, values: g.values.map((v) => ({ ...v, clientPrice: v.price, tradePrice: v.price })) }))
