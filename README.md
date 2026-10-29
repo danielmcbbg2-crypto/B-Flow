@@ -124,7 +124,7 @@ When an update adds files to [`supabase/migrations`](supabase/migrations), run t
   - the supplier's stock right now;
   - the product's **variants** as options: its sizes, colours, finishes and so on, up to 3 options. Each choice's extra cost is how much more the supplier charges for it than for the cheapest choice, and choices they show as sold out are unticked. On Shopify shops these come exactly from the shop's own product data; elsewhere the AI reads them from the page, so check them. The notes say which, and flag it if the supplier's price isn't their cheapest choice.
 
-  Saving the product checks the supplier's page straight away, so automatic pricing (and each tier's add-on for every choice) starts from their current price.
+  Saving the product checks the supplier's page straight away, so automatic pricing (and each tier's add-on for every choice) starts from their current price. The supplier's price is read wherever their page states it (product data, price tags, or the shop's own price attributes), or by the AI from the page's wording. If it can't be read at all, the draft uses the price the AI read while writing the listing as the **Cost**, and the notes say so.
 
   Check that the photos match the real product before publishing. New photos lower the risk of reusing the supplier's pictures, but the product's design and brand names are still the maker's, so make sure the supplier is happy for you to resell and advertise it.
 - **Price structure:** every product with supplier details is priced automatically at three margins on the selling price, rounded up to the dollar:
