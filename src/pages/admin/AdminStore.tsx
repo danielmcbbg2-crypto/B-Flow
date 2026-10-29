@@ -1,8 +1,8 @@
-import { useState, type FormEvent } from 'react'
+import { Fragment, useState, type FormEvent } from 'react'
 import { ExternalLink, Package, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { Empty, Field, Modal, PageHeader, PhotoInput, Status, Tabs, type Tone } from '../../components/ui'
 import { useLookup, useStore } from '../../lib/store'
-import { ORDER_STATUS_LABEL, STOCK_LABEL, STORE_CATEGORIES, SUPPLIER_STOCK_LABEL, type OrderStatus, type Pricing, type Product, type ProductOption, type ProductSource, type StoreOrder, type SupplierStock } from '../../lib/types'
+import { ORDER_STATUS_LABEL, STOCK_LABEL, STORE_CATEGORIES, SUPPLIER_STOCK_LABEL, type OrderStatus, type OptionPrice, type PriceChange, type Pricing, type Product, type ProductOption, type ProductSource, type StoreOrder, type SupplierStock } from '../../lib/types'
 import { cx, fmtDate, fmtDateTime, money, uid } from '../../lib/utils'
 import { ProductAssistant } from './ProductAssistant'
 import { autoOptions, autoPrices, manualOptions, marginOf, optionAddOn } from '../../lib/pricing'
@@ -357,6 +357,30 @@ function Products({ onEdit }: { onEdit: (p: Product) => void }) {
 
 const optNumber = (v: string) => (v.trim() === '' ? undefined : Number(v))
 
+const addOns = (o: OptionPrice) => [o.public, o.client, o.trade].map((v) => `+${money(v ?? 0)}`).join(' / ')
+
+/**
+ * What changed in the options' prices since the entry before: "Size 900 mm: +$300 / +$280 / +$254
+ * (cost $210)" for each choice that's new or different, "Oak: removed" for one that's gone. The
+ * first entry lists every choice that adds something.
+ */
+export function optionChanges(h: PriceChange, before?: PriceChange): string[] {
+  const key = (o: OptionPrice) => `${o.option}\u0000${o.choice}`
+  const was = new Map((before?.options ?? []).map((o) => [key(o), o]))
+  const out: string[] = []
+  for (const o of h.options) {
+    const old = was.get(key(o))
+    was.delete(key(o))
+    const z = (v?: number) => v ?? 0
+    const same = old && z(old.cost) === z(o.cost) && z(old.public) === z(o.public) && z(old.client) === z(o.client) && z(old.trade) === z(o.trade)
+    const nothing = !z(o.cost) && !z(o.public) && !z(o.client) && !z(o.trade)
+    if (same || (!before && nothing)) continue
+    out.push(`${o.option} ${o.choice}: ${addOns(o)}${o.cost !== undefined ? ` (cost ${money(o.cost)})` : ''}`)
+  }
+  if (before) for (const o of was.values()) out.push(`${o.option} ${o.choice}: removed`)
+  return out
+}
+
 /** An option being edited: what each value adds is kept as typed (cost or price, by value id). */
 interface OptionDraft {
   options: ProductOption[]
@@ -515,7 +539,8 @@ export function ProductEditor({ product, notice, onClose, onSaved }: { product: 
   )
   const price = auto ? auto.price : Number(nums.price)
   const priceText = (v: string, a?: number) => (auto && a !== undefined ? String(a) : v)
-  const history = data.priceHistory.filter((h) => h.productId === product.id).slice(0, 8)
+  const allHistory = data.priceHistory.filter((h) => h.productId === product.id)
+  const history = allHistory.slice(0, 8)
 
   const save = (e: FormEvent) => {
     e.preventDefault()
@@ -678,16 +703,29 @@ export function ProductEditor({ product, notice, onClose, onSaved }: { product: 
                     <th className="py-1 text-right font-medium">Trades</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {history.map((h) => (
-                    <tr key={h.id}>
-                      <td className="num py-1 pr-2 text-slate-600">{fmtDateTime(h.at)}</td>
-                      <td className="py-1 pr-2">{h.reason}{h.changedBy ? ` (${data.users.find((u) => u.id === h.changedBy)?.name.split(' ')[0] ?? 'office'})` : ''}</td>
-                      {[h.costBasis, h.publicPrice, h.clientPrice, h.tradePrice].map((v, i) => (
-                        <td key={i} className="num py-1 pr-2 text-right last:pr-0">{v !== undefined ? money(v) : '—'}</td>
-                      ))}
-                    </tr>
-                  ))}
+                <tbody>
+                  {history.map((h, i) => {
+                    const changes = optionChanges(h, allHistory[allHistory.indexOf(h) + 1])
+                    return (
+                      <Fragment key={h.id}>
+                        <tr className={changes.length ? '' : 'border-b border-slate-100'}>
+                          <td className="num py-1 pr-2 text-slate-600">{fmtDateTime(h.at)}</td>
+                          <td className="py-1 pr-2">{h.reason}{h.changedBy ? ` (${data.users.find((u) => u.id === h.changedBy)?.name.split(' ')[0] ?? 'office'})` : ''}</td>
+                          {[h.costBasis, h.publicPrice, h.clientPrice, h.tradePrice].map((v, k) => (
+                            <td key={k} className="num py-1 pr-2 text-right last:pr-0">{v !== undefined ? money(v) : '—'}</td>
+                          ))}
+                        </tr>
+                        {changes.length > 0 && (
+                          <tr className="border-b border-slate-100" aria-label={`Option prices ${i + 1}`}>
+                            <td />
+                            <td colSpan={5} className="pb-1.5 text-slate-600">
+                              {changes.map((c) => <span key={c} className="mr-3 inline-block">{c}</span>)}
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

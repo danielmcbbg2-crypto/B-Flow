@@ -1593,4 +1593,30 @@ describe('product options', () => {
     assert.deepEqual(await items(tia.id), [[1205 + 490, 'Size: 900 mm · Colour: Oak', 1]])
     await assert.rejects(asUser(uid.admin, `select auto_option_prices('po-1', 'trade', '[]')`), /permission denied/)
   })
+
+  test('the price history keeps every choice’s extra cost and add-ons, and records option changes', async () => {
+    type Snap = { option: string; choice: string; cost: number | null; public: number; client: number | null; trade: number | null }
+    const last = async () =>
+      (await pool.query<{ reason: string; options: Snap[]; changed_by: string | null }>(`select reason, options, changed_by from product_price_history where product_id = 'po-1' order by at desc, id desc limit 1`)).rows[0]
+    const count = async () => Number((await pool.query(`select count(*) from product_price_history where product_id = 'po-1'`)).rows[0].count)
+    // Priced by hand (from the test before): changing an extra price is recorded once, by who did it.
+    const before = await count()
+    await asUser(uid.admin, `update products set options = '${opts(450, 90)}' where id = 'po-1'`)
+    assert.equal(await count(), before + 1)
+    let h = await last()
+    assert.equal(h.reason, 'Options changed')
+    assert.equal(h.changed_by, 'u-admin')
+    assert.deepEqual(h.options.find((o) => o.choice === '900 mm'), { option: 'Size', choice: '900 mm', cost: 350, public: 450, client: 450, trade: 450 })
+    // Saving the same options again records nothing.
+    await asUser(uid.admin, `update products set options = '${opts(450, 90)}' where id = 'po-1'`)
+    assert.equal(await count(), before + 1)
+    // Back on automatic pricing, a new extra cost is recorded with each tier's add-on.
+    await asUser(uid.admin, `update product_sources set auto_price = true where id = 'po-1'`)
+    await asUser(uid.admin, `update product_sources set option_costs = '{"v-900": 210, "v-oak": 120}' where id = 'po-1'`)
+    h = await last()
+    assert.equal(h.reason, 'Option costs changed')
+    assert.deepEqual(h.options.find((o) => o.choice === '900 mm'), { option: 'Size', choice: '900 mm', cost: 210, public: 300, client: 280, trade: 254 })
+    assert.equal((await asUser(uid.sarah, `select 1 from product_price_history`)).rowCount, 0)
+    await assert.rejects(asUser(uid.admin, `select option_price_snapshot('po-1')`), /permission denied/)
+  })
 })

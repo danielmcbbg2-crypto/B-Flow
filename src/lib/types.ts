@@ -659,4 +659,15 @@ export interface PriceChange {
   clientPrice?: number
   tradePrice?: number
   changedBy?: string
+  /** Each choice's extra cost and what it added per tier, at the time. */
+  options: OptionPrice[]
+}
+
+export interface OptionPrice {
+  option: string
+  choice: string
+  cost?: number
+  public?: number
+  client?: number
+  trade?: number
 }
