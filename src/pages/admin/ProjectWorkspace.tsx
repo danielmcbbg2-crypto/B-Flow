@@ -116,6 +116,47 @@ export function Timeline({ tasks, onPick, labelFor }: { tasks: ProjectTask[]; on
 }
 
 /** Office: the schedule (stages and tasks booked with trades), part of the project's saved draft. */
+/** The schedule at a glance (for the project's overview): the timeline and each task, read-only. */
+export function ScheduleSummary({ p, onEdit }: { p: Project; onEdit: () => void }) {
+  const lk = useLookup()
+  const today = todayISO()
+  const tasks = [...p.tasks].sort((a, b) => a.startDate.localeCompare(b.startDate) || a.endDate.localeCompare(b.endDate))
+  const done = tasks.filter((t) => t.status === 'done').length
+  const late = tasks.filter((t) => isLate(t, today)).length
+  return (
+    <div>
+      <div className="mb-2 flex flex-wrap items-center gap-3">
+        <span className="label mb-0">Schedule</span>
+        <span className="text-xs text-slate-500">
+          {tasks.length ? `${done} of ${tasks.length} tasks done` : 'No tasks yet'}
+          {late > 0 && <span className="ml-1 font-semibold text-red-600">· {late} overdue</span>}
+        </span>
+        <button type="button" className="btn-ghost ml-auto px-2.5 py-1 text-xs" onClick={onEdit}>
+          {tasks.length ? 'Edit schedule' : <><Plus size={14} /> Plan the schedule</>}
+        </button>
+      </div>
+      {tasks.length > 0 && (
+        <>
+          <Timeline tasks={tasks} onPick={onEdit} labelFor={(t) => [t.stage, t.assigneeId ? lk.user(t.assigneeId)?.name : 'No trade yet'].filter(Boolean).join(' · ')} />
+          <ul className="mt-3 divide-y divide-slate-100 rounded-md border border-slate-200" aria-label="Schedule">
+            {tasks.map((t) => (
+              <li key={t.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm">
+                <span className={t.status === 'done' ? 'flex-1 text-slate-500 line-through' : 'flex-1 text-slate-800'}>
+                  {t.stage && <span className="text-slate-500">{t.stage} · </span>}
+                  {t.title || 'Untitled task'}
+                </span>
+                <span className="text-xs text-slate-500">{t.assigneeId ? lk.user(t.assigneeId)?.name : 'No trade yet'}</span>
+                <span className="num text-xs text-slate-500">{t.startDate === t.endDate ? fmtDate(t.startDate) : `${fmtDate(t.startDate)} – ${fmtDate(t.endDate)}`}</span>
+                <span className={isLate(t, today) ? 'text-xs font-semibold text-red-600' : 'text-xs text-slate-600'}>{isLate(t, today) ? 'Late' : TASK_STATUS_LABEL[t.status]}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  )
+}
+
 export function SchedulePanel({ p, set }: { p: Project; set: (patch: Partial<Project>) => void }) {
   const { data } = useStore()
   const lk = useLookup()

@@ -167,10 +167,12 @@ export function useLinkedCalendar(requests: MaintenanceRequest[], projects: Proj
   return { events, onMove }
 }
 
+/** How far along the job is: tasks done on its schedule (or milestones done, if it has no schedule yet). */
 export function ProjectProgress({ p }: { p: Project }) {
-  const done = p.milestones.filter((m) => m.done).length
-  const total = p.milestones.length
-  if (total === 0) return <span className="text-xs text-slate-500">No milestones yet</span>
+  const steps = p.tasks.length ? p.tasks.map((t) => t.status === 'done') : p.milestones.map((m) => m.done)
+  const done = steps.filter(Boolean).length
+  const total = steps.length
+  if (total === 0) return <span className="text-xs text-slate-500">No schedule yet</span>
   return (
     <div className="flex items-center gap-2">
       <div className="h-1.5 w-28 overflow-hidden rounded-full bg-slate-100">
