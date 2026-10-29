@@ -3,8 +3,8 @@ import { ExternalLink, ImageOff, Link2, Search, Sparkles, Square } from 'lucide-
 import { Empty, Field, Modal } from '../../components/ui'
 import { useStore } from '../../lib/store'
 import { CLOUD } from '../../lib/supabase'
-import { STORE_CATEGORIES, type FoundProduct, type Product, type SupplierStock } from '../../lib/types'
-import { uid } from '../../lib/utils'
+import { STORE_CATEGORIES, type DraftListing, type FoundProduct, type Product, type ProductOption, type SupplierStock } from '../../lib/types'
+import { money, uid } from '../../lib/utils'
 
 const SUGGESTIONS = ['Frameless shower screens 900 mm', 'Wall-hung timber vanities 750 to 900 mm', 'Matte black basin mixers', 'LED bathroom mirrors with demister']
 
@@ -15,6 +15,47 @@ const parsePrice = (s: string) => {
 }
 
 const isWebLink = (url: string) => /^https?:\/\//i.test(url)
+
+/**
+ * The supplier's variants as the listing's options. Each choice's extra cost is how much more the
+ * supplier charges for it than for the option's cheapest choice (so the cheapest adds nothing); the
+ * same difference is its extra price if the product ends up priced by hand.
+ */
+export function draftOptions(l: Pick<DraftListing, 'options' | 'optionsFrom'>, supplierPrice?: number) {
+  const options: ProductOption[] = []
+  const optionCosts: Record<string, number> = {}
+  const notes: string[] = []
+  let cheapest: number | undefined
+  for (const o of (l.options ?? []).slice(0, 3)) {
+    const priced = o.choices.map((c) => (c.price.trim() ? parsePrice(c.price) : undefined))
+    const known = priced.filter((p): p is number => p !== undefined && p > 0)
+    const min = known.length ? Math.min(...known) : undefined
+    if (min !== undefined) cheapest = cheapest === undefined ? min : Math.min(cheapest, min)
+    const noneAvailable = o.choices.every((c) => !c.available)
+    if (noneAvailable) notes.push(`None of the ${o.name.toLowerCase()} choices showed as available, so they're all left available: check with the supplier.`)
+    options.push({
+      id: uid('opt'),
+      name: o.name,
+      values: o.choices.map((c, i) => {
+        const id = uid('val')
+        const extra = min !== undefined && priced[i] !== undefined && priced[i]! > min ? Math.round((priced[i]! - min) * 100) / 100 : 0
+        if (extra > 0) optionCosts[id] = extra
+        return { id, label: c.label, price: extra, available: noneAvailable || c.available }
+      }),
+    })
+  }
+  if (options.length) {
+    const list = options.map((o) => `${o.name} (${o.values.length})`).join(', ')
+    notes.unshift(
+      l.optionsFrom === 'shop'
+        ? `Options: ${list}, from the supplier's product data, with each choice's extra cost from their prices.`
+        : `Options: ${list}, read from the supplier's page by AI. Check the choices and their extra costs.`,
+    )
+    if (supplierPrice !== undefined && cheapest !== undefined && Math.abs(supplierPrice - cheapest) >= 1)
+      notes.push(`The supplier's price as read (${money(supplierPrice)}) isn't their cheapest choice (${money(cheapest)}). Prices are based on ${money(supplierPrice)}, so check the extra costs, or enter ${money(cheapest)} as the cost.`)
+  }
+  return { options, optionCosts, notes }
+}
 
 /** The supplier's photo, or a plain placeholder when there's none or it won't load. */
 function FoundPhoto({ src, className }: { src?: string; className: string }) {
@@ -128,6 +169,7 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product, notice?: s
       if (!current()) return
       const images = photos && 'images' in photos ? photos.images : []
       const specs = l.specs.filter(Boolean)
+      const variants = draftOptions(l, stock?.price)
       onDraft({
         id: uid('sp'),
         title: l.title,
@@ -138,7 +180,7 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product, notice?: s
         // Only the drafted retail price (inc. GST); otherwise the admin enters one.
         price: parsePrice(l.suggested_price),
         images,
-        options: [],
+        options: variants.options,
         status: 'draft',
         // What the supplier's page says now; "To order" when it doesn't say.
         stock: stock?.status === 'out_of_stock' ? 'out_of_stock' : stock?.status === 'in_stock' || stock?.status === 'low' ? 'in_stock' : 'to_order',
@@ -148,10 +190,12 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product, notice?: s
           trackStock: true,
           outOfStockAs: 'out_of_stock',
           autoPrice: true,
+          optionCosts: variants.optionCosts,
           // The supplier's price as read now: the draft is priced from it at the store's margins.
           supplierStock: stock ?? undefined,
           notes: [
             l.notes && `AI draft notes: ${l.notes}`,
+            ...variants.notes,
             found.price && `Price shown in search: ${found.price}`,
             images.length > 0 && `Photos: made by AI from the supplier's photos on ${new Date().toLocaleDateString('en-AU')}. Check they match the product before publishing.`,
             photos && 'error' in photos && photos.error,

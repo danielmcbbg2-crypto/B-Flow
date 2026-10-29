@@ -5,6 +5,7 @@ import { useLookup, useStore } from '../../lib/store'
 import { ORDER_STATUS_LABEL, STOCK_LABEL, STORE_CATEGORIES, SUPPLIER_STOCK_LABEL, type OrderStatus, type OptionPrice, type PriceChange, type Pricing, type Product, type ProductOption, type ProductSource, type StoreOrder, type SupplierStock } from '../../lib/types'
 import { cx, fmtDate, fmtDateTime, money, uid } from '../../lib/utils'
 import { ProductAssistant } from './ProductAssistant'
+import { CLOUD } from '../../lib/supabase'
 import { autoOptions, autoPrices, manualOptions, marginOf, optionAddOn } from '../../lib/pricing'
 
 const ORDER_TONE: Record<OrderStatus, Tone> = { new: 'orange', confirmed: 'outline', paid: 'dark', fulfilled: 'green', cancelled: 'red' }
@@ -584,6 +585,9 @@ export function ProductEditor({ product, notice, onClose, onSaved }: { product: 
     update((d) => {
       d.products = isNew ? [...d.products, next] : d.products.map((x) => (x.id === next.id ? next : x))
     })
+    // A new supplier link is checked straight away (once saved): its price is what automatic pricing
+    // works from, for the product and its options.
+    if (CLOUD && next.source?.url && (isNew || saved?.source?.url !== next.source.url)) void checkSupplierStock({ productId: next.id }).catch(() => {})
     onSaved()
   }
 

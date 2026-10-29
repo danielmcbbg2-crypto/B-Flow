@@ -565,6 +565,10 @@ export interface DraftListing {
   notes: string
   /** Photo links found on the page (newer drafts). */
   photos?: string[]
+  /** The product's variants: each choice with the price of the product with it (newer drafts). */
+  options?: { name: string; choices: { label: string; price: string; available: boolean }[] }[]
+  /** Where the options came from: the shop's own product data (exact) or the page's wording. */
+  optionsFrom?: 'shop' | 'page'
 }
 
 export type LeadStatus = 'new' | 'contacted' | 'won' | 'lost'

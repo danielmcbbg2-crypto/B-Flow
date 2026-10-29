@@ -121,7 +121,10 @@ When an update adds files to [`supabase/migrations`](supabase/migrations), run t
 - **Add a product from a supplier link:** Admin → Store → **AI product finder** → paste the link to a product on a supplier's website and click **Create listing**. In about a minute it opens a draft in the product editor:
   - a listing written in your words (title, description, specs, brand, suggested price);
   - two new photos of the product, a studio shot and one in a room, made by Gemini from the supplier's photos. It keeps the product's look but uses its own background, angle, lighting and setting. Untick **Make new photos with AI** to skip them;
-  - the supplier's stock right now.
+  - the supplier's stock right now;
+  - the product's **variants** as options: its sizes, colours, finishes and so on, up to 3 options. Each choice's extra cost is how much more the supplier charges for it than for the cheapest choice, and choices they show as sold out are unticked. On Shopify shops these come exactly from the shop's own product data; elsewhere the AI reads them from the page, so check them. The notes say which, and flag it if the supplier's price isn't their cheapest choice.
+
+  Saving the product checks the supplier's page straight away, so automatic pricing (and each tier's add-on for every choice) starts from their current price.
 
   Check that the photos match the real product before publishing. New photos lower the risk of reusing the supplier's pictures, but the product's design and brand names are still the maker's, so make sure the supplier is happy for you to resell and advertise it.
 - **Price structure:** every product with supplier details is priced automatically at three margins on the selling price, rounded up to the dollar:
