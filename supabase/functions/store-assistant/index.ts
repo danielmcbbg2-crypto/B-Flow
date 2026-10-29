@@ -5,9 +5,10 @@
 //       each product page.
 //   { action: 'draft', product, instructions? }  reads the product's page and drafts an original
 //       listing (title, description, specs, category, suggested price) for the admin to review.
-//   { action: 'images', url, title?, photos? }  makes new photos of the product from the supplier's
-//       (with Google's Gemini image model; needs GEMINI_API_KEY) and returns their links. `photos`
-//       are photo links already found on the page (by the draft), tried as well.
+//   { action: 'images', url, title?, photos?, colours? }  makes new photos of the product from the
+//       supplier's (with Google's Gemini image model; needs GEMINI_API_KEY) and returns their links.
+//       `photos` are photo links already found on the page (by the draft), tried as well; `colours`
+//       are its colour or finish choices, each of which gets a studio shot of its own.
 //
 // Both answer as lines of JSON: { type: 'progress', text } while working (what it's searching for
 // or reading), then { type: 'result', data } or { type: 'error', error }.
@@ -319,6 +320,7 @@ Deno.serve(async (req) => {
     const title = String(body.title ?? '').slice(0, 160)
     // Photo links the listing draft found on the page, used as well as the ones read here.
     const extra = (Array.isArray(body.photos) ? body.photos : []).map(String).filter((u: string) => /^https?:\/\/\S+$/.test(u)).slice(0, 6)
+    const colours = [...new Set((Array.isArray(body.colours) ? body.colours : []).map((c: unknown) => String(c).trim().slice(0, 80)).filter(Boolean))] as string[]
     return streamed((signal, progress) =>
       recreatePhotos(
         url,
@@ -332,6 +334,7 @@ Deno.serve(async (req) => {
         },
         signal,
         progress,
+        colours,
       ),
     )
   }

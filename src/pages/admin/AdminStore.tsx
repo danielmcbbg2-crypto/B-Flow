@@ -444,7 +444,22 @@ function OptionsEditor({ draft, onChange, auto, pricing }: { draft: OptionDraft;
                 return (
                   <tr key={v.id}>
                     <td className="py-1 pr-2">
-                      <input className="input py-1" aria-label="Choice" placeholder="e.g. 900 mm" value={v.label} onChange={(e) => setOption(g.id, { values: g.values.map((x) => (x.id === v.id ? { ...x, label: e.target.value } : x)) })} />
+                      <div className="flex items-center gap-2">
+                        {v.image && (
+                          <span className="relative shrink-0">
+                            <img src={v.image} alt={`${v.label} photo`} className="h-9 w-9 rounded object-cover ring-1 ring-slate-200" />
+                            <button
+                              type="button"
+                              className="absolute -right-1.5 -top-1.5 rounded-full bg-white text-xs leading-none text-slate-500 ring-1 ring-slate-300 hover:text-red-600"
+                              aria-label={`Remove the photo of ${v.label || 'this choice'}`}
+                              onClick={() => setOption(g.id, { values: g.values.map((x) => (x.id === v.id ? { ...x, image: undefined } : x)) })}
+                            >
+                              ×
+                            </button>
+                          </span>
+                        )}
+                        <input className="input py-1" aria-label="Choice" placeholder="e.g. 900 mm" value={v.label} onChange={(e) => setOption(g.id, { values: g.values.map((x) => (x.id === v.id ? { ...x, label: e.target.value } : x)) })} />
+                      </div>
                     </td>
                     <td className="py-1 pr-2">
                       <input

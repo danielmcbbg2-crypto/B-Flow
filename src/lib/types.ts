@@ -461,6 +461,8 @@ export interface ProductOptionValue {
   tradePrice?: number
   /** Off: shown but can't be chosen. */
   available: boolean
+  /** A photo of the product with this choice (e.g. in this colour), shown when it's picked. */
+  image?: string
 }
 
 export interface ProductSource {

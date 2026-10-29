@@ -99,9 +99,14 @@ const cheapestChoice = (p: Product, user: UserAccount | null): Choice =>
   )
 const varies = (p: Product) => (p.options ?? []).some((g) => g.values.some((v) => v.price !== g.values[0].price))
 
-function ProductImage({ p, className }: { p: Product; className?: string }) {
-  return p.images[0] ? (
-    <img src={p.images[0]} alt="" className={cx('object-cover', className)} loading="lazy" />
+/** The photo of the first chosen option that has one (e.g. the colour picked), if any. */
+const choicePhoto = (p: Product, choice: Choice = {}) =>
+  (p.options ?? []).map((g) => g.values.find((v) => v.id === choice[g.id])?.image).find(Boolean)
+
+function ProductImage({ p, className, src }: { p: Product; className?: string; src?: string }) {
+  const photo = src ?? p.images[0]
+  return photo ? (
+    <img src={photo} alt="" className={cx('object-cover', className)} loading="lazy" />
   ) : (
     <div className={cx('flex items-center justify-center bg-slate-100 text-slate-400', className)} aria-hidden="true">
       <Package size={40} strokeWidth={1.25} />
@@ -220,7 +225,7 @@ export function Shop({ portal }: { portal?: boolean }) {
         <Modal open onClose={() => setOpen(null)} title={open.title} width="max-w-3xl">
           <div className="grid gap-5 md:grid-cols-2">
             <div className="space-y-2">
-              <ProductImage p={open} className="aspect-[4/3] w-full" />
+              <ProductImage p={open} src={choicePhoto(open, choice)} className="aspect-[4/3] w-full" />
               {open.images.length > 1 && (
                 <div className="grid grid-cols-4 gap-2">
                   {open.images.slice(1).map((src) => <img key={src} src={src} alt="" className="aspect-square w-full object-cover" loading="lazy" />)}
@@ -327,7 +332,7 @@ function Checkout({
       <section className="card divide-y divide-slate-100" aria-label="Cart">
         {lines.map((l) => (
           <div key={l.key} className="flex flex-wrap items-center gap-3 p-4 sm:flex-nowrap">
-            {l.p ? <ProductImage p={l.p} className="aspect-square w-16 shrink-0" /> : null}
+            {l.p ? <ProductImage p={l.p} src={choicePhoto(l.p, l.options)} className="aspect-square w-16 shrink-0" /> : null}
             <div className="min-w-0 flex-1 basis-40">
               <p className="font-semibold leading-snug">{l.p ? l.p.title : l.title ? `${l.title}: options no longer available` : 'No longer available'}</p>
               {l.chosen && <p className="text-xs text-slate-600">{l.chosen}</p>}
