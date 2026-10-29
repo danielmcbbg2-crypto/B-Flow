@@ -81,21 +81,8 @@ Shoot it from a three-quarter front view, centred and filling about 80% of the f
 /** At most this many colour photos per product (each takes Gemini 10 to 20 seconds). */
 export const MAX_COLOURS = 6
 
-/**
- * Makes new photos (a studio shot and one in a room) of the product on `pageUrl`, from up to two of
- * the supplier's photos, and a studio shot in each of `colours` (its colour or finish choices), and
- * stores them in the public "photos" bucket. Returns their links (the colours' by name).
- */
-export async function recreatePhotos(
-  pageUrl: string,
-  title: string,
-  extra: string[],
-  upload: (bytes: Uint8Array, type: string) => Promise<string>,
-  signal: AbortSignal,
-  progress: (text: string) => void,
-  colours: string[] = [],
-): Promise<{ images: string[]; references: string[]; colourImages: Record<string, string>; colourErrors: string[] }> {
-  progress('Finding the supplier’s photos…')
+/** Up to two of the supplier's photos (from their page, plus `extra` links), ready to send to Gemini. */
+export async function referencePhotos(pageUrl: string, extra: string[], signal: AbortSignal): Promise<{ type: string; b64: string; url: string }[]> {
   const found = [...new Set([...(await pagePhotos(pageUrl, signal)), ...extra])]
   const refs: { type: string; b64: string; url: string }[] = []
   const skipped: string[] = []
@@ -119,19 +106,25 @@ export async function recreatePhotos(
         : 'No product photo could be found on that page (the site may block automatic visits), so there’s nothing to work from. Add photos by hand.',
     )
   }
-  const images: string[] = []
-  const wanted = colours.slice(0, MAX_COLOURS)
-  const total = SHOTS.length + wanted.length
-  for (const [i, shot] of SHOTS.entries()) {
-    progress(`Creating new photo ${i + 1} of ${total} (${shot.name === 'studio' ? 'studio shot' : 'in a room'})…`)
-    const made = await generate(refs, shot.prompt(title), signal)
-    images.push(await upload(made.bytes, made.type))
-  }
-  // One for each colour: a colour that fails doesn't stop the others (or the listing).
+  return refs
+}
+
+/**
+ * A studio shot of the product in each of `colours` (up to MAX_COLOURS), by name. A colour that
+ * fails doesn't stop the others: its error is listed instead.
+ */
+export async function colourPhotos(
+  refs: { type: string; b64: string }[],
+  title: string,
+  colours: string[],
+  upload: (bytes: Uint8Array, type: string) => Promise<string>,
+  signal: AbortSignal,
+  progress: (colour: string, i: number) => void,
+): Promise<{ colourImages: Record<string, string>; colourErrors: string[] }> {
   const colourImages: Record<string, string> = {}
   const colourErrors: string[] = []
-  for (const [i, colour] of wanted.entries()) {
-    progress(`Creating new photo ${SHOTS.length + i + 1} of ${total} (${colour})…`)
+  for (const [i, colour] of colours.slice(0, MAX_COLOURS).entries()) {
+    progress(colour, i)
     try {
       const made = await generate(refs, colourShot(title, colour), signal)
       colourImages[colour] = await upload(made.bytes, made.type)
@@ -141,5 +134,33 @@ export async function recreatePhotos(
       colourErrors.push(`${colour}: ${(e as Error).message}`)
     }
   }
-  return { images, references: refs.map((r) => r.url), colourImages, colourErrors }
+  return { colourImages, colourErrors }
+}
+
+/**
+ * Makes new photos (a studio shot and one in a room) of the product on `pageUrl`, from up to two of
+ * the supplier's photos, and a studio shot in each of `colours` (its colour or finish choices), and
+ * stores them in the public "photos" bucket. Returns their links (the colours' by name).
+ */
+export async function recreatePhotos(
+  pageUrl: string,
+  title: string,
+  extra: string[],
+  upload: (bytes: Uint8Array, type: string) => Promise<string>,
+  signal: AbortSignal,
+  progress: (text: string) => void,
+  colours: string[] = [],
+): Promise<{ images: string[]; references: string[]; colourImages: Record<string, string>; colourErrors: string[] }> {
+  progress('Finding the supplier’s photos…')
+  const refs = await referencePhotos(pageUrl, extra, signal)
+  const images: string[] = []
+  const wanted = colours.slice(0, MAX_COLOURS)
+  const total = SHOTS.length + wanted.length
+  for (const [i, shot] of SHOTS.entries()) {
+    progress(`Creating new photo ${i + 1} of ${total} (${shot.name === 'studio' ? 'studio shot' : 'in a room'})…`)
+    const made = await generate(refs, shot.prompt(title), signal)
+    images.push(await upload(made.bytes, made.type))
+  }
+  const made = await colourPhotos(refs, title, wanted, upload, signal, (colour, i) => progress(`Creating new photo ${SHOTS.length + i + 1} of ${total} (${colour})…`))
+  return { images, references: refs.map((r) => r.url), ...made }
 }
