@@ -54,7 +54,7 @@ export function AdminStore() {
         subtitle="Orders from the online shop, your product listings, and an assistant that finds products and drafts listings."
         actions={
           <div className="flex flex-wrap gap-2">
-            <a className="btn-ghost" href="#/store" target="_blank" rel="noreferrer"><ExternalLink size={15} /> View shop</a>
+            <a className="btn-ghost" href="/store" target="_blank" rel="noreferrer"><ExternalLink size={15} /> View shop</a>
             <button className="btn-primary" onClick={() => setEditing(EMPTY_PRODUCT())}><Plus size={16} /> Add product</button>
           </div>
         }

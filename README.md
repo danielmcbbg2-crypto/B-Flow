@@ -88,6 +88,30 @@ To use your own address such as `portal.nextphasemaintenance.com.au`, add it as 
 
 Then, in Supabase **Authentication → URL Configuration**, set **Site URL** to your live address (for example `https://portal.nextphasemaintenance.com.au`) and add it under **Redirect URLs**. Invite and password-reset emails link back there.
 
+#### Being found on Google
+
+The public website is built for search engines:
+
+- **Real addresses for every public page.** These are the home page, `/store`, a page for each product (`/store/<id>/<name>`, linked from the shop), and a page for each service (`/services/plumbing`, `/services/electrical` and so on, linked from the home page and every footer). The portals keep their `#/…` addresses and are marked `noindex`, so they never show in search results. Old public links such as `#/store` move to their real address.
+- **Each page has its own title, description, canonical address and link preview,** plus structured data in schema.org JSON-LD:
+  - the business (area served, hours, ABN) on the home page;
+  - each product's price, stock and photos;
+  - each service;
+  - breadcrumbs.
+- **Every deploy builds the public pages ready-made.** `npm run build` runs `scripts/prerender.ts` after the app is built. It writes the home page, the shop, every service and every **published** product as its own page, with its title, description, structured data, words and links already in it. Search engines and link previews (Facebook, WhatsApp, Messages) read these without running the app. It also writes `sitemap.xml`, `robots.txt` and Netlify's `_redirects`.
+- **New products are picked up at the next deploy.** A product published after a deploy still opens and is readable by Google (which runs the app), but it only gets its ready-made page and its sitemap entry at the next deploy.
+
+Optional environment variables:
+
+- `VITE_SITE_URL`: the address the site is found at. It defaults to `https://portal.nextphasemaintenance.com.au`. If `www.nextphasemaintenance.com.au` points here instead, set this to `https://www.nextphasemaintenance.com.au` and redeploy.
+- `VITE_GA_MEASUREMENT_ID`: a Google Analytics 4 measurement ID (`G-…`). This turns on visitor analytics for the public site: page views, `generate_lead` (a maintenance request sent), `add_to_cart` and `purchase` (an order placed). The portals aren't tracked.
+
+After the first deploy:
+
+1. Add the site to [Google Search Console](https://search.google.com/search-console) and submit `/sitemap.xml`.
+2. Set up or claim the business on [Google Business Profile](https://business.google.com) with the website address.
+3. Fill in `phone` in `src/lib/brand.ts`. It's shown on the site and given to search engines, and local results rank businesses with a phone number higher.
+
 ### 6. Email delivery
 
 Supabase's built-in email sender only delivers to members of your Supabase team, a few emails an hour. Until you set up your own sender, invite people with **Create invite link** (see Day-to-day) instead of **Email the invite**.

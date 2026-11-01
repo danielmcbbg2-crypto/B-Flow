@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { track } from '../../lib/analytics'
 import { ArrowLeft, CheckCircle2, Minus, Package, Plus, Search, ShoppingCart, Trash2 } from 'lucide-react'
 import { Empty, Field, Modal, PageHeader, Status, type Tone } from '../../components/ui'
 import { Logo } from '../../components/Logo'
@@ -6,6 +7,8 @@ import { SignInModal } from '../../components/SignInModal'
 import { useStore } from '../../lib/store'
 import { lineKey, useCart } from '../../lib/cart'
 import { navigate } from '../../lib/router'
+import { SITE_URL, usePageMeta } from '../../lib/head'
+import { productMeta, productPath, STORE_META } from '../../lib/seo'
 import { ORDER_STATUS_LABEL, STOCK_LABEL, STORE_CATEGORIES, type OrderStatus, type Product, type ProductOptionValue, type UserAccount } from '../../lib/types'
 import { cx, fmtDate, money } from '../../lib/utils'
 
@@ -118,19 +121,29 @@ function ProductImage({ p, className, src }: { p: Product; className?: string; s
  * The shop: browse, product details, cart and checkout. Used on the public store page and in the
  * client and service provider portals.
  */
-export function Shop({ portal }: { portal?: boolean }) {
+export function Shop({ portal, productId }: { portal?: boolean; productId?: string }) {
   const { user, actingAs } = useStore()
   const { products, loading, error } = useCatalog()
   const cart = useCart()
   const [view, setView] = useState<'browse' | 'cart'>('browse')
   const [category, setCategory] = useState('All')
   const [query, setQuery] = useState('')
-  const [open, setOpenProduct] = useState<Product | null>(null)
+  // On the public shop each product has its own address (/store/<id>/<name>), so the open product
+  // follows the address; in the portals it's just opened in place.
+  const routed = !portal
+  const [local, setLocal] = useState<Product | null>(null)
+  const open = routed ? (products.find((p) => p.id === productId) ?? null) : local
   const [choice, setChoice] = useState<Choice>({})
+  const openId = open?.id
+  useEffect(() => {
+    if (open) setChoice(defaultChoice(open))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openId])
   const setOpen = (p: Product | null) => {
-    setOpenProduct(p)
-    if (p) setChoice(defaultChoice(p))
+    if (routed) navigate(p ? productPath(p) : '/store')
+    else setLocal(p)
   }
+  usePageMeta(!routed || loading ? null : open ? productMeta(open, SITE_URL) : STORE_META(SITE_URL))
   const [placed, setPlaced] = useState<{ number: number; total: number } | null>(null)
 
   const categories = useMemo(() => STORE_CATEGORIES.filter((c) => products.some((p) => p.category === c)), [products])
@@ -187,7 +200,7 @@ export function Shop({ portal }: { portal?: boolean }) {
       ) : error ? (
         <Empty title="The shop couldn't load">{error}</Empty>
       ) : view === 'cart' ? (
-        <Checkout cart={cart} products={products} portal={portal} acting={!!actingAs} onPlaced={(r) => { cart.clear(); setPlaced(r) }} />
+        <Checkout cart={cart} products={products} portal={portal} acting={!!actingAs} onPlaced={(r) => { track('purchase', { transaction_id: String(r.number), value: r.total, currency: 'AUD' }); cart.clear(); setPlaced(r) }} />
       ) : shown.length === 0 ? (
         <Empty title={products.length ? 'Nothing matches' : 'No products yet'}>{products.length ? 'Try another search or category.' : 'Check back soon.'}</Empty>
       ) : (
@@ -199,7 +212,11 @@ export function Shop({ portal }: { portal?: boolean }) {
               </button>
               <div className="flex flex-1 flex-col p-4">
                 <p className="text-xs text-slate-500">{[p.category, p.brand].filter(Boolean).join(' · ')}</p>
-                <button className="mt-1 text-left font-semibold leading-snug hover:underline" onClick={() => setOpen(p)}>{p.title}</button>
+                {routed ? (
+                  <a href={productPath(p)} className="mt-1 font-semibold leading-snug hover:underline">{p.title}</a>
+                ) : (
+                  <button className="mt-1 text-left font-semibold leading-snug hover:underline" onClick={() => setOpen(p)}>{p.title}</button>
+                )}
                 <div className="mt-2"><Status tone={STOCK_TONE[p.stock]}>{STOCK_LABEL[p.stock]}</Status></div>
                 {(p.options ?? []).length > 0 && (
                   <p className="mt-2 text-xs text-slate-500">{p.options.map((g) => `${g.values.length} ${g.name.toLowerCase()}${g.values.length === 1 ? '' : ' options'}`).join(' · ')}</p>
@@ -211,7 +228,7 @@ export function Shop({ portal }: { portal?: boolean }) {
                       Choose
                     </button>
                   ) : (
-                    <button className="btn-ghost px-3 py-1.5" disabled={p.stock === 'out_of_stock'} onClick={() => cart.add(p.id)} aria-label={`Add ${p.title} to cart`}>
+                    <button className="btn-ghost px-3 py-1.5" disabled={p.stock === 'out_of_stock'} onClick={() => { cart.add(p.id); track('add_to_cart', { currency: 'AUD', items: [{ item_id: p.id, item_name: p.title }] }) }} aria-label={`Add ${p.title} to cart`}>
                       <Plus size={15} /> Add
                     </button>
                   )}
@@ -263,6 +280,7 @@ export function Shop({ portal }: { portal?: boolean }) {
                 disabled={open.stock === 'out_of_stock' || choiceText(open, choice) === null}
                 onClick={() => {
                   cart.add(open.id, 1, (open.options ?? []).length ? choice : undefined)
+                  track('add_to_cart', { currency: 'AUD', items: [{ item_id: open.id, item_name: open.title }] })
                   setOpen(null)
                 }}
               >
@@ -434,7 +452,7 @@ export function PortalStore() {
 }
 
 /** The public store page, open to anyone from the home page. */
-export function StorePage() {
+export function StorePage({ productId }: { productId?: string }) {
   const { user, can } = useStore()
   const manage = user?.role === 'admin' && can('canManageStore')
   const [signIn, setSignIn] = useState(false)
@@ -457,7 +475,7 @@ export function StorePage() {
       </header>
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
         <PageHeader title="Shop" subtitle="Vanities, shower screens, tapware and more. Order online and we'll confirm, invoice and deliver or install." />
-        <Shop />
+        <Shop productId={productId} />
       </main>
       <SignInModal open={signIn} onClose={() => setSignIn(false)} />
     </div>

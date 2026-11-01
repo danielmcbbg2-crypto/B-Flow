@@ -168,7 +168,7 @@ export function AcceptLinkScreen({ tokenHash, type, purpose }: { tokenHash: stri
             {state === 'idle' ? 'Continue' : 'Checking your link…'}
           </button>
         )}
-        <a href="#/" className="block text-center text-sm text-slate-500 hover:text-slate-900">
+        <a href="/" className="block text-center text-sm text-slate-500 hover:text-slate-900">
           Go to the home page
         </a>
       </div>

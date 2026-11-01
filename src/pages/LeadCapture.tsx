@@ -1,4 +1,5 @@
 import { useRef, useState, type ComponentType, type DragEvent, type FormEvent, type ReactNode, type SVGProps } from 'react'
+import { track } from '../lib/analytics'
 import { ArrowRight, CalendarCheck, Camera, Check, CheckCircle2, Clock3, FileText, Hammer, ImagePlus, Paintbrush, ShieldCheck, Wrench, X, Zap } from 'lucide-react'
 import { Modal } from '../components/ui'
 import { Trowel, TwinGears, Worker } from '../components/ServiceIcons'
@@ -194,6 +195,7 @@ export function RequestMaintenanceModal({ open, service, onClose }: { open: bool
         contactBy,
         message: f.message,
       })
+      track('generate_lead', { service: f.service })
       setSent({ number, name: f.name.trim().split(/\s+/)[0], contact: contactBy === 'phone' ? `call you on ${f.phone.trim()}` : `email you at ${f.email.trim()}` })
       setF(blank())
     } catch (err) {
