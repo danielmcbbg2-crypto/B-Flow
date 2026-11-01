@@ -108,7 +108,7 @@ Optional environment variables:
 
 After the first deploy:
 
-1. Add the site to [Google Search Console](https://search.google.com/search-console) and submit `/sitemap.xml`.
+1. Add the site to [Google Search Console](https://search.google.com/search-console) as a **URL prefix** property and choose **HTML tag** to verify it. Put the code it gives you in the Netlify environment variable `GOOGLE_SITE_VERIFICATION`; either the code alone or the whole `<meta …>` tag works. Redeploy, click **Verify**, then submit `/sitemap.xml`.
 2. Set up or claim the business on [Google Business Profile](https://business.google.com) with the website address.
 3. Fill in `phone` in `src/lib/brand.ts`. It's shown on the site and given to search engines, and local results rank businesses with a phone number higher.
 

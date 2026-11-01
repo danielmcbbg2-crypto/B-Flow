@@ -15,6 +15,7 @@ import { SERVICE_PAGES, servicePath } from '../src/lib/services'
 const DIST = 'dist'
 const SITE = (process.env.VITE_SITE_URL || DEFAULT_SITE_URL).replace(/\/+$/, '')
 const template = readFileSync(join(DIST, 'index.html'), 'utf8')
+const VERIFY = (process.env.GOOGLE_SITE_VERIFICATION ?? '').trim().replace(/^.*content="([^"]+)".*$/s, '$1')
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 // JSON inside <script>: no closing tags or HTML comments can sneak out.
@@ -62,6 +63,8 @@ function render(m: PageMeta, body: string): string {
     `<meta property="og:type" content="${m.type ?? 'website'}" />`,
     ...(m.image ? [`<meta property="og:image" content="${esc(m.image)}" />`] : []),
     `<meta name="twitter:card" content="${m.image ? 'summary_large_image' : 'summary'}" />`,
+    // Proves to Google Search Console that the site is ours (its "HTML tag" method).
+    ...(VERIFY ? [`<meta name="google-site-verification" content="${esc(VERIFY)}" />`] : []),
     ...(m.jsonLd ?? []).map((ld) => `<script type="application/ld+json" data-page-ld>${ldJson(ld)}</script>`),
   ].join('\n    ')
   return template
