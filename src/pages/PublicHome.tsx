@@ -6,6 +6,10 @@ import { BRAND, SITE_COPY, SITE_SERVICES } from '../lib/brand'
 import { useStore } from '../lib/store'
 import { navigate } from '../lib/router'
 import { LeadCapture, REQUEST_SERVICES, RequestMaintenanceModal, SERVICE_ICONS } from './LeadCapture'
+import { SITE_URL, usePageMeta } from '../lib/head'
+import { HOME_META } from '../lib/seo'
+import { serviceByName, servicePath } from '../lib/services'
+import { ServiceLinks } from './ServicePage'
 import interiorPhoto from '../assets/photos/interior.webp'
 import residentialPhoto from '../assets/photos/residential.webp'
 import commercialPhoto from '../assets/photos/commercial.webp'
@@ -49,6 +53,7 @@ export function PublicHome() {
   const [request, setRequest] = useState<{ key: number; service?: string } | null>(null)
   const openRequest = (service?: string) => (user ? navigate(`/${user.role}`) : setRequest({ key: Date.now(), service }))
   const [menuOpen, setMenuOpen] = useState(false)
+  usePageMeta(HOME_META(SITE_URL))
   const openPortal = () => (user ? navigate(`/${user.role}`) : setSignIn(true))
 
   useEffect(() => {
@@ -69,7 +74,7 @@ export function PublicHome() {
                 {label}
               </a>
             ))}
-            <a href="#/store" className="font-semibold hover:text-accent-ink">
+            <a href="/store" className="font-semibold hover:text-accent-ink">
               Shop
             </a>
           </nav>
@@ -111,7 +116,7 @@ export function PublicHome() {
                 {label}
               </a>
             ))}
-            <a href="#/store" className="block py-3.5 text-base font-semibold text-slate-900 hover:text-accent-ink">
+            <a href="/store" className="block py-3.5 text-base font-semibold text-slate-900 hover:text-accent-ink">
               Shop
             </a>
           </nav>
@@ -194,8 +199,9 @@ export function PublicHome() {
                 </>
               )
               const cls = 'group flex h-full min-h-[150px] w-full flex-col bg-white p-5 text-left transition-shadow hover:shadow-lg sm:min-h-[220px] sm:p-10'
+              const page = serviceByName(name)
               return (
-                <li key={name}>
+                <li key={name} className="flex flex-col">
                   {requestable ? (
                     <button type="button" className={cls} onClick={() => openRequest(name)} aria-label={`Request ${name}`}>
                       {tile}
@@ -203,6 +209,11 @@ export function PublicHome() {
                   ) : (
                     <a href="#contact" onClick={jump('contact')} className={cls} aria-label={`Ask us about ${name}`}>
                       {tile}
+                    </a>
+                  )}
+                  {page && (
+                    <a href={servicePath(page)} className="bg-white px-5 pb-4 text-sm text-slate-600 underline-offset-2 hover:text-accent-ink hover:underline sm:px-10">
+                      More about {name.replace(/ Services$/, '').toLowerCase()}
                     </a>
                   )}
                 </li>
@@ -250,7 +261,7 @@ export function PublicHome() {
               Vanities, shower screens, tapware and more, from the brands we install. Order online; we confirm, invoice and deliver or fit.
             </p>
           </div>
-          <a href="#/store" className="btn-accent shrink-0 px-7 py-3.5 text-base font-normal">
+          <a href="/store" className="btn-accent shrink-0 px-7 py-3.5 text-base font-normal">
             Visit the shop <ArrowRight size={16} />
           </a>
         </div>
@@ -313,6 +324,7 @@ export function PublicHome() {
       </section>
 
       <footer className="bg-slate-900 text-white">
+        <ServiceLinks className="mx-auto max-w-7xl px-4 pt-12 text-white/80 sm:px-6" />
         <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-12 sm:flex-row sm:items-end sm:justify-between sm:px-6">
           <Logo inverted />
           <div className="text-sm text-white/70 sm:text-right">

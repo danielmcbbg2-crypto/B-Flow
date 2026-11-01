@@ -5,6 +5,9 @@ import { App } from './App'
 import { StoreProvider } from './lib/store'
 import { CLOUD, DEMO } from './lib/supabase'
 import { NotConfigured } from './components/NotConfigured'
+import { interceptLinks } from './lib/router'
+
+interceptLinks()
 
 // Invite and password-reset links carry their sign-in tokens after the "#". If one is
 // opened in a tab already showing the app, only the hash changes, so reload to let the

@@ -3,10 +3,10 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "Next Phase Maintenance — business operations platform with client, service provider and admin portals",
+  "description": "Next Phase Maintenance \u2014 business operations platform with client, service provider and admin portals",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && tsx scripts/prerender.ts",
     "preview": "vite preview",
     "lint": "eslint .",
     "test:db": "bash supabase/tests/run.sh",

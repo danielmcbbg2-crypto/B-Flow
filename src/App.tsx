@@ -8,14 +8,27 @@ import { AdminPortal } from './pages/admin/AdminPortal'
 import { AcceptLinkScreen, SetPasswordScreen } from './components/SignInModal'
 import { LogoMark } from './components/Logo'
 import { StorePage } from './pages/store/Shop'
+import { ServicePage } from './pages/ServicePage'
+import { useNoIndex } from './lib/head'
+import { pageView } from './lib/analytics'
 
 export function App() {
   const { user, phase, cloud, actingAs, stopActingAs } = useStore()
-  const [area = '', section = 'home'] = useHashRoute()
+  const route = useHashRoute()
+  const [area = '', section = 'home'] = route
   const isPortal = area === 'client' || area === 'provider' || area === 'admin'
   // An admin who has opened a client's or trade's dashboard may also use that portal.
   const role = actingAs?.role ?? user?.role
   const allowed = !!user && (area === user.role || area === role)
+  // The portals and sign-in links are private: kept out of search results.
+  useNoIndex(isPortal || area.startsWith('accept'))
+  // Page views of the public site (the portals aren't tracked); after the page has set its title.
+  const path = route.join('/')
+  useEffect(() => {
+    if (isPortal || area.startsWith('accept')) return
+    const t = setTimeout(pageView, 0)
+    return () => clearTimeout(t)
+  }, [path, isPortal, area])
 
   // Portals are role-locked: signed-out users go home, others to their own portal.
   useEffect(() => {
@@ -37,7 +50,8 @@ export function App() {
   }
   if (phase === 'set-password') return <SetPasswordScreen />
   // The shop is open to everyone, signed in or not.
-  if (area === 'store') return <StorePage />
+  if (area === 'store') return <StorePage productId={route[1]} />
+  if (area === 'services') return <ServicePage slug={route[1] ?? ''} />
   if (isPortal && phase === 'loading') {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-3 text-sm text-slate-500">
