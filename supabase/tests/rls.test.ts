@@ -1620,3 +1620,50 @@ describe('product options', () => {
     await assert.rejects(asUser(uid.admin, `select option_price_snapshot('po-1')`), /permission denied/)
   })
 })
+
+describe('quickbooks invoices', () => {
+  const order = async (email: string) =>
+    (await asAnon<{ r: { id: string } }>(`select place_order('[{"product_id":"po-1","qty":1,"options":{"o-size":"v-600","o-col":"v-white"}}]'::jsonb, 'Quinn Buyer', '${email}', '0400 111 222', 'pickup') as r`)).rows[0].r.id
+
+  test('a new order waits for its invoice; nobody but the server can set invoice details', async () => {
+    const id = await order('quinn@example.com')
+    const row = async () => (await pool.query(`select invoice_status, qbo_invoice_id, pay_link from orders where id = $1`, [id])).rows[0]
+    assert.deepEqual(await row(), { invoice_status: 'pending', qbo_invoice_id: null, pay_link: '' })
+    await asUser(uid.admin, `update orders set invoice_status = 'paid', pay_link = 'https://evil.example', status = 'confirmed' where id = '${id}'`)
+    assert.deepEqual(await row(), { invoice_status: 'pending', qbo_invoice_id: null, pay_link: '' })
+    assert.equal((await pool.query(`select status from orders where id = $1`, [id])).rows[0].status, 'confirmed')
+    // The server (service role) records it.
+    await pool.query(`update orders set invoice_status = 'sent', qbo_invoice_id = '77', invoice_number = '1043', pay_link = 'https://pay.example/77' where id = $1`, [id])
+    assert.deepEqual(await row(), { invoice_status: 'sent', qbo_invoice_id: '77', pay_link: 'https://pay.example/77' })
+  })
+
+  test('the customer sees their invoice on the confirmation screen with the order id and their email only', async () => {
+    const id = (await pool.query(`select id from orders where email = 'quinn@example.com'`)).rows[0].id
+    const r = (await asAnon<{ r: unknown }>(`select order_invoice('${id}', 'Quinn@Example.com') as r`)).rows[0].r
+    assert.deepEqual(r, { status: 'sent', number: '1043', pay_link: 'https://pay.example/77' })
+    assert.equal((await asAnon<{ r: unknown }>(`select order_invoice('${id}', 'someone@else.com') as r`)).rows[0].r, null)
+  })
+
+  test('the connection (tokens) is server-only; the office only sees whether it is connected', async () => {
+    await pool.query(`insert into qbo_connection (id, realm_id, company_name, refresh_token, connected_at) values (1, '123', 'Next Phase Pty Ltd', 'secret-token', now())`)
+    await assert.rejects(asUser(uid.admin, `select refresh_token from qbo_connection`), /permission denied/)
+    await assert.rejects(asAnon(`select * from qbo_connection`), /permission denied/)
+    const s = (await asUser<{ s: { connected: boolean; company: string; refresh_token?: string } }>(uid.admin, `select qbo_status() as s`)).rows[0].s
+    assert.equal(s.connected, true)
+    assert.equal(s.company, 'Next Phase Pty Ltd')
+    assert.equal(s.refresh_token, undefined)
+    assert.equal((await asUser<{ s: unknown }>(uid.sarah, `select qbo_status() as s`)).rows[0].s, null)
+  })
+
+  test('only the server claims invoices to make, once each; the office can retry a failed one', async () => {
+    await assert.rejects(asUser(uid.admin, `select * from claim_order_invoices(5)`), /permission denied/)
+    const id = await order('rae@example.com')
+    const claimed = (await pool.query(`select id from claim_order_invoices(50)`)).rows.map((r) => r.id)
+    assert.ok(claimed.includes(id))
+    assert.ok(!(await pool.query(`select id from claim_order_invoices(50)`)).rows.some((r) => r.id === id), 'not claimed twice')
+    await pool.query(`update orders set invoice_status = 'failed', invoice_attempts = 6, invoice_error = 'QuickBooks said no' where id = $1`, [id])
+    await assert.rejects(asUser(uid.sarah, `select retry_order_invoice('${id}')`), /Manage store/)
+    await asUser(uid.admin, `select retry_order_invoice('${id}')`)
+    assert.deepEqual((await pool.query(`select invoice_status, invoice_attempts, invoice_error from orders where id = $1`, [id])).rows[0], { invoice_status: 'pending', invoice_attempts: 0, invoice_error: '' })
+  })
+})
