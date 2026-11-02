@@ -40,7 +40,7 @@ const STEPS = [
 const URGENCIES: LeadUrgency[] = ['urgent', 'soon', 'flexible']
 const MAX_PHOTOS = 6
 
-const blank = (service = ''): LeadInput & { website: string } => ({
+const blank = (service = '', message = ''): LeadInput & { website: string } => ({
   service,
   photos: [],
   name: '',
@@ -50,7 +50,7 @@ const blank = (service = ''): LeadInput & { website: string } => ({
   suburb: '',
   urgency: 'soon',
   contactBy: 'phone',
-  message: '',
+  message,
   website: '',
 })
 
@@ -152,9 +152,10 @@ function PhotoPicker({ value, onChange }: { value: string[]; onChange: (v: strin
 }
 
 /** The pop-up: a maintenance request from someone without an account, with photos, sent to the office. */
-export function RequestMaintenanceModal({ open, service, onClose }: { open: boolean; service?: string; onClose: () => void }) {
+/** `message` starts the description off, e.g. the product to supply and install. */
+export function RequestMaintenanceModal({ open, service, message, onClose }: { open: boolean; service?: string; message?: string; onClose: () => void }) {
   const { submitLead } = useStore()
-  const [f, setF] = useState(() => blank(service))
+  const [f, setF] = useState(() => blank(service, message))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [sent, setSent] = useState<{ number: number; name: string; contact: string } | null>(null)

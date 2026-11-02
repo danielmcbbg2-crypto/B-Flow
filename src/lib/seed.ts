@@ -1,7 +1,7 @@
 import { blankCommercials } from './quote'
 import type { AppData } from './types'
 import { toISODate } from './utils'
-import { DEFAULT_PERMISSIONS, DEFAULT_PRICING, DEFAULT_SMS } from './types'
+import { DEFAULT_PERMISSIONS, DEFAULT_PRICING, DEFAULT_SMS, EMPTY_LISTING } from './types'
 
 /** ISO date (YYYY-MM-DD) offset from today, so sample data always looks current. */
 function day(offset: number): string {
@@ -556,6 +556,7 @@ export function createSeed(): AppData {
             ],
           },
         ],
+        ...EMPTY_LISTING(),
         status: 'published',
         stock: 'in_stock',
         source: { supplier: 'Bathware Wholesale', url: 'https://example.com/vanity-900', cost: 780, notes: '2-week lead time on oak', autoPrice: false },
@@ -573,6 +574,7 @@ export function createSeed(): AppData {
         tradePrice: 549,
         images: [],
         options: [],
+        ...EMPTY_LISTING(),
         status: 'published',
         stock: 'to_order',
         createdBy: 'u-admin',
@@ -589,6 +591,7 @@ export function createSeed(): AppData {
         tradePrice: 149,
         images: [],
         options: [],
+        ...EMPTY_LISTING(),
         status: 'published',
         stock: 'in_stock',
         createdBy: 'u-admin',
@@ -604,6 +607,7 @@ export function createSeed(): AppData {
         price: 329,
         images: [],
         options: [],
+        ...EMPTY_LISTING(),
         status: 'published',
         stock: 'out_of_stock',
         createdBy: 'u-admin',
@@ -619,6 +623,7 @@ export function createSeed(): AppData {
         price: 279,
         images: [],
         options: [],
+        ...EMPTY_LISTING(),
         status: 'draft',
         stock: 'in_stock',
         createdBy: 'u-admin',

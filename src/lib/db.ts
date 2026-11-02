@@ -24,7 +24,9 @@ import type {
   Product,
   Project,
   ProjectCost,
+  ProductCompliance,
   ProductOption,
+  ProductSpec,
   ProductSource,
   SupplierStock,
   Pricing,
@@ -358,6 +360,14 @@ const productRow = (p: Product): Row => ({
   images: p.images,
   // The client and trade add-ons are set by the database (with the client and trade prices).
   options: (p.options ?? []).map((g) => ({ id: g.id, name: g.name, values: g.values.map((v) => ({ id: v.id, label: v.label, price: v.price, available: v.available, ...(v.image ? { image: v.image } : {}) })) })),
+  // Listings saved before these details existed (or by older code) still save, with them empty.
+  specs: p.specs ?? [],
+  highlights: p.highlights ?? [],
+  seo_title: p.seoTitle ?? '',
+  meta_description: p.metaDescription ?? '',
+  image_alt: p.imageAlt ?? [],
+  gtin: p.gtin ?? '',
+  compliance: p.compliance ?? {},
   status: p.status,
   stock: p.stock,
   created_by: nul(p.createdBy),
@@ -816,6 +826,13 @@ export const productsFromRows = (products: Row[], tradePrices: Row[] = [], sourc
             return { id: v.id, label: v.label, price: num(v.price), available: v.available !== false, clientPrice: c === undefined ? undefined : num(c), tradePrice: t === undefined ? undefined : num(t), ...(typeof v.image === 'string' && v.image ? { image: v.image } : {}) }
           }),
         })),
+        specs: ((r.specs as ProductSpec[] | undefined) ?? []).map((x) => ({ label: String(x.label ?? ''), value: String(x.value ?? '') })),
+        highlights: (r.highlights as string[] | undefined) ?? [],
+        seoTitle: (r.seo_title as string | undefined) ?? '',
+        metaDescription: (r.meta_description as string | undefined) ?? '',
+        imageAlt: (r.image_alt as string[] | undefined) ?? [],
+        gtin: (r.gtin as string | undefined) ?? '',
+        compliance: (r.compliance as ProductCompliance | undefined) ?? {},
         status: r.status as Product['status'],
         stock: r.stock as Product['stock'],
         source: s

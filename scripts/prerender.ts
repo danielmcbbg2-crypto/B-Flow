@@ -9,8 +9,9 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { BRAND } from '../src/lib/brand'
-import { DEFAULT_SITE_URL, HOME_META, pageTitle, productMeta, productPath, STORE_META, breadcrumbJsonLd, businessJsonLd, type PageMeta, type ProductForSeo } from '../src/lib/seo'
+import { complianceFacts, DEFAULT_SITE_URL, HOME_META, pageTitle, productMeta, productPath, STORE_META, breadcrumbJsonLd, businessJsonLd, type PageMeta, type ProductForSeo } from '../src/lib/seo'
 import { SERVICE_PAGES, servicePath } from '../src/lib/services'
+import { ACL_GUARANTEE, STORE_INFO_PAGES } from '../src/lib/storePolicy'
 
 const DIST = 'dist'
 const SITE = (process.env.VITE_SITE_URL || DEFAULT_SITE_URL).replace(/\/+$/, '')
@@ -29,14 +30,23 @@ async function products(): Promise<ProductForSeo[]> {
     return []
   }
   try {
-    const res = await fetch(`${url.replace(/\/+$/, '')}/rest/v1/products?status=eq.published&select=id,title,description,category,brand,sku,price,images,stock,options&order=title`, {
-      headers: { apikey: key, Authorization: `Bearer ${key}` },
-      signal: AbortSignal.timeout(20000),
-    })
+    const get = (cols: string) =>
+      fetch(`${url.replace(/\/+$/, '')}/rest/v1/products?status=eq.published&select=${cols}&order=title`, {
+        headers: { apikey: key, Authorization: `Bearer ${key}` },
+        signal: AbortSignal.timeout(20000),
+      })
+    const basic = 'id,title,description,category,brand,sku,price,images,stock,options'
+    let res = await get(`${basic},specs,highlights,seo_title,meta_description,image_alt,gtin,compliance`)
+    // A database without the listing details yet (migration 20261107000000 not applied): the basics still build.
+    if (res.status === 400) res = await get(basic)
     if (!res.ok) throw new Error(`${res.status} ${await res.text()}`)
-    const rows = (await res.json()) as (ProductForSeo & { price: number | string })[]
-    return rows.map((r) => ({
+    type Row = ProductForSeo & { price: number | string; seo_title?: string; meta_description?: string; image_alt?: string[] }
+    const rows = (await res.json()) as Row[]
+    return rows.map(({ seo_title, meta_description, image_alt, ...r }) => ({
       ...r,
+      seoTitle: seo_title ?? '',
+      metaDescription: meta_description ?? '',
+      imageAlt: image_alt ?? [],
       price: Number(r.price),
       images: r.images ?? [],
       options: (r.options ?? []).map((g) => ({ values: g.values.map((v) => ({ price: Number(v.price), available: v.available !== false })) })),
@@ -62,6 +72,7 @@ function render(m: PageMeta, body: string): string {
     `<meta property="og:url" content="${esc(url)}" />`,
     `<meta property="og:type" content="${m.type ?? 'website'}" />`,
     ...(m.image ? [`<meta property="og:image" content="${esc(m.image)}" />`] : []),
+    ...(m.image && m.imageAlt ? [`<meta property="og:image:alt" content="${esc(m.imageAlt)}" />`] : []),
     `<meta name="twitter:card" content="${m.image ? 'summary_large_image' : 'summary'}" />`,
     // Proves to Google Search Console that the site is ours (its "HTML tag" method).
     ...(VERIFY ? [`<meta name="google-site-verification" content="${esc(VERIFY)}" />`] : []),
@@ -79,6 +90,9 @@ function write(path: string, html: string) {
   mkdirSync(dirname(file), { recursive: true })
   writeFileSync(file, html)
 }
+
+/** A product's specs and compliance details, as table rows. */
+const specRows = (p: ProductForSeo) => [...(p.specs ?? []).map((s) => ({ name: s.label, value: s.value })), ...complianceFacts(p)]
 
 const link = (href: string, text: string) => `<a href="${esc(href)}">${esc(text)}</a>`
 const list = (items: string[]) => `<ul>${items.map((i) => `<li>${i}</li>`).join('')}</ul>`
@@ -102,6 +116,19 @@ write(
   ),
 )
 pages.push({ path: '/store' })
+
+// The shop's information pages (delivery, returns, privacy, contact)
+for (const info of STORE_INFO_PAGES) {
+  const path = `/store/${info.slug}`
+  write(
+    path,
+    render(
+      { title: info.title, description: info.description, path, jsonLd: [breadcrumbJsonLd(SITE, [{ name: 'Home', path: '/' }, { name: 'Shop', path: '/store' }, { name: info.name, path }])] },
+      `<main><h1>${esc(info.title)}</h1><p>${esc(info.description)}</p>${info.slug === 'returns' ? `<p>${esc(ACL_GUARANTEE)}</p>` : ''}${link('/store', 'Back to the shop')}${nav}</main>`,
+    ),
+  )
+  pages.push({ path })
+}
 
 // Services
 for (const s of SERVICE_PAGES) {
@@ -129,7 +156,13 @@ for (const p of all) {
   const meta = productMeta(p, SITE)
   write(
     productPath(p),
-    render(meta, `<main><h1>${esc(p.title)}</h1><p>${esc(meta.description)}</p>${p.images[0] ? `<img src="${esc(p.images[0])}" alt="${esc(p.title)}" />` : ''}<p>${esc(p.description)}</p>${link('/store', 'Back to the shop')}${nav}</main>`),
+    render(
+      meta,
+      `<main><h1>${esc(p.title)}</h1><p>${esc(meta.description)}</p>${p.images.map((src, i) => `<img src="${esc(src)}" alt="${esc(p.imageAlt?.[i] || p.title)}" />`).join('')}<p>${esc(p.description)}</p>` +
+        ((p.highlights ?? []).length ? list((p.highlights ?? []).map(esc)) : '') +
+        (specRows(p).length ? `<h2>Specifications</h2><table>${specRows(p).map((r) => `<tr><th>${esc(r.name)}</th><td>${esc(r.value)}</td></tr>`).join('')}</table>` : '') +
+        `${link('/store', 'Back to the shop')}${nav}</main>`,
+    ),
   )
   pages.push({ path: productPath(p) })
 }

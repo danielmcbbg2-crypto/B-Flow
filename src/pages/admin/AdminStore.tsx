@@ -2,7 +2,8 @@ import { Fragment, useState, type FormEvent } from 'react'
 import { ExternalLink, Package, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { Empty, Field, Modal, PageHeader, PhotoInput, Status, Tabs, type Tone } from '../../components/ui'
 import { useLookup, useStore } from '../../lib/store'
-import { ORDER_STATUS_LABEL, STOCK_LABEL, STORE_CATEGORIES, SUPPLIER_STOCK_LABEL, type OrderStatus, type OptionPrice, type PriceChange, type Pricing, type Product, type ProductOption, type ProductSource, type StoreOrder, type SupplierStock } from '../../lib/types'
+import { ListingDetails } from './ListingDetails'
+import { EMPTY_LISTING, ORDER_STATUS_LABEL, STOCK_LABEL, STORE_CATEGORIES, SUPPLIER_STOCK_LABEL, type OrderStatus, type OptionPrice, type PriceChange, type Pricing, type Product, type ProductOption, type ProductSource, type StoreOrder, type SupplierStock } from '../../lib/types'
 import { cx, fmtDate, fmtDateTime, money, uid } from '../../lib/utils'
 import { ProductAssistant } from './ProductAssistant'
 import { CLOUD } from '../../lib/supabase'
@@ -33,6 +34,7 @@ export const EMPTY_PRODUCT = (): Product => ({
   sku: '',
   price: 0,
   images: [],
+  ...EMPTY_LISTING(),
   status: 'draft',
   stock: 'in_stock',
   createdAt: new Date().toISOString(),
@@ -655,9 +657,11 @@ export function ProductEditor({ product, notice, onClose, onSaved }: { product: 
         </Field>
         <div className="sm:col-span-2">
           <span className="label">Photos (first is the main one)</span>
-          <PhotoInput value={p.images} onChange={(images) => set({ images })} max={8} />
+          {/* Each photo keeps its description when photos are moved or removed. */}
+          <PhotoInput value={p.images} onChange={(images) => set({ images, imageAlt: images.map((u) => p.imageAlt?.[p.images.indexOf(u)] ?? '') })} max={8} />
           <p className="mt-1 text-xs text-slate-500">Use your own photos or ones the supplier lets you use.</p>
         </div>
+        <ListingDetails p={p} price={price} set={set} />
         <fieldset className="grid gap-4 rounded-md border border-slate-200 p-4 sm:col-span-2 sm:grid-cols-2">
           <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Office only</legend>
           <Field label="Supplier"><input className="input" value={source.supplier} onChange={(e) => setSource({ ...source, supplier: e.target.value })} /></Field>

@@ -3,9 +3,10 @@ import { ExternalLink, ImageOff, Link2, Search, Sparkles, Square } from 'lucide-
 import { Empty, Field, Modal } from '../../components/ui'
 import { useStore } from '../../lib/store'
 import { CLOUD } from '../../lib/supabase'
-import { STORE_CATEGORIES, type DraftListing, type FoundProduct, type Product, type ProductOption, type SupplierStock } from '../../lib/types'
+import { EMPTY_LISTING, STORE_CATEGORIES, type DraftListing, type FoundProduct, type Product, type ProductOption, type SupplierStock } from '../../lib/types'
 import { money, uid } from '../../lib/utils'
 import { squash, supplierKeys, withoutSupplier } from '../../lib/supplierName'
+import { cleanCompliance, toSpec } from '../../lib/listingCheck'
 
 const SUGGESTIONS = ['Frameless shower screens 900 mm', 'Wall-hung timber vanities 750 to 900 mm', 'Matte black basin mixers', 'LED bathroom mirrors with demister']
 
@@ -209,7 +210,7 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product, notice?: s
       onDraft({
         id: uid('sp'),
         title: clean(l.title),
-        description: [clean(l.description).trim(), specs.length ? specs.map((s) => `• ${s}`).join('\n') : ''].filter(Boolean).join('\n\n'),
+        description: clean(l.description).trim(),
         category: (STORE_CATEGORIES as readonly string[]).includes(l.category) ? l.category : 'Other',
         brand: keys.includes(squash(l.brand)) ? '' : clean(l.brand),
         sku: l.sku,
@@ -217,6 +218,13 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product, notice?: s
         price: parsePrice(l.suggested_price),
         images,
         options: variants.options,
+        ...EMPTY_LISTING(),
+        specs: specs.map(toSpec),
+        highlights: (l.highlights ?? []).map(clean).filter(Boolean).slice(0, 6),
+        seoTitle: clean(l.seo_title ?? ''),
+        metaDescription: clean(l.meta_description ?? ''),
+        imageAlt: images.map(() => clean(l.image_alt ?? '')),
+        compliance: cleanCompliance(l.compliance),
         status: 'draft',
         // What the supplier's page says now; "To order" when it doesn't say.
         stock: stock?.status === 'out_of_stock' ? 'out_of_stock' : stock?.status === 'in_stock' || stock?.status === 'low' ? 'in_stock' : 'to_order',

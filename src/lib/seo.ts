@@ -33,6 +33,25 @@ export interface ProductForSeo {
   images: string[]
   stock: 'in_stock' | 'to_order' | 'out_of_stock'
   options?: { values: { price: number; available: boolean }[] }[]
+  /** Listing details (optional so older rows still work). */
+  specs?: { label: string; value: string }[]
+  highlights?: string[]
+  seoTitle?: string
+  metaDescription?: string
+  imageAlt?: string[]
+  gtin?: string
+  compliance?: { welsStars?: number; welsWater?: string; welsReg?: string; watermark?: string; standards?: string[]; warranty?: string }
+}
+
+/** The compliance details as plain facts, e.g. "WELS 5 star (6.0 L/min), registration T31433". */
+export function complianceFacts(p: Pick<ProductForSeo, 'compliance'>): { name: string; value: string }[] {
+  const c = p.compliance ?? {}
+  const out: { name: string; value: string }[] = []
+  if (c.welsStars) out.push({ name: 'WELS rating', value: `${c.welsStars} star${c.welsWater ? ` (${c.welsWater})` : ''}${c.welsReg ? `, registration ${c.welsReg}` : ''}` })
+  if (c.watermark) out.push({ name: 'WaterMark', value: c.watermark })
+  for (const s of c.standards ?? []) out.push({ name: 'Standard', value: s })
+  if (c.warranty) out.push({ name: 'Warranty', value: `${c.warranty}, plus your rights under the Australian Consumer Law` })
+  return out
 }
 
 export interface PageMeta {
@@ -41,6 +60,8 @@ export interface PageMeta {
   /** The page's address on the site, e.g. "/store". */
   path: string
   image?: string
+  /** What the picture shows (for link previews and screen readers). */
+  imageAlt?: string
   /** "product" for a product page; otherwise "website". */
   type?: 'website' | 'product'
   jsonLd?: object[]
@@ -103,9 +124,14 @@ export function productJsonLd(p: ProductForSeo, siteUrl: string) {
     description: snippet(p.description, 500),
     url,
     ...(p.images.length ? { image: p.images.slice(0, 5) } : {}),
-    ...(p.sku ? { sku: p.sku } : {}),
+    ...(p.sku ? { sku: p.sku, mpn: p.sku } : {}),
+    ...(p.gtin ? { gtin: p.gtin } : {}),
     ...(p.brand ? { brand: { '@type': 'Brand', name: p.brand } } : {}),
     category: p.category,
+    // Specs and compliance details, as search engines read product facts.
+    ...((p.specs?.length || complianceFacts(p).length) && {
+      additionalProperty: [...(p.specs ?? []).map((s) => ({ name: s.label, value: s.value })), ...complianceFacts(p)].map((x) => ({ '@type': 'PropertyValue', ...x })),
+    }),
     offers:
       low === high
         ? { '@type': 'Offer', url, price: low.toFixed(2), priceCurrency: 'AUD', availability: AVAILABILITY[p.stock], seller }
@@ -126,10 +152,11 @@ export function productMeta(p: ProductForSeo, siteUrl: string): PageMeta {
   const { low, high } = priceRange(p)
   const price = low === high ? `$${low.toLocaleString('en-AU')}` : `From $${low.toLocaleString('en-AU')}`
   return {
-    title: p.title,
-    description: snippet(`${price} inc. GST. ${p.description} Supplied and installed in Melbourne by ${BRAND.name}.`),
+    title: p.seoTitle?.trim() || p.title,
+    description: p.metaDescription?.trim() || snippet(`${price} inc. GST. ${p.description} Supplied and installed in Melbourne by ${BRAND.name}.`),
     path: productPath(p),
     image: p.images[0],
+    imageAlt: p.imageAlt?.[0] || p.title,
     type: 'product',
     jsonLd: [
       productJsonLd(p, siteUrl),
