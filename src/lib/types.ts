@@ -537,6 +537,35 @@ export interface StoreOrder {
   adminNotes: string
   createdAt: string
   items: OrderItem[]
+  /** Its QuickBooks invoice (recorded by the server only). */
+  invoice?: OrderInvoice
+}
+
+export type OrderInvoiceStatus = 'pending' | 'working' | 'sent' | 'failed' | 'paid' | 'voided' | 'refund_needed' | 'skipped'
+export const ORDER_INVOICE_LABEL: Record<OrderInvoiceStatus, string> = {
+  pending: 'Being invoiced',
+  working: 'Being invoiced',
+  sent: 'Invoice sent',
+  failed: 'Invoice failed',
+  paid: 'Paid',
+  voided: 'Invoice voided',
+  refund_needed: 'Refund needed',
+  skipped: 'Not invoiced',
+}
+
+export interface OrderInvoice {
+  status: OrderInvoiceStatus
+  number: string
+  payLink: string
+  error: string
+}
+
+/** Whether QuickBooks is connected (office only). */
+export interface QuickBooksStatus {
+  connected: boolean
+  company?: string
+  connectedAt?: string
+  lastError?: string
 }
 
 /** A product the AI assistant found on the web. */

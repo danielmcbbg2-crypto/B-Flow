@@ -1,6 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { RealtimeChannel, Session } from '@supabase/supabase-js'
 import type {
+  OrderInvoiceStatus,
+  QuickBooksStatus,
   OrderItem,
   AppData,
   DraftListing,
@@ -147,6 +149,14 @@ type NewRequest = Omit<MaintenanceRequest, 'id' | 'number' | 'createdAt' | 'stat
 type InboxDraft = Omit<InboxMessage, 'id' | 'createdAt' | 'read' | 'acknowledged'>
 
 /** A store order as the checkout sends it; prices are worked out by the database. */
+/** An order just placed: enough for the confirmation screen to show its invoice. */
+export interface PlacedOrder {
+  id: string
+  number: number
+  total: number
+  email: string
+}
+
 export interface OrderInput {
   /** options: option id → value id, one for each of the product's options. */
   items: { productId: string; qty: number; options?: Record<string, string> }[]
@@ -234,7 +244,7 @@ interface StoreValue {
   /** Published products for the public shop (visitors aren't signed in, so they don't have `data`). */
   loadCatalog: () => Promise<Product[]>
   /** Places a store order for anyone; throws with a message the customer can act on. */
-  placeOrder: (o: OrderInput) => Promise<{ number: number; total: number }>
+  placeOrder: (o: OrderInput) => Promise<PlacedOrder>
   /** Anyone, signed in or not: send a maintenance request (with photos) to the office. */
   submitLead: (l: LeadInput) => Promise<{ number: number }>
   leadPhotoUrls: (paths: string[]) => Promise<string[]>
@@ -271,6 +281,13 @@ interface StoreValue {
    * listing switched if it ran out or came back); with a link, it's only read.
    */
   checkSupplierStock: (target: { productId: string } | { url: string }) => Promise<SupplierStock>
+  /** QuickBooks: whether it's connected; the sign-in address to connect; disconnect; retry an order's invoice. */
+  quickBooksStatus: () => Promise<QuickBooksStatus>
+  connectQuickBooks: () => Promise<string>
+  disconnectQuickBooks: () => Promise<void>
+  retryInvoice: (orderId: string) => Promise<void>
+  /** A just-placed order's invoice (its number and pay link), for the confirmation screen. */
+  orderInvoice: (orderId: string, email: string) => Promise<{ status: OrderInvoiceStatus; number: string; payLink: string } | null>
   /** Admins: create a project, with its client and property if they're new. Throws with a message if it can't be saved. */
   createProject: (p: NewProject) => Promise<Project>
   /** Message one person's inbox (admins). */
@@ -940,7 +957,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const placeOrder = useCallback(
-    async (o: OrderInput): Promise<{ number: number; total: number }> => {
+    async (o: OrderInput): Promise<PlacedOrder> => {
       if (supabase) {
         const { data: res, error } = await supabase.rpc('place_order', {
           p_items: o.items.map((i) => ({ product_id: i.productId, qty: i.qty, options: i.options ?? {} })),
@@ -953,8 +970,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         })
         if (error) throw new Error(error.message)
         if (user) await refresh()
-        const r = res as { number: number; total: number | string }
-        return { number: r.number, total: Number(r.total) }
+        const r = res as { id: string; number: number; total: number | string }
+        return { id: r.id, number: r.number, total: Number(r.total), email: o.email.trim() }
       }
       // Demo mode follows the same rules as the database.
       const d0 = dataRef.current
@@ -999,9 +1016,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (bad.length) throw new Error(`No longer available: ${bad.join(', ')}`)
       const total = items.reduce((s, i) => s + i.unitPrice * i.qty, 0)
       const number = Math.max(5000, ...d0.orders.map((x) => x.number)) + 1
+      const id = uid('o')
       update((d) => {
         d.orders.unshift({
-          id: uid('o'),
+          id,
           number,
           customerId: user?.id,
           name: o.name.trim(),
@@ -1030,7 +1048,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           })
         }
       })
-      return { number, total }
+      return { id, number, total, email: o.email.trim() }
     },
     [update, refresh, user],
   )
@@ -1254,6 +1272,54 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return demoPhoto(`${colour} (demo)`, [...colour].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 0))
   }, [])
 
+  const quickBooksFn = useCallback(async (body: object) => {
+    const { data: auth } = await supabase!.auth.getSession()
+    const res = await fetch(`${FUNCTIONS_URL}/quickbooks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: ANON_KEY, Authorization: `Bearer ${auth.session?.access_token ?? ANON_KEY}` },
+      body: JSON.stringify(body),
+    })
+    const json = await res.json().catch(() => null)
+    if (!res.ok || !json) throw new Error(json?.error ?? `QuickBooks couldn’t be reached (${res.status}). Try again.`)
+    return json
+  }, [])
+
+  const quickBooksStatus = useCallback(async (): Promise<QuickBooksStatus> => {
+    if (!supabase) return { connected: false }
+    const { data, error } = await supabase.rpc('qbo_status')
+    if (error) throw new Error(error.message)
+    const r = (data ?? {}) as { connected?: boolean; company?: string; connected_at?: string; last_error?: string }
+    return { connected: !!r.connected, company: r.company || undefined, connectedAt: r.connected_at || undefined, lastError: r.last_error || undefined }
+  }, [])
+
+  const connectQuickBooks = useCallback(async () => {
+    if (!supabase) throw new Error('QuickBooks connects in live mode only.')
+    return ((await quickBooksFn({ action: 'connect' })) as { url: string }).url
+  }, [quickBooksFn])
+
+  const disconnectQuickBooks = useCallback(async () => {
+    if (!supabase) return
+    await quickBooksFn({ action: 'disconnect' })
+  }, [quickBooksFn])
+
+  const retryInvoice = useCallback(
+    async (orderId: string) => {
+      if (!supabase) return
+      const { error } = await supabase.rpc('retry_order_invoice', { p_id: orderId })
+      if (error) throw new Error(error.message)
+      await refresh()
+    },
+    [refresh],
+  )
+
+  const orderInvoice = useCallback(async (orderId: string, email: string) => {
+    if (!supabase) return null
+    const { data, error } = await supabase.rpc('order_invoice', { p_id: orderId, p_email: email })
+    if (error || !data) return null
+    const r = data as { status: OrderInvoiceStatus; number: string; pay_link: string }
+    return { status: r.status, number: r.number, payLink: r.pay_link }
+  }, [])
+
   const checkSupplierStock = useCallback(
     async (target: { productId: string } | { url: string }): Promise<SupplierStock> => {
       if (supabase) {
@@ -1420,6 +1486,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     recreatePhotos,
     colourPhoto,
     checkSupplierStock,
+    quickBooksStatus,
+    connectQuickBooks,
+    disconnectQuickBooks,
+    retryInvoice,
+    orderInvoice,
     assignRequest,
     pushInbox,
     pushAdminInbox,

@@ -1,8 +1,8 @@
-import { Fragment, useState, type FormEvent } from 'react'
+import { Fragment, useEffect, useState, type FormEvent } from 'react'
 import { ExternalLink, Package, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { Empty, Field, Modal, PageHeader, PhotoInput, Status, Tabs, type Tone } from '../../components/ui'
 import { useLookup, useStore } from '../../lib/store'
-import { ORDER_STATUS_LABEL, STOCK_LABEL, STORE_CATEGORIES, SUPPLIER_STOCK_LABEL, type OrderStatus, type OptionPrice, type PriceChange, type Pricing, type Product, type ProductOption, type ProductSource, type StoreOrder, type SupplierStock } from '../../lib/types'
+import { ORDER_STATUS_LABEL, STOCK_LABEL, STORE_CATEGORIES, SUPPLIER_STOCK_LABEL, type OrderStatus, type OrderInvoiceStatus, type QuickBooksStatus, ORDER_INVOICE_LABEL, type OptionPrice, type PriceChange, type Pricing, type Product, type ProductOption, type ProductSource, type StoreOrder, type SupplierStock } from '../../lib/types'
 import { cx, fmtDate, fmtDateTime, money, uid } from '../../lib/utils'
 import { ProductAssistant } from './ProductAssistant'
 import { CLOUD } from '../../lib/supabase'
@@ -98,6 +98,95 @@ export function AdminStore() {
   )
 }
 
+const INVOICE_TONE: Record<OrderInvoiceStatus, Tone> = {
+  pending: 'slate',
+  working: 'slate',
+  sent: 'outline',
+  failed: 'red',
+  paid: 'green',
+  voided: 'slate',
+  refund_needed: 'orange',
+  skipped: 'slate',
+}
+
+const QB_RETURN: Record<string, string> = {
+  connected: 'QuickBooks is connected. New orders are invoiced and emailed straight away.',
+  declined: 'QuickBooks wasn’t connected: the connection was declined.',
+  expired: 'That QuickBooks sign-in had expired or didn’t match. Click Connect QuickBooks to try again.',
+  error: 'QuickBooks couldn’t be connected. Try again, and check the app’s keys in the Supabase secrets.',
+}
+
+/**
+ * The QuickBooks connection: when connected, every order placed in the shop is invoiced in
+ * QuickBooks straight away and QuickBooks emails the invoice, with its pay link, to the customer.
+ */
+function QuickBooksCard() {
+  const { quickBooksStatus, connectQuickBooks, disconnectQuickBooks, cloud } = useStore()
+  const [status, setStatus] = useState<QuickBooksStatus | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  // Coming back from QuickBooks' sign-in: what happened.
+  const [returned] = useState(() => new URLSearchParams(window.location.hash.split('?')[1] ?? '').get('quickbooks'))
+  useEffect(() => {
+    let live = true
+    quickBooksStatus().then((s) => live && setStatus(s)).catch((e: Error) => live && setError(e.message))
+    if (returned) window.history.replaceState(null, '', window.location.pathname + window.location.hash.split('?')[0])
+    return () => {
+      live = false
+    }
+  }, [quickBooksStatus, returned])
+  const connect = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      window.location.assign(await connectQuickBooks())
+    } catch (e) {
+      setError((e as Error).message)
+      setBusy(false)
+    }
+  }
+  const disconnect = async () => {
+    if (!confirm('Disconnect QuickBooks? New orders won’t be invoiced until it’s connected again.')) return
+    setBusy(true)
+    try {
+      await disconnectQuickBooks()
+      setStatus({ connected: false })
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <section className="card mb-4 p-4" aria-label="QuickBooks">
+      {returned && QB_RETURN[returned] && (
+        <p role="status" className={cx('mb-3 rounded-md p-2.5 text-sm', returned === 'connected' ? 'bg-emerald-50 text-emerald-900' : 'bg-amber-50 text-amber-900')}>{QB_RETURN[returned]}</p>
+      )}
+      <div className="flex flex-wrap items-center gap-3">
+        <p className="font-semibold">QuickBooks</p>
+        {!cloud ? (
+          <span className="text-sm text-slate-500">Connects in live mode: orders are then invoiced in QuickBooks and emailed with a pay link.</span>
+        ) : !status ? (
+          <span className="text-sm text-slate-500">Checking…</span>
+        ) : status.connected ? (
+          <>
+            <Status tone="green">Connected{status.company ? ` to ${status.company}` : ''}</Status>
+            <span className="text-sm text-slate-600">Orders are invoiced and emailed with a pay link as they’re placed.</span>
+            <button type="button" className="btn-ghost ml-auto px-3 py-1 text-xs" disabled={busy} onClick={() => void disconnect()}>Disconnect</button>
+          </>
+        ) : (
+          <>
+            <span className="text-sm text-slate-600">Not connected. Connect it to invoice orders in QuickBooks automatically and email customers a pay link.</span>
+            <button type="button" className="btn-primary ml-auto px-3 py-1.5 text-sm" disabled={busy} onClick={() => void connect()}>{busy ? 'Opening QuickBooks…' : 'Connect QuickBooks'}</button>
+          </>
+        )}
+      </div>
+      {status?.lastError && <p className="mt-2 text-sm text-red-600">{status.lastError}</p>}
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+    </section>
+  )
+}
+
 function Orders() {
   const { data } = useStore()
   const lk = useLookup()
@@ -107,6 +196,7 @@ function Orders() {
   const open = data.orders.find((o) => o.id === openId)
   return (
     <>
+      <QuickBooksCard />
       <div className="mb-3 flex gap-2 text-sm">
         {(['open', 'all'] as const).map((s) => (
           <button key={s} className={cx('rounded-md px-3 py-1', show === s ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100')} onClick={() => setShow(s)}>
@@ -126,6 +216,7 @@ function Orders() {
                 <th className="th">Items</th>
                 <th className="th text-right">Total</th>
                 <th className="th">Status</th>
+                <th className="th">Invoice</th>
                 <th className="th" />
               </tr>
             </thead>
@@ -146,6 +237,16 @@ function Orders() {
                   <td className="td text-sm text-slate-600">{o.items.map((i) => `${i.qty} × ${i.title}${i.options ? ` (${i.options})` : ''}`).join(', ')}</td>
                   <td className="td num text-right">{money(o.total)}</td>
                   <td className="td"><Status tone={ORDER_TONE[o.status]}>{ORDER_STATUS_LABEL[o.status]}</Status></td>
+                  <td className="td">
+                    {o.invoice && o.invoice.status !== 'skipped' ? (
+                      <>
+                        <Status tone={INVOICE_TONE[o.invoice.status]}>{ORDER_INVOICE_LABEL[o.invoice.status]}</Status>
+                        {o.invoice.number && <p className="num mt-0.5 text-xs text-slate-500">#{o.invoice.number}</p>}
+                      </>
+                    ) : (
+                      <span className="text-xs text-slate-400">—</span>
+                    )}
+                  </td>
                   <td className="td text-right"><button className="btn-ghost px-3 py-1.5" onClick={() => setOpenId(o.id)}>Open</button></td>
                 </tr>
               ))}
@@ -155,6 +256,51 @@ function Orders() {
       )}
       {open && <OrderDetail key={open.id} order={open} onClose={() => setOpenId(null)} />}
     </>
+  )
+}
+
+/** The order's QuickBooks invoice: its number, status and pay link, why it failed, and Retry. */
+function OrderInvoicePanel({ order }: { order: StoreOrder }) {
+  const { retryInvoice } = useStore()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const inv = order.invoice
+  if (!inv) return null
+  const retry = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      await retryInvoice(order.id)
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <section className="mt-4 rounded-md border border-slate-200 p-3 text-sm" aria-label="QuickBooks invoice">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-semibold">QuickBooks invoice</span>
+        <Status tone={INVOICE_TONE[inv.status]}>{ORDER_INVOICE_LABEL[inv.status]}</Status>
+        {inv.number && <span className="num text-slate-600">#{inv.number}</span>}
+        {inv.payLink && (
+          <a className="ml-auto font-semibold underline" href={inv.payLink} target="_blank" rel="noreferrer">
+            Pay link
+          </a>
+        )}
+        {(inv.status === 'failed' || inv.status === 'skipped') && order.status !== 'cancelled' && (
+          <button type="button" className="btn-ghost ml-auto px-3 py-1 text-xs" disabled={busy} onClick={() => void retry()}>
+            {busy ? 'Retrying…' : inv.status === 'skipped' ? 'Invoice it now' : 'Retry'}
+          </button>
+        )}
+      </div>
+      {inv.status === 'sent' && <p className="mt-1 text-slate-600">Emailed to {order.email} with the pay link. It’s marked paid here once it’s paid in QuickBooks.</p>}
+      {(inv.status === 'pending' || inv.status === 'working') && <p className="mt-1 text-slate-600">Being created in QuickBooks; it’s emailed to the customer within a minute.</p>}
+      {inv.status === 'refund_needed' && <p className="mt-1 text-amber-800">Cancelled after the customer paid. Refund them, then record the refund in QuickBooks.</p>}
+      {inv.status === 'skipped' && <p className="mt-1 text-slate-600">Not invoiced: placed before QuickBooks was connected, or cancelled first.</p>}
+      {inv.error && <p className="mt-1 text-red-600">{inv.error}</p>}
+      {error && <p className="mt-1 text-red-600">{error}</p>}
+    </section>
   )
 }
 
@@ -205,11 +351,17 @@ function OrderDetail({ order, onClose }: { order: StoreOrder; onClose: () => voi
         </tbody>
       </table>
       {order.notes && <p className="mt-3 rounded-md bg-slate-50 p-3 text-sm text-slate-700"><span className="font-semibold">Customer notes: </span>{order.notes}</p>}
+      <OrderInvoicePanel order={order} />
       <form className="mt-5 grid gap-4 border-t border-slate-200 pt-4 sm:grid-cols-2" onSubmit={save}>
         <Field label="Status">
           <select className="input" value={status} onChange={(e) => setStatus(e.target.value as OrderStatus)}>
             {(Object.keys(ORDER_STATUS_LABEL) as OrderStatus[]).map((s) => <option key={s} value={s}>{ORDER_STATUS_LABEL[s]}</option>)}
           </select>
+          {status === 'cancelled' && order.status !== 'cancelled' && (order.invoice?.status === 'sent' || order.invoice?.status === 'paid') && (
+            <span className="mt-1 block text-xs text-amber-800">
+              {order.invoice.status === 'paid' ? 'It’s been paid: saving flags a refund for you to make.' : 'Saving voids its QuickBooks invoice.'}
+            </span>
+          )}
         </Field>
         <Field label="Office notes (only admins see these)" className="sm:col-span-2">
           <textarea className="input min-h-[70px]" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Invoice number, delivery date, supplier order…" />
