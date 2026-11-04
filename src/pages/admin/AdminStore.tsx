@@ -107,6 +107,7 @@ const INVOICE_TONE: Record<OrderInvoiceStatus, Tone> = {
   voided: 'slate',
   refund_needed: 'orange',
   skipped: 'slate',
+  held: 'orange',
 }
 
 const QB_RETURN: Record<string, string> = {
@@ -150,7 +151,7 @@ function QuickBooksCard() {
     setBusy(true)
     try {
       await disconnectQuickBooks()
-      setStatus({ connected: false })
+      setStatus((s) => (s ? { ...s, connected: false, company: undefined } : s))
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -183,7 +184,50 @@ function QuickBooksCard() {
       </div>
       {status?.lastError && <p className="mt-2 text-sm text-red-600">{status.lastError}</p>}
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+      {cloud && status && <InvoiceLimits status={status} onSaved={setStatus} />}
     </section>
+  )
+}
+
+/**
+ * Limits on automatic invoices: an order over the largest amount, or past the day's number, waits
+ * for the office to approve it (it's still placed, and the customer still gets the confirmation).
+ */
+function InvoiceLimits({ status, onSaved }: { status: QuickBooksStatus; onSaved: (s: QuickBooksStatus) => void }) {
+  const { setQuickBooksLimits } = useStore()
+  const [daily, setDaily] = useState(String(status.dailyLimit))
+  const [max, setMax] = useState(String(status.maxTotal))
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const changed = Number(daily) !== status.dailyLimit || Number(max) !== status.maxTotal
+  const save = async (e: FormEvent) => {
+    e.preventDefault()
+    setMsg(null)
+    const d = Number(daily)
+    const m = Number(max)
+    if (!Number.isInteger(d) || d < 0 || d > 1000) return setMsg({ ok: false, text: 'Invoices a day must be a whole number from 0 to 1000.' })
+    if (!Number.isFinite(m) || m < 0) return setMsg({ ok: false, text: 'Enter the largest amount in dollars.' })
+    try {
+      await setQuickBooksLimits(d, m)
+      onSaved({ ...status, dailyLimit: d, maxTotal: m })
+      setMsg({ ok: true, text: 'Limits saved.' })
+    } catch (err) {
+      setMsg({ ok: false, text: (err as Error).message })
+    }
+  }
+  return (
+    <form className="mt-3 flex flex-wrap items-end gap-3 border-t border-slate-100 pt-3 text-sm" onSubmit={save} aria-label="Automatic invoice limits">
+      <p className="w-full text-slate-600">
+        <span className="font-semibold text-slate-800">Automatic invoice limits.</span> Orders past these wait for you to approve their invoice (set invoices a day to 0 to approve every one).
+      </p>
+      <Field label="Invoices a day">
+        <input className="input w-28" inputMode="numeric" value={daily} onChange={(e) => setDaily(e.target.value)} />
+      </Field>
+      <Field label="Largest invoice ($, inc. GST)">
+        <input className="input w-36" inputMode="decimal" value={max} onChange={(e) => setMax(e.target.value)} />
+      </Field>
+      <button type="submit" className="btn-ghost px-3 py-1.5" disabled={!changed}>Save limits</button>
+      {msg && <span className={msg.ok ? 'text-emerald-700' : 'text-red-600'}>{msg.text}</span>}
+    </form>
   )
 }
 
@@ -288,9 +332,9 @@ function OrderInvoicePanel({ order }: { order: StoreOrder }) {
             Pay link
           </a>
         )}
-        {(inv.status === 'failed' || inv.status === 'skipped') && order.status !== 'cancelled' && (
-          <button type="button" className="btn-ghost ml-auto px-3 py-1 text-xs" disabled={busy} onClick={() => void retry()}>
-            {busy ? 'Retrying…' : inv.status === 'skipped' ? 'Invoice it now' : 'Retry'}
+        {(inv.status === 'failed' || inv.status === 'skipped' || inv.status === 'held') && order.status !== 'cancelled' && (
+          <button type="button" className={cx('ml-auto px-3 py-1 text-xs', inv.status === 'held' ? 'btn-primary' : 'btn-ghost')} disabled={busy} onClick={() => void retry()}>
+            {busy ? 'Working…' : inv.status === 'held' ? 'Approve and invoice' : inv.status === 'skipped' ? 'Invoice it now' : 'Retry'}
           </button>
         )}
       </div>
@@ -298,7 +342,7 @@ function OrderInvoicePanel({ order }: { order: StoreOrder }) {
       {(inv.status === 'pending' || inv.status === 'working') && <p className="mt-1 text-slate-600">Being created in QuickBooks; it’s emailed to the customer within a minute.</p>}
       {inv.status === 'refund_needed' && <p className="mt-1 text-amber-800">Cancelled after the customer paid. Refund them, then record the refund in QuickBooks.</p>}
       {inv.status === 'skipped' && <p className="mt-1 text-slate-600">Not invoiced: placed before QuickBooks was connected, or cancelled first.</p>}
-      {inv.error && <p className="mt-1 text-red-600">{inv.error}</p>}
+      {inv.error && <p className={cx('mt-1', inv.status === 'held' ? 'text-amber-800' : 'text-red-600')}>{inv.error}</p>}
       {error && <p className="mt-1 text-red-600">{error}</p>}
     </section>
   )

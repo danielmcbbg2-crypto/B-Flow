@@ -1666,4 +1666,34 @@ describe('quickbooks invoices', () => {
     await asUser(uid.admin, `select retry_order_invoice('${id}')`)
     assert.deepEqual((await pool.query(`select invoice_status, invoice_attempts, invoice_error from orders where id = $1`, [id])).rows[0], { invoice_status: 'pending', invoice_attempts: 0, invoice_error: '' })
   })
+
+  test('orders past the automatic invoice limits wait for the office to approve them', async () => {
+    await assert.rejects(asUser(uid.sarah, `select qbo_set_limits(5, 100)`), /permission/)
+    await assert.rejects(asUser(uid.admin, `select qbo_set_limits(-1, 100)`), /between 0 and 1000/)
+    // Too large for an automatic invoice: held, and the store managers told.
+    await asUser(uid.admin, `select qbo_set_limits(1000, 1)`)
+    const s = (await asUser<{ s: { daily_limit: number; max_total: number } }>(uid.admin, `select qbo_status() as s`)).rows[0].s
+    assert.deepEqual([s.daily_limit, Number(s.max_total)], [1000, 1])
+    const big = await order('big@example.com')
+    await pool.query(`select id from claim_order_invoices(50)`)
+    const held = (await pool.query(`select invoice_status, invoice_error, number from orders where id = $1`, [big])).rows[0]
+    assert.equal(held.invoice_status, 'held')
+    assert.equal(held.invoice_error, 'Over the $1.00 limit for automatic invoices: approve it to send the invoice.')
+    assert.equal(Number((await pool.query(`select count(*) from inbox where title = $1`, [`Order #${held.number}: approve its invoice`])).rows[0].count) > 0, true)
+    // Nobody but the server can approve it by editing the order.
+    await asUser(uid.admin, `update orders set invoice_approved = true, invoice_status = 'pending' where id = '${big}'`)
+    assert.equal((await pool.query(`select invoice_status || ' ' || invoice_approved as v from orders where id = $1`, [big])).rows[0].v, 'held false')
+    // The office approves it: it's invoiced whatever the limits.
+    await asUser(uid.admin, `select retry_order_invoice('${big}')`)
+    assert.ok((await pool.query(`select id from claim_order_invoices(50)`)).rows.some((r) => r.id === big))
+    // The day's number reached: the next one waits too.
+    const used = Number((await pool.query(`select count(*) from orders where invoice_auto_at > now() - interval '24 hours'`)).rows[0].count)
+    await asUser(uid.admin, `select qbo_set_limits(${used}, 100000)`)
+    const next = await order('next@example.com')
+    await pool.query(`select id from claim_order_invoices(50)`)
+    assert.equal((await pool.query(`select invoice_error from orders where id = $1`, [next])).rows[0].invoice_error, `The day’s ${used} automatic invoices have been sent: approve it to send the invoice.`)
+    await asUser(uid.admin, `select qbo_set_limits(${used + 1}, 100000)`)
+    const third = await order('third@example.com')
+    assert.ok((await pool.query(`select id from claim_order_invoices(50)`)).rows.some((r) => r.id === third), 'under the limit again')
+  })
 })

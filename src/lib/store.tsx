@@ -285,6 +285,7 @@ interface StoreValue {
   quickBooksStatus: () => Promise<QuickBooksStatus>
   connectQuickBooks: () => Promise<string>
   disconnectQuickBooks: () => Promise<void>
+  setQuickBooksLimits: (dailyLimit: number, maxTotal: number) => Promise<void>
   retryInvoice: (orderId: string) => Promise<void>
   /** A just-placed order's invoice (its number and pay link), for the confirmation screen. */
   orderInvoice: (orderId: string, email: string) => Promise<{ status: OrderInvoiceStatus; number: string; payLink: string } | null>
@@ -1285,11 +1286,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const quickBooksStatus = useCallback(async (): Promise<QuickBooksStatus> => {
-    if (!supabase) return { connected: false }
+    if (!supabase) return { connected: false, dailyLimit: 20, maxTotal: 5000 }
     const { data, error } = await supabase.rpc('qbo_status')
     if (error) throw new Error(error.message)
-    const r = (data ?? {}) as { connected?: boolean; company?: string; connected_at?: string; last_error?: string }
-    return { connected: !!r.connected, company: r.company || undefined, connectedAt: r.connected_at || undefined, lastError: r.last_error || undefined }
+    const r = (data ?? {}) as { connected?: boolean; company?: string; connected_at?: string; last_error?: string; daily_limit?: number; max_total?: number | string }
+    return {
+      connected: !!r.connected,
+      company: r.company || undefined,
+      connectedAt: r.connected_at || undefined,
+      lastError: r.last_error || undefined,
+      dailyLimit: r.daily_limit ?? 20,
+      maxTotal: Number(r.max_total ?? 5000),
+    }
+  }, [])
+
+  const setQuickBooksLimits = useCallback(async (dailyLimit: number, maxTotal: number) => {
+    if (!supabase) throw new Error('QuickBooks connects in live mode only.')
+    const { error } = await supabase.rpc('qbo_set_limits', { p_daily: dailyLimit, p_max: maxTotal })
+    if (error) throw new Error(error.message)
   }, [])
 
   const connectQuickBooks = useCallback(async () => {
@@ -1489,6 +1503,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     quickBooksStatus,
     connectQuickBooks,
     disconnectQuickBooks,
+    setQuickBooksLimits,
     retryInvoice,
     orderInvoice,
     assignRequest,

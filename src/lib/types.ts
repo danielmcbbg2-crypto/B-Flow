@@ -541,7 +541,7 @@ export interface StoreOrder {
   invoice?: OrderInvoice
 }
 
-export type OrderInvoiceStatus = 'pending' | 'working' | 'sent' | 'failed' | 'paid' | 'voided' | 'refund_needed' | 'skipped'
+export type OrderInvoiceStatus = 'pending' | 'working' | 'sent' | 'failed' | 'paid' | 'voided' | 'refund_needed' | 'skipped' | 'held'
 export const ORDER_INVOICE_LABEL: Record<OrderInvoiceStatus, string> = {
   pending: 'Being invoiced',
   working: 'Being invoiced',
@@ -550,6 +550,7 @@ export const ORDER_INVOICE_LABEL: Record<OrderInvoiceStatus, string> = {
   paid: 'Paid',
   voided: 'Invoice voided',
   refund_needed: 'Refund needed',
+  held: 'Awaiting approval',
   skipped: 'Not invoiced',
 }
 
@@ -566,6 +567,9 @@ export interface QuickBooksStatus {
   company?: string
   connectedAt?: string
   lastError?: string
+  /** Limits on automatic invoices: how many in 24 hours, and the largest (inc. GST). Past them, an order waits for approval. */
+  dailyLimit: number
+  maxTotal: number
 }
 
 /** A product the AI assistant found on the web. */

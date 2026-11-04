@@ -12,8 +12,10 @@
 //
 // Secrets: QBO_CLIENT_ID and QBO_CLIENT_SECRET (from the app made at developer.intuit.com), and
 // QBO_ENVIRONMENT=sandbox while testing with a sandbox company. The connection's tokens are kept in
-// public.qbo_connection, which only the server can read.
+// public.qbo_connection, which only the server can read, and are encrypted there (seal.ts) with a key
+// only this function has (QBO_TOKEN_KEY, or one derived from QBO_CLIENT_SECRET).
 import { createClient } from 'npm:@supabase/supabase-js@2.49.4'
+import { seal, tokenKey, unseal } from './seal.ts'
 import { customerBody, displayName, invoiceBody, qboError, qboErrorCode, quoted, type ItemRow, type OrderRow } from './invoice.ts'
 
 const cors = {
@@ -47,12 +49,29 @@ type Conn = {
   last_paid_check: string | null
 }
 
+const TOKENS = ['refresh_token', 'access_token'] as const
+let keyPromise: Promise<CryptoKey> | null = null
+const key = () => (keyPromise ??= tokenKey(CLIENT_SECRET, Deno.env.get('QBO_TOKEN_KEY') ?? ''))
+
+/** The connection, with its tokens unlocked. A token that can't be unlocked (the key changed) means connecting again. */
 async function loadConn(): Promise<Conn | null> {
   const { data } = await db.from('qbo_connection').select('*').eq('id', 1).maybeSingle()
-  return (data as Conn | null) ?? null
+  const conn = (data as Conn | null) ?? null
+  if (!conn?.refresh_token) return conn
+  try {
+    for (const f of TOKENS) if (conn[f]) conn[f] = await unseal(await key(), f, conn[f]!)
+  } catch {
+    conn.refresh_token = null
+    conn.access_token = null
+    await saveConn({ refresh_token: null, access_token: null, access_expires_at: null, last_error: 'The saved QuickBooks connection can’t be unlocked (its key has changed). Connect QuickBooks again.' })
+  }
+  return conn
 }
+/** Saves to the connection; its tokens are locked first. */
 const saveConn = async (patch: Record<string, unknown>) => {
-  const { error } = await db.from('qbo_connection').upsert({ id: 1, ...patch })
+  const row: Record<string, unknown> = { id: 1, ...patch }
+  for (const f of TOKENS) if (typeof row[f] === 'string') row[f] = await seal(await key(), f, row[f] as string)
+  const { error } = await db.from('qbo_connection').upsert(row)
   if (error) throw new Error(`Couldn't save the QuickBooks connection (${error.message})`)
 }
 
@@ -154,7 +173,7 @@ async function adminsNote(title: string, body: string) {
 
 /** Creates the order's invoice in QuickBooks and has QuickBooks email it. */
 async function invoiceOrder(conn: Conn, o: OrderRow & { qbo_invoice_id: string | null; invoice_attempts: number }) {
-  const { data: items, error } = await db.from('order_items').select('title, sku, unit_price, qty, options').eq('order_id', o.id).order('id')
+  const { data: items, error } = await db.from('order_items').select('title, sku, unit_price, qty, options').eq('order_id', o.id).order('seq')
   if (error) throw new Error(error.message)
   await setup(conn)
   let invoiceId = o.qbo_invoice_id
