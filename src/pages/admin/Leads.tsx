@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Camera, Mail, Phone, Trash2, UserPlus } from 'lucide-react'
+import { Camera, ExternalLink, Mail, Phone, Trash2, UserPlus } from 'lucide-react'
 import { Empty, Field, Modal, PageHeader, Sep, Tabs } from '../../components/ui'
 import { TextButton } from '../../components/TextMessage'
 import { useStore } from '../../lib/store'
@@ -84,6 +84,7 @@ export function Leads() {
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="num text-xs text-slate-500">#{l.number}</span>
                     <UrgencyTag l={l} />
+                    {l.source === 'service.com.au' && <span className="bg-sky-100 px-1.5 py-0.5 text-[11px] font-semibold text-sky-800">Service.com.au</span>}
                     {l.status === 'won' || l.status === 'lost' ? <span className="text-xs text-slate-500">· {LEAD_STATUS_LABEL[l.status]}</span> : null}
                   </div>
                   <p className="mt-0.5 font-semibold">
@@ -178,6 +179,11 @@ function LeadDetail({ lead, onClose }: { lead: Lead; onClose: () => void }) {
           )}
         </p>
         <div className="flex flex-wrap gap-2">
+          {lead.jobUrl && (
+            <a className="btn-ghost" href={lead.jobUrl} target="_blank" rel="noreferrer">
+              <ExternalLink size={15} /> Open on Service.com.au
+            </a>
+          )}
           {lead.phone && (
             <a className={lead.contactBy === 'phone' ? 'btn-primary' : 'btn-ghost'} href={`tel:${digits(lead.phone)}`}>
               <Phone size={15} /> {lead.phone}

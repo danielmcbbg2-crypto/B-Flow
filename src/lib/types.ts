@@ -598,6 +598,10 @@ export interface Lead {
   notes: string
   /** The client account made from this lead. */
   clientId?: string
+  /** Where it came from: 'website' (the quote form) or 'service.com.au' (a job alert). */
+  source?: string
+  /** The job on the lead site, for leads from one. */
+  jobUrl?: string
   createdAt: string
 }
 
