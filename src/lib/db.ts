@@ -961,6 +961,8 @@ export async function fetchAll(db: DbAdapter): Promise<AppData> {
       status: r.status as Lead['status'],
       notes: r.notes as string,
       clientId: opt(r.client_id as string | null),
+      source: opt(r.source as string | null),
+      jobUrl: opt(r.job_url as string | null),
       createdAt: r.created_at as string,
     })),
     texts: texts.sort(newestFirst('opened_at')).map((r) => ({
