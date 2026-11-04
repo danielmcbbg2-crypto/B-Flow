@@ -49,8 +49,8 @@ export function useHashRoute(): string[] {
 /** Goes to a page: public pages by their real address, portal pages by hash (on the site's root). */
 export function navigate(path: string) {
   const p = path.startsWith('/') ? path : `/${path}`
-  const url = isPublicPath(p) ? p : `/#${p}`
-  if (url === window.location.pathname + window.location.hash) return
+  const url = isPublicPath(p.split(/[?#]/)[0]) ? p : `/#${p}`
+  if (url === window.location.pathname + window.location.search + window.location.hash) return
   window.history.pushState(null, '', url)
   window.dispatchEvent(new Event(ROUTE_EVENT))
 }

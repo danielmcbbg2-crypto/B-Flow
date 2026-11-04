@@ -52,7 +52,7 @@ const DRAFT_SYSTEM = `${BUSINESS}
 
 You draft listings for the store for the owner to review. Read the product page with web_fetch, then call save_listing once with:
 - title: clear and specific (brand, product type, key size or finish), under 80 characters.
-- description: 120 to 200 words in plain Australian English, written in your own words (never copy the supplier's text), as flowing paragraphs with no bullet points: what it is, who it suits, finish and materials, and what is included. End with one sentence saying Next Phase Maintenance can supply it, and install it with licensed trades.
+- description: 120 to 200 words in plain Australian English, written in your own words (never copy the supplier's text), as flowing paragraphs with no bullet points: what it is, who it suits, finish and materials, and what is included. End with one sentence saying Next Phase Maintenance can supply it on its own, or supply and install it across Melbourne. Don't claim who does the installation (e.g. licensed trades); the shop says that separately once confirmed.
 - specs: short facts stated on the page, one per item as "Label: value" (e.g. "Dimensions: 750 W x 460 D x 550 H mm", "Material: Solid brass", "Included: 2 x flexible hoses"). Put the dimensions first.
 - highlights: 3 to 6 short selling points (under 70 characters each) a buyer cares about, each supported by the page.
 - seo_title: 30 to 60 characters for search results: product type, key size or finish and one distinguishing feature, e.g. "750mm Oak Wall Hung Vanity, Soft-Close Drawers". No shop name, no "best" or "cheapest".

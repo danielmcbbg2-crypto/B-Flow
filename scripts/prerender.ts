@@ -11,7 +11,7 @@ import { dirname, join } from 'node:path'
 import { BRAND } from '../src/lib/brand'
 import { complianceFacts, DEFAULT_SITE_URL, HOME_META, pageTitle, productMeta, productPath, STORE_META, breadcrumbJsonLd, businessJsonLd, type PageMeta, type ProductForSeo } from '../src/lib/seo'
 import { SERVICE_PAGES, servicePath } from '../src/lib/services'
-import { ACL_GUARANTEE, STORE_INFO_PAGES } from '../src/lib/storePolicy'
+import { STORE_INFO_PAGES, storeInfoSections } from '../src/lib/storePolicy'
 
 const DIST = 'dist'
 const SITE = (process.env.VITE_SITE_URL || DEFAULT_SITE_URL).replace(/\/+$/, '')
@@ -124,7 +124,9 @@ for (const info of STORE_INFO_PAGES) {
     path,
     render(
       { title: info.title, description: info.description, path, jsonLd: [breadcrumbJsonLd(SITE, [{ name: 'Home', path: '/' }, { name: 'Shop', path: '/store' }, { name: info.name, path }])] },
-      `<main><h1>${esc(info.title)}</h1><p>${esc(info.description)}</p>${info.slug === 'returns' ? `<p>${esc(ACL_GUARANTEE)}</p>` : ''}${link('/store', 'Back to the shop')}${nav}</main>`,
+      `<main><h1>${esc(info.title)}</h1>${storeInfoSections(info.slug)
+        .map((sec) => `<h2>${esc(sec.title)}</h2>${sec.paragraphs.map((t) => `<p>${esc(t).replace('{email}', link(`mailto:${BRAND.email}`, BRAND.email)).replace('{phone}', esc(BRAND.phone))}</p>`).join('')}`)
+        .join('')}${link('/store', 'Back to the shop')}${nav}</main>`,
     ),
   )
   pages.push({ path })

@@ -118,7 +118,7 @@ export function ListingDetails({ p, price, set }: { p: Product; price: number; s
           <textarea className="input min-h-[60px]" maxLength={180} value={p.metaDescription ?? ''} onChange={(e) => set({ metaDescription: e.target.value })} />
         </label>
         <Field label="Barcode (GTIN/EAN, if any)">
-          <input className="input num" inputMode="numeric" value={p.gtin ?? ''} onChange={(e) => set({ gtin: e.target.value.replace(/\D/g, '') })} />
+          <input className="input num" inputMode="numeric" maxLength={14} value={p.gtin ?? ''} onChange={(e) => set({ gtin: e.target.value.replace(/\D/g, '') })} />
         </Field>
         {p.images.map((src, i) => (
           <label key={src} className="flex items-start gap-3 sm:col-span-2">

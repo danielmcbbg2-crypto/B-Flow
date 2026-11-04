@@ -74,7 +74,7 @@ function details(p: Row): [string, string, string][] {
   return out.filter(([, n, v]) => n && v)
 }
 
-function item(p: Row, restockDate: string): string {
+function item(p: Row): string {
   const images = (p.images ?? []).filter((u) => /^https:\/\//.test(u))
   const brand = clean(p.brand, 70)
   const sku = clean(p.sku, 70)
@@ -87,8 +87,7 @@ function item(p: Row, restockDate: string): string {
     ['g:link', `${STORE}${productPath(p)}`],
     ['g:image_link', images[0] ?? ''],
     ...images.slice(1, 11).map((u): [string, string] => ['g:additional_image_link', u]),
-    ['g:availability', p.stock === 'in_stock' ? 'in_stock' : p.stock === 'to_order' ? 'backorder' : 'out_of_stock'],
-    ...(p.stock === 'to_order' ? [['g:availability_date', restockDate] as [string, string]] : []),
+    ['g:availability', p.stock === 'in_stock' ? 'in_stock' : 'out_of_stock'],
     ['g:price', `${shownPrice(p).toFixed(2)} AUD`],
     ['g:condition', 'new'],
     ['g:product_type', clean(p.category, 750)],
@@ -126,17 +125,16 @@ Deno.serve(async (req) => {
     rows.push(...((data ?? []) as unknown as Row[]))
     if (!data || data.length < 1000) break
   }
-  // Listings without a photo or price are rejected and flag the feed: leave them out.
-  const listable = rows.filter((p) => (p.images ?? []).some((u) => /^https:\/\//.test(u)) && Number(p.price) > 0)
-  // "To order" items need a date they'll be available; two weeks out is a fair estimate.
-  const restockDate = new Date(Date.now() + 14 * 86400_000).toISOString().slice(0, 10)
+  // Listings without a photo or price are rejected and flag the feed: leave them out. So are "made to
+  // order" ones: the feed would have to promise a date they'll be available, and the store has none.
+  const listable = rows.filter((p) => p.stock !== 'to_order' && (p.images ?? []).some((u) => /^https:\/\//.test(u)) && Number(p.price) > 0)
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:g="http://base.google.com/ns/1.0">
 <channel>
 <title>Next Phase Maintenance Store</title>
 <link>${STORE}/store</link>
 <description>Bathroom and kitchen fixtures from Next Phase Maintenance, Melbourne</description>
-${listable.map((p) => item(p, restockDate)).join('\n')}
+${listable.map((p) => item(p)).join('\n')}
 </channel>
 </rss>
 `

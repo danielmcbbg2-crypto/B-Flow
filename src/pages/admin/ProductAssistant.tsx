@@ -223,7 +223,8 @@ export function ProductAssistant({ onDraft }: { onDraft: (p: Product, notice?: s
         highlights: (l.highlights ?? []).map(clean).filter(Boolean).slice(0, 6),
         seoTitle: clean(l.seo_title ?? ''),
         metaDescription: clean(l.meta_description ?? ''),
-        imageAlt: images.map(() => clean(l.image_alt ?? '')),
+        // The draft describes the main photo; the AI's second photo is the product in a room. Others are left for the admin.
+        imageAlt: images.map((_, i) => (i === 0 ? clean(l.image_alt ?? '') : i === 1 && photos && 'images' in photos ? `${clean(l.title)}, shown installed in a room` : '')),
         compliance: cleanCompliance(l.compliance),
         status: 'draft',
         // What the supplier's page says now; "To order" when it doesn't say.

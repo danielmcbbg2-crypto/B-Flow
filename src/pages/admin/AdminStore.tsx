@@ -569,6 +569,7 @@ export function ProductEditor({ product, notice, onClose, onSaved }: { product: 
     if (clientPrice !== undefined && !(clientPrice >= 0)) return setError('Enter a valid client price, or leave it empty.')
     if (cost !== undefined && !(cost >= 0)) return setError('Enter a valid cost, or leave it empty.')
     if (p.status === 'published' && !p.description.trim()) return setError('Add a description before publishing.')
+    if (p.gtin && !/^\d{8,14}$/.test(p.gtin)) return setError('The barcode should be 8 to 14 digits, or leave it empty.')
     const opts = optionDraft.options.map((g) => ({ ...g, name: g.name.trim(), values: g.values.map((v) => ({ ...v, label: v.label.trim() })) }))
     if (opts.some((g) => !g.name || g.values.some((v) => !v.label))) return setError('Give each option a name and each choice a label (or remove the empty ones).')
     if (opts.some((g) => g.values.every((v) => !v.available))) return setError('Each option needs at least one available choice.')

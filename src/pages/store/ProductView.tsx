@@ -9,12 +9,16 @@ import { STOCK_LABEL, type Product, type UserAccount } from '../../lib/types'
 import { cx, money } from '../../lib/utils'
 import { addOn, cheapestChoice, choicePhoto, choiceText, Price, ProductImage, STOCK_TONE, varies, type Choice } from './shopping'
 
+/** Photos made by the AI product assistant, rather than taken of the product. */
+const isRender = (src: string) => /\/photos\/ai\//.test(src)
+
 /** WELS stars, WaterMark and safety glass, as short badges (on product cards and pages). */
 export function ComplianceBadges({ p, small }: { p: Product; small?: boolean }) {
   const c = p.compliance ?? {}
   const badges: { icon: typeof Droplets; text: string; title: string }[] = []
   if (c.welsStars) badges.push({ icon: Droplets, text: `WELS ${c.welsStars} star${c.welsWater && !small ? ` · ${c.welsWater}` : ''}`, title: 'Water Efficiency Labelling and Standards rating' })
-  if (c.watermark || (c.standards ?? []).some((s) => /3718|watermark/i.test(s))) badges.push({ icon: BadgeCheck, text: 'WaterMark', title: 'Certified for plumbing installation in Australia' })
+  // Only a recorded licence number counts as proof: a standard alone isn't certification.
+  if (c.watermark) badges.push({ icon: BadgeCheck, text: 'WaterMark', title: 'Certified for plumbing installation in Australia' })
   if ((c.standards ?? []).some((s) => /2208/.test(s))) badges.push({ icon: ShieldCheck, text: 'AS/NZS 2208 safety glass', title: 'Australian safety glazing standard' })
   if (!badges.length) return null
   return (
@@ -174,7 +178,10 @@ export function ProductView({
               ))}
             </div>
           )}
-          <p className="text-xs text-slate-500">Product images are digital renders of this product; colours and finishes may vary slightly from what's shown.</p>
+          {/* Photos the AI made (stored under photos/ai/) are said to be renders; real photos aren't. */}
+          {p.images.some(isRender) && (
+            <p className="text-xs text-slate-500">Some images are digital renders of this product; colours and finishes may vary slightly from what's shown.</p>
+          )}
         </div>
 
         <div className="min-w-0">

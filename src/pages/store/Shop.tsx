@@ -37,6 +37,11 @@ export function Shop({ portal, productId }: { portal?: boolean; productId?: stri
     else url.searchParams.set('category', c)
     window.history.replaceState(null, '', url)
   }
+  // Back and forward (and links) can change the address's category while the shop stays open.
+  useEffect(() => {
+    if (portal || productId) return
+    setCategoryState(new URLSearchParams(window.location.search).get('category') ?? 'All')
+  }, [portal, productId])
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState<Sort>('featured')
   // On the public shop each product has its own address (/store/<id>/<name>), so the open product
@@ -52,7 +57,7 @@ export function Shop({ portal, productId }: { portal?: boolean; productId?: stri
   }, [openId])
   const setOpen = (p: Product | null) => {
     setView('browse')
-    if (routed) navigate(p ? productPath(p) : '/store')
+    if (routed) navigate(p ? productPath(p) : category === 'All' ? '/store' : `/store?category=${encodeURIComponent(category)}`)
     else {
       setLocal(p)
       window.scrollTo(0, 0)
