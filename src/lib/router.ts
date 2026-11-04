@@ -20,7 +20,8 @@ function current(): string[] {
       window.history.replaceState(null, '', path + window.location.search)
       return path.split('/').filter(Boolean)
     }
-    return hash.split('/').filter(Boolean)
+    // "#/admin/store?quickbooks=connected": the part after "?" is a message for the page, not the route.
+    return hash.split('?')[0].split('/').filter(Boolean)
   }
   return window.location.pathname.split('/').filter(Boolean)
 }

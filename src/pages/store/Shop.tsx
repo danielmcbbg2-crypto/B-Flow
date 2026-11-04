@@ -4,17 +4,18 @@ import { ArrowLeft, BadgeCheck, CheckCircle2, Minus, Plus, Receipt, Search, Shie
 import { Empty, Field, PageHeader, Status, type Tone } from '../../components/ui'
 import { Logo } from '../../components/Logo'
 import { SignInModal } from '../../components/SignInModal'
-import { useStore } from '../../lib/store'
+import { useStore, type PlacedOrder } from '../../lib/store'
 import { lineKey, useCart } from '../../lib/cart'
 import { navigate } from '../../lib/router'
 import { SITE_URL, usePageMeta } from '../../lib/head'
 import { productMeta, productPath, STORE_META } from '../../lib/seo'
-import { ORDER_STATUS_LABEL, STORE_CATEGORIES, type OrderStatus, type Product, type UserAccount } from '../../lib/types'
+import { ORDER_STATUS_LABEL, STORE_CATEGORIES, type OrderInvoiceStatus, type OrderStatus, type Product, type UserAccount } from '../../lib/types'
 import { ProductCard, ProductView } from './ProductView'
 import { StoreFooter, StoreInfo } from './StoreInfo'
 import { isStoreInfo } from '../../lib/storePolicy'
 import { cheapestChoice, choicePhoto, choiceText, defaultChoice, ProductImage, unitPrice, useCatalog, type Choice } from './shopping'
 import { cx, fmtDate, money } from '../../lib/utils'
+import { PaymentSafety } from '../../components/PaymentSafety'
 
 const ORDER_TONE: Record<OrderStatus, Tone> = { new: 'orange', confirmed: 'outline', paid: 'dark', fulfilled: 'green', cancelled: 'red' }
 
@@ -64,7 +65,7 @@ export function Shop({ portal, productId }: { portal?: boolean; productId?: stri
     }
   }
   usePageMeta(!routed || loading ? null : open ? productMeta(open, SITE_URL) : STORE_META(SITE_URL))
-  const [placed, setPlaced] = useState<{ number: number; total: number; installQuote?: number } | null>(null)
+  const [placed, setPlaced] = useState<PlacedOrder | null>(null)
 
   const categories = useMemo(() => STORE_CATEGORIES.filter((c) => products.some((p) => p.category === c)), [products])
   const q = query.trim().toLowerCase()
@@ -78,27 +79,7 @@ export function Shop({ portal, productId }: { portal?: boolean; productId?: stri
     track('add_to_cart', { currency: 'AUD', items: [{ item_id: p.id, item_name: p.title, quantity: qty }] })
   }
 
-  if (placed) {
-    return (
-      <div className="card mx-auto max-w-lg px-6 py-10 text-center">
-        <CheckCircle2 size={36} className="mx-auto text-emerald-600" />
-        <h2 className="mt-3 text-xl font-bold">Order #{placed.number} received</h2>
-        <p className="mt-2 text-sm text-slate-600">
-          Total <span className="num font-semibold text-slate-900">{money(placed.total)}</span> inc. GST. Nothing has been charged: we'll check
-          availability and get back to you with an invoice and payment details.
-        </p>
-        {placed.installQuote && (
-          <p className="mt-3 text-sm text-slate-600">
-            We'll also price the installation you asked for (quote <span className="num">#{placed.installQuote}</span>) and send it to you. You only pay for
-            installation if you accept the quote.
-          </p>
-        )}
-        <div className="mt-6 flex justify-center gap-2">
-          <button className="btn-primary" onClick={() => { setPlaced(null); setView('browse') }}>Keep shopping</button>
-        </div>
-      </div>
-    )
-  }
+  if (placed) return <OrderPlaced placed={placed} onDone={() => { setPlaced(null); setView('browse') }} />
 
   const cartButton = (
     <button className={cx('ml-auto', cart.count ? 'btn-primary' : 'btn-ghost')} onClick={() => setView('cart')}>
@@ -263,7 +244,7 @@ function Checkout({
   products: Product[]
   portal?: boolean
   acting: boolean
-  onPlaced: (r: { number: number; total: number; installQuote?: number }) => void
+  onPlaced: (r: PlacedOrder) => void
 }) {
   const { user, placeOrder } = useStore()
   const [form, setForm] = useState(() => ({
@@ -370,10 +351,11 @@ function Checkout({
           <textarea className="input min-h-[70px]" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Colour, sizes, install needed, best time to call…" />
         </Field>
         <p className="text-xs text-slate-500">
-          No payment now. We'll confirm availability{form.delivery === 'delivery' ? ' and delivery cost' : ''}, then send an invoice to pay by bank transfer.
+          No payment now. We'll email your invoice with ways to pay, and confirm availability{form.delivery === 'delivery' ? ' and the delivery cost' : ''} with you.
           {installing && " Installation is quoted separately after you order: we'll send you the price, and you only pay for it if you accept."}
           {user?.role === 'provider' && user.status === 'active' && ' Trade prices apply to your account.'}
         </p>
+        <PaymentSafety />
         {acting && <p className="text-sm text-red-600">Orders can't be placed from someone else's dashboard.</p>}
         {error && <p className="text-sm text-red-600">{error}</p>}
         <button className="btn-primary w-full" disabled={busy || acting || missing.length > 0 || tooMany}>
@@ -405,6 +387,11 @@ export function MyOrders() {
             <div className="flex shrink-0 items-center gap-4 sm:flex-col sm:items-end sm:gap-1">
               <span className="num font-semibold">{money(o.total)}</span>
               <Status tone={ORDER_TONE[o.status]}>{ORDER_STATUS_LABEL[o.status]}</Status>
+              {o.invoice?.status === 'sent' && o.status !== 'cancelled' && o.invoice.payLink && (
+                <a className="text-sm font-semibold text-slate-900 underline" href={o.invoice.payLink} target="_blank" rel="noreferrer">
+                  Pay invoice #{o.invoice.number}
+                </a>
+              )}
             </div>
           </div>
         ))}
@@ -457,6 +444,67 @@ export function StorePage({ productId }: { productId?: string }) {
       </main>
       <StoreFooter />
       <SignInModal open={signIn} onClose={() => setSignIn(false)} />
+    </div>
+  )
+}
+
+/**
+ * The order's confirmation. Its QuickBooks invoice is created and emailed within moments of the
+ * order, so the screen waits a little for it and, once it's there, offers its pay link straight away.
+ */
+function OrderPlaced({ placed, onDone }: { placed: PlacedOrder; onDone: () => void }) {
+  const { orderInvoice, cloud } = useStore()
+  const [invoice, setInvoice] = useState<{ status: OrderInvoiceStatus; number: string; payLink: string } | null>(null)
+  useEffect(() => {
+    if (!cloud) return
+    let live = true
+    let timer = 0
+    const started = Date.now()
+    const check = async () => {
+      const r = await orderInvoice(placed.id, placed.email).catch(() => null)
+      if (!live) return
+      if (r && (r.status === 'sent' || r.status === 'paid')) return setInvoice(r)
+      if (Date.now() - started < 45_000) timer = window.setTimeout(() => void check(), 3000)
+    }
+    timer = window.setTimeout(() => void check(), 1500)
+    return () => {
+      live = false
+      window.clearTimeout(timer)
+    }
+  }, [cloud, orderInvoice, placed.id, placed.email])
+  return (
+    <div className="card mx-auto max-w-lg px-6 py-10 text-center">
+      <CheckCircle2 size={36} className="mx-auto text-emerald-600" />
+      <h2 className="mt-3 text-xl font-bold">Order #{placed.number} received</h2>
+      {invoice ? (
+        <>
+          <p className="mt-2 text-sm text-slate-600">
+            Total <span className="num font-semibold text-slate-900">{money(placed.total)}</span> inc. GST. Invoice{' '}
+            <span className="num font-semibold text-slate-900">#{invoice.number}</span> has been emailed to {placed.email}
+            {invoice.payLink ? ': pay it now to lock in your order.' : ' with payment options.'} We'll confirm availability and delivery with you.
+          </p>
+          {invoice.payLink && (
+            <a className="btn-primary mt-5 inline-flex" href={invoice.payLink} target="_blank" rel="noreferrer">
+              Pay now
+            </a>
+          )}
+        </>
+      ) : (
+        <p className="mt-2 text-sm text-slate-600">
+          Total <span className="num font-semibold text-slate-900">{money(placed.total)}</span> inc. GST. Nothing has been charged: we'll check
+          availability and email you an invoice with payment details.
+        </p>
+      )}
+      {placed.installQuote && (
+        <p className="mt-3 text-sm text-slate-600">
+          We'll also price the installation you asked for (quote <span className="num">#{placed.installQuote}</span>) and send it to you. You only pay for
+          installation if you accept the quote.
+        </p>
+      )}
+      <PaymentSafety className="mx-auto mt-5 max-w-sm text-left" />
+      <div className="mt-6 flex justify-center gap-2">
+        <button className={invoice?.payLink ? 'btn-ghost' : 'btn-primary'} onClick={onDone}>Keep shopping</button>
+      </div>
     </div>
   )
 }

@@ -15,6 +15,16 @@ import Anthropic from 'npm:@anthropic-ai/sdk@0.131.0'
 import { findPrice, fingerprint, fromShopify, pageText, readStock, type Reading } from './stock.ts'
 import { safeFetch } from './web.ts'
 
+/** Whether the login has done its second sign-in step (its token, already checked by getUser, says "aal2"). Admin powers need it. */
+function secondStep(jwt: string): boolean {
+  try {
+    const p = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+    return JSON.parse(atob(p + '='.repeat((4 - (p.length % 4)) % 4))).aal === 'aal2'
+  } catch {
+    return false
+  }
+}
+
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -135,7 +145,7 @@ async function manager(req: Request) {
   const { data: auth } = await db.auth.getUser(jwt)
   if (!auth.user) return null
   const { data: me } = await db.from('profiles').select('id, role, permissions').eq('auth_id', auth.user.id).eq('status', 'active').maybeSingle()
-  return me && me.role === 'admin' && me.permissions.includes('canManageStore') ? me : null
+  return me && me.role === 'admin' && me.permissions.includes('canManageStore') && secondStep(jwt) ? me : null
 }
 
 Deno.serve(async (req) => {

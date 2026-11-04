@@ -13,6 +13,16 @@
 //   admins / direct — admins only (manual alerts, dispatch notices, test sends).
 import { createClient } from 'npm:@supabase/supabase-js@2.49.4'
 
+/** Whether the login has done its second sign-in step (its token, already checked by getUser, says "aal2"). Admin powers need it. */
+function secondStep(jwt: string): boolean {
+  try {
+    const p = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+    return JSON.parse(atob(p + '='.repeat((4 - (p.length % 4)) % 4))).aal === 'aal2'
+  } catch {
+    return false
+  }
+}
+
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -107,7 +117,7 @@ Deno.serve(async (req) => {
   if (!auth.user) return json({ error: 'Not signed in' }, 401)
   const { data: me } = await db.from('profiles').select('id, role, name').eq('auth_id', auth.user.id).eq('status', 'active').maybeSingle()
   if (!me) return json({ error: 'Account is not active' }, 403)
-  const isAdmin = me.role === 'admin'
+  const isAdmin = me.role === 'admin' && secondStep(jwt)
 
   const body = await req.json().catch(() => ({}))
   const { data: settings } = await db.from('settings').select('sms').eq('id', 1).single()

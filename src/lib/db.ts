@@ -25,6 +25,7 @@ import type {
   Project,
   ProjectCost,
   ProductCompliance,
+  OrderInvoiceStatus,
   ProductOption,
   ProductSpec,
   ProductSource,
@@ -897,6 +898,14 @@ const ordersFromRows = (orders: Row[], items: Row[], notes: Row[]): StoreOrder[]
     adminNotes: noteFor.get(r.id as string) ?? '',
     createdAt: r.created_at as string,
     items: (byOrder.get(r.id as string) ?? []).sort((a, b) => a.title.localeCompare(b.title)),
+    invoice: r.invoice_status
+      ? {
+          status: r.invoice_status as OrderInvoiceStatus,
+          number: (r.invoice_number as string | undefined) ?? '',
+          payLink: (r.pay_link as string | undefined) ?? '',
+          error: (r.invoice_error as string | undefined) ?? '',
+        }
+      : undefined,
   }))
 }
 

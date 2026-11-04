@@ -14,6 +14,7 @@ import interiorPhoto from '../assets/photos/interior.webp'
 import residentialPhoto from '../assets/photos/residential.webp'
 import commercialPhoto from '../assets/photos/commercial.webp'
 import conciergePhoto from '../assets/photos/concierge.webp'
+import { PaymentSafety } from '../components/PaymentSafety'
 
 const [EMAIL_LOCAL, EMAIL_DOMAIN] = BRAND.email.split('@')
 
@@ -325,6 +326,7 @@ export function PublicHome() {
 
       <footer className="bg-slate-900 text-white">
         <ServiceLinks className="mx-auto max-w-7xl px-4 pt-12 text-white/80 sm:px-6" />
+        <PaymentSafety inverted className="mx-auto max-w-7xl px-4 pt-8 sm:px-6" />
         <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-12 sm:flex-row sm:items-end sm:justify-between sm:px-6">
           <Logo inverted />
           <div className="text-sm text-white/70 sm:text-right">
