@@ -7,6 +7,7 @@ import { daysSince, daysToExpiry, FOLLOW_UP_DAYS, itemsSubtotal, needsFollowUp, 
 import type { Project, QuoteItem } from '../../lib/types'
 import { fmtDate, money } from '../../lib/utils'
 import { NewProjectForm, ProjectEditor, useSaveProject } from './AdminProjects'
+import { takeOpenOnArrival } from '../../lib/openOnArrival'
 
 const COLUMNS: { stage: QuoteStage[]; title: string; hint: string }[] = [
   { stage: ['requested'], title: 'Requested', hint: 'Not priced yet' },
@@ -22,7 +23,11 @@ export function AdminQuotes() {
   const { data } = useStore()
   const save = useSaveProject()
   const [tab, setTab] = useState<'board' | 'templates'>('board')
-  const [editing, setEditing] = useState<Project | null>(null)
+  // Opened from its store order: straight into that quote.
+  const [editing, setEditing] = useState<Project | null>(() => {
+    const id = takeOpenOnArrival('quote')
+    return (id && data.projects.find((p) => p.id === id)) || null
+  })
   const [creating, setCreating] = useState(false)
   const now = Date.now()
 
@@ -136,6 +141,7 @@ function QuoteCard({ p, now, onOpen }: { p: Project; now: number; onOpen: () => 
       </div>
       <p className="mt-1 font-semibold leading-snug">{p.title}</p>
       <p className="text-xs text-slate-500">{lk.user(p.clientId)?.name}</p>
+      {p.orderId && <p className="mt-1 text-xs font-semibold text-accent-ink">Install for a store order</p>}
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         <span className="num text-sm font-semibold">{value ? money(value) : 'Not priced'}</span>
         {stage === 'won' && <span className="bg-emerald-600 px-1.5 py-0.5 text-[11px] font-semibold uppercase text-white">Won</span>}

@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { ArrowLeft, BadgeCheck, Check, Droplets, Minus, Plus, ShieldCheck, ShoppingCart, Truck, Wrench } from 'lucide-react'
 import { Status } from '../../components/ui'
-import { RequestMaintenanceModal } from '../LeadCapture'
 import { needsWels } from '../../lib/listingCheck'
 import { complianceFacts, productPath } from '../../lib/seo'
 import { ACL_GUARANTEE, STORE_POLICY } from '../../lib/storePolicy'
@@ -129,19 +128,19 @@ export function ProductView({
   setChoice: (c: Choice) => void
   related: Product[]
   onBack: () => void
-  onAdd: (qty: number) => void
+  onAdd: (qty: number, install: boolean) => void
   onViewCart: () => void
   onOpen: (p: Product) => void
 }) {
   const [photo, setPhoto] = useState<string | undefined>(undefined)
   const [qty, setQty] = useState(1)
   const [added, setAdded] = useState(false)
-  const [quote, setQuote] = useState(false)
+  const [install, setInstall] = useState(false)
   const shown = choicePhoto(p, choice) && !photo ? choicePhoto(p, choice) : (photo ?? p.images[0])
   const canBuy = p.stock !== 'out_of_stock' && choiceText(p, choice) !== null
   const facts = complianceFacts(p)
   const add = () => {
-    onAdd(qty)
+    onAdd(qty, install)
     setAdded(true)
   }
   const plumbing = p.category === 'Tapware' || p.category === 'Toilets' || needsWels(p)
@@ -204,7 +203,36 @@ export function ProductView({
             </div>
           )}
 
-          <div className="mt-6 flex flex-wrap items-stretch gap-3">
+          <fieldset className="mt-6">
+            <legend className="label">Installation</legend>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {[
+                { value: false, title: 'Supply only', body: 'Delivered or picked up; you arrange fitting.' },
+                { value: true, title: 'Supply and install', body: "We'll quote the installation after you order." },
+              ].map((o) => (
+                <label
+                  key={o.title}
+                  className={cx(
+                    'flex cursor-pointer gap-2.5 border p-3 text-sm has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-accent',
+                    install === o.value ? 'border-slate-900 bg-white' : 'border-slate-300 bg-white hover:border-slate-900',
+                  )}
+                >
+                  <input type="radio" name={`install-${p.id}`} className="mt-0.5 accent-slate-900" checked={install === o.value} onChange={() => { setInstall(o.value); setAdded(false) }} />
+                  <span>
+                    <span className="flex items-center gap-1.5 font-semibold text-slate-900">{o.value && <Wrench size={15} className="text-accent-ink" aria-hidden="true" />}{o.title}</span>
+                    <span className="text-slate-600">{o.body}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            {install && (
+              <p className="mt-2 text-xs text-slate-600">
+                The product price is the same. Installation is priced separately: after you order, we'll review the job and send you a quote{STORE_POLICY.licensedPlumber && plumbing ? ' (plumbing by a licensed plumber)' : ''}. You only pay for installation if you accept it.
+              </p>
+            )}
+          </fieldset>
+
+          <div className="mt-5 flex flex-wrap items-stretch gap-3">
             <div className="flex items-center border border-slate-300 bg-white" role="group" aria-label="Quantity">
               <button type="button" className="px-3 py-2.5 hover:bg-slate-50 disabled:text-slate-300" onClick={() => setQty(Math.max(1, qty - 1))} disabled={qty <= 1} aria-label="One less"><Minus size={15} /></button>
               <span className="num w-8 text-center" aria-live="polite">{qty}</span>
@@ -216,7 +244,7 @@ export function ProductView({
           </div>
           {added && (
             <p className="mt-3 flex flex-wrap items-center gap-3 text-sm" role="status">
-              <span className="inline-flex items-center gap-1 text-emerald-700"><Check size={16} /> Added to your cart</span>
+              <span className="inline-flex items-center gap-1 text-emerald-700"><Check size={16} /> Added to your cart{install ? ', with installation to quote' : ''}</span>
               <button className="font-semibold underline underline-offset-2" onClick={onViewCart}>View cart and check out</button>
             </p>
           )}
@@ -229,15 +257,8 @@ export function ProductView({
             </ul>
           )}
 
-          <div className="mt-6 border border-slate-200 bg-white p-4">
-            <p className="flex items-center gap-2 font-semibold"><Wrench size={17} className="text-accent-ink" aria-hidden="true" /> Want it installed?</p>
-            <p className="mt-1 text-sm text-slate-600">
-              We can supply and install it across Melbourne{STORE_POLICY.licensedPlumber && plumbing ? ', with plumbing done by a licensed plumber' : ''}. Tell us about the job and we'll send a quote.
-            </p>
-            <button className="btn-ghost mt-3 px-4 py-2" onClick={() => setQuote(true)}>Get an install quote</button>
-          </div>
-
           <ul className="mt-6 grid gap-2 text-sm text-slate-600">
+            <li className="flex gap-2"><Wrench size={17} className="shrink-0 text-slate-500" aria-hidden="true" /><span>Installation available across Melbourne, quoted after you order.</span></li>
             <li className="flex gap-2"><Truck size={17} className="shrink-0 text-slate-500" aria-hidden="true" /><span>Pickup or Melbourne delivery. <a href="/store/delivery" className="underline underline-offset-2 hover:text-slate-900">Delivery details</a></span></li>
             <li className="flex gap-2"><ShieldCheck size={17} className="shrink-0 text-slate-500" aria-hidden="true" /><span>Australian Consumer Law guarantees apply. <a href="/store/returns" className="underline underline-offset-2 hover:text-slate-900">Returns and warranty</a></span></li>
           </ul>
@@ -310,14 +331,6 @@ export function ProductView({
         </div>
       </div>
 
-      {quote && (
-        <RequestMaintenanceModal
-          open
-          service={plumbing ? 'Plumbing Services' : undefined}
-          message={`Supply and install: ${p.title}${p.sku ? ` (model ${p.sku})` : ''}${choiceText(p, choice) ? `, ${choiceText(p, choice)}` : ''}. Quantity ${qty}.`}
-          onClose={() => setQuote(false)}
-        />
-      )}
     </div>
   )
 }

@@ -64,7 +64,7 @@ export function Shop({ portal, productId }: { portal?: boolean; productId?: stri
     }
   }
   usePageMeta(!routed || loading ? null : open ? productMeta(open, SITE_URL) : STORE_META(SITE_URL))
-  const [placed, setPlaced] = useState<{ number: number; total: number } | null>(null)
+  const [placed, setPlaced] = useState<{ number: number; total: number; installQuote?: number } | null>(null)
 
   const categories = useMemo(() => STORE_CATEGORIES.filter((c) => products.some((p) => p.category === c)), [products])
   const q = query.trim().toLowerCase()
@@ -73,8 +73,8 @@ export function Shop({ portal, productId }: { portal?: boolean; productId?: stri
     sort,
     user,
   )
-  const addToCart = (p: Product, qty = 1, chosen?: Choice) => {
-    cart.add(p.id, qty, chosen)
+  const addToCart = (p: Product, qty = 1, chosen?: Choice, install = false) => {
+    cart.add(p.id, qty, chosen, install)
     track('add_to_cart', { currency: 'AUD', items: [{ item_id: p.id, item_name: p.title, quantity: qty }] })
   }
 
@@ -87,6 +87,12 @@ export function Shop({ portal, productId }: { portal?: boolean; productId?: stri
           Total <span className="num font-semibold text-slate-900">{money(placed.total)}</span> inc. GST. Nothing has been charged: we'll check
           availability and get back to you with an invoice and payment details.
         </p>
+        {placed.installQuote && (
+          <p className="mt-3 text-sm text-slate-600">
+            We'll also price the installation you asked for (quote <span className="num">#{placed.installQuote}</span>) and send it to you. You only pay for
+            installation if you accept the quote.
+          </p>
+        )}
         <div className="mt-6 flex justify-center gap-2">
           <button className="btn-primary" onClick={() => { setPlaced(null); setView('browse') }}>Keep shopping</button>
         </div>
@@ -128,7 +134,7 @@ export function Shop({ portal, productId }: { portal?: boolean; productId?: stri
           setChoice={setChoice}
           related={products.filter((r) => r.category === open.category && r.id !== open.id).slice(0, 4)}
           onBack={() => setOpen(null)}
-          onAdd={(qty) => addToCart(open, qty, (open.options ?? []).length ? choice : undefined)}
+          onAdd={(qty, install) => addToCart(open, qty, (open.options ?? []).length ? choice : undefined, install)}
           onViewCart={() => setView('cart')}
           onOpen={(r) => setOpen(r)}
         />
@@ -257,7 +263,7 @@ function Checkout({
   products: Product[]
   portal?: boolean
   acting: boolean
-  onPlaced: (r: { number: number; total: number }) => void
+  onPlaced: (r: { number: number; total: number; installQuote?: number }) => void
 }) {
   const { user, placeOrder } = useStore()
   const [form, setForm] = useState(() => ({
@@ -280,6 +286,8 @@ function Checkout({
     .sort((a, b) => (a.title ?? '').localeCompare(b.title ?? ''))
   const total = lines.reduce((s, l) => s + (l.p ? unitPrice(l.p, user, l.options) * l.qty : 0), 0)
   const missing = lines.filter((l) => !l.p)
+  const installing = lines.some((l) => l.p && l.install)
+  const needsAddress = form.delivery === 'delivery' || installing
   const tooMany = lines.length - missing.length > 30
 
   const submit = async (e: FormEvent) => {
@@ -288,7 +296,13 @@ function Checkout({
     setBusy(true)
     setError(null)
     try {
-      onPlaced(await placeOrder({ ...form, items: lines.filter((l) => l.p).map((l) => ({ productId: l.productId, qty: l.qty, options: l.options })) }))
+      onPlaced(
+        await placeOrder({
+          ...form,
+          address: needsAddress ? form.address : '',
+          items: lines.filter((l) => l.p).map((l) => ({ productId: l.productId, qty: l.qty, options: l.options, install: !!l.install })),
+        }),
+      )
     } catch (err) {
       setError((err as Error).message)
     } finally {
@@ -307,6 +321,12 @@ function Checkout({
               <p className="font-semibold leading-snug">{l.p ? l.p.title : l.title ? `${l.title}: options no longer available` : 'No longer available'}</p>
               {l.chosen && <p className="text-xs text-slate-600">{l.chosen}</p>}
               {l.p && <p className="num text-xs text-slate-500">{money(unitPrice(l.p, user, l.options))} each</p>}
+              {l.p && (
+                <label className="mt-1.5 inline-flex cursor-pointer items-center gap-2 text-xs text-slate-700">
+                  <input type="checkbox" className="accent-slate-900" checked={!!l.install} onChange={(e) => cart.setInstall(l, e.target.checked)} />
+                  Install it for me <span className="text-slate-500">(quoted after you order)</span>
+                </label>
+              )}
             </div>
             {l.p && (
               <div className="flex items-center gap-1">
@@ -319,7 +339,7 @@ function Checkout({
           </div>
         ))}
         <div className="flex items-center justify-between p-4">
-          <span className="font-semibold">Total (inc. GST)</span>
+          <span className="font-semibold">Total (inc. GST){installing && <span className="block text-xs font-normal text-slate-500">Installation quoted separately</span>}</span>
           <span className="num text-lg font-bold">{money(total)}</span>
         </div>
         {missing.length > 0 && <p className="p-4 text-sm text-red-600">Some items are no longer available; remove them to continue.</p>}
@@ -341,8 +361,8 @@ function Checkout({
             ))}
           </div>
         </fieldset>
-        {form.delivery === 'delivery' && (
-          <Field label="Delivery address">
+        {needsAddress && (
+          <Field label={form.delivery === 'delivery' && installing ? 'Delivery and installation address' : installing ? 'Installation address' : 'Delivery address'}>
             <input className="input" required autoComplete="street-address" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
           </Field>
         )}
@@ -351,6 +371,7 @@ function Checkout({
         </Field>
         <p className="text-xs text-slate-500">
           No payment now. We'll confirm availability{form.delivery === 'delivery' ? ' and delivery cost' : ''}, then send an invoice to pay by bank transfer.
+          {installing && " Installation is quoted separately after you order: we'll send you the price, and you only pay for it if you accept."}
           {user?.role === 'provider' && user.status === 'active' && ' Trade prices apply to your account.'}
         </p>
         {acting && <p className="text-sm text-red-600">Orders can't be placed from someone else's dashboard.</p>}

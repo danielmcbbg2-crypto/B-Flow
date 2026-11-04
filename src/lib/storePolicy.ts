@@ -4,8 +4,10 @@
 import { BRAND } from './brand'
 
 export const STORE_POLICY = {
-  /** Days to return an unused item in its original packaging for change of mind; null: no standing offer (customers are asked to talk to us first). */
-  changeOfMindDays: null as number | null,
+  /** Change of mind: refunds only while the packaging is unopened and the item unused (none once it's opened). */
+  changeOfMindUnopenedOnly: true,
+  /** Customers are asked to inspect goods and email about damage or missing items within this many hours of receiving them. */
+  inspectWithinHours: 24,
   /**
    * True once confirmed that plumbing installs are done by a plumber licensed or registered with Victoria's Building and
    * Plumbing Commission (the law requires it for plumbing work); product pages then say so.
@@ -44,7 +46,7 @@ export function storeInfoSections(slug: StoreInfoSlug): StoreInfoSection[] {
           title: 'Delivery in Melbourne',
           paragraphs: [
             "We deliver across Melbourne. Delivery costs depend on the size of the order and where it's going, so we confirm the cost with you before you pay.",
-            'Please check your order when it arrives and let us know straight away about anything damaged in transit, with a photo if you can.',
+            `Please inspect your order within ${STORE_POLICY.inspectWithinHours} hours of receiving it, and email us at {email} within that time if anything is damaged, missing or not what you ordered, with your order number and photos. This lets us sort it out with the carrier quickly.`,
           ],
         },
         {
@@ -64,10 +66,17 @@ export function storeInfoSections(slug: StoreInfoSlug): StoreInfoSection[] {
           ],
         },
         {
+          title: 'Damaged or missing on arrival',
+          paragraphs: [
+            `Please inspect your goods within ${STORE_POLICY.inspectWithinHours} hours of receiving them, and email us at {email} within that time if anything is damaged, missing or not what you ordered. Include your order number and photos. Reporting it quickly lets us sort it out with the carrier and get a replacement on its way.`,
+            'If you find a fault later, still contact us: your rights under the Australian Consumer Law for faulty goods continue after that time.',
+          ],
+        },
+        {
           title: 'Change of mind',
           paragraphs: [
-            STORE_POLICY.changeOfMindDays
-              ? `You can return an unused item in its original packaging within ${STORE_POLICY.changeOfMindDays} days of delivery or pickup for a change of mind. Return transport is at your cost. Items ordered in specially for you, and items that have been installed, can't be returned for a change of mind. This doesn't affect your rights for faulty items above.`
+            STORE_POLICY.changeOfMindUnopenedOnly
+              ? "We accept change-of-mind returns only while the packaging is unopened and the item is unused. Once the packaging has been opened, we can't offer a refund for a change of mind. Email us at {email} before sending anything back. This doesn't affect your rights for faulty items above."
               : "Changed your mind? Contact us before returning anything and we'll tell you what's possible for that item. This doesn't affect your rights for faulty items above.",
           ],
         },

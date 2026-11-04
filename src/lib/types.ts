@@ -311,6 +311,8 @@ export interface Project {
   quoteDecidedAt?: string
   /** When the office last followed up an unanswered quote. */
   quoteFollowedUpAt?: string
+  /** The store order this quote is for (installing what was bought). */
+  orderId?: string
   variations: Variation[]
   payments: PaymentStage[]
   /** Office only: not loaded for clients. */
@@ -550,6 +552,8 @@ export interface OrderItem {
   qty: number
   /** The options chosen, e.g. "Size: 900 mm · Colour: Oak". */
   options?: string
+  /** The customer asked for it to be installed (quoted separately). */
+  install?: boolean
 }
 
 export type OrderStatus = 'new' | 'confirmed' | 'paid' | 'fulfilled' | 'cancelled'

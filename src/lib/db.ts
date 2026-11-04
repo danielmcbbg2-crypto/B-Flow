@@ -170,6 +170,7 @@ const projectRow = (p: Project): Row => ({
   quote_issued_at: nul(p.quoteIssuedAt),
   quote_decided_at: nul(p.quoteDecidedAt),
   quote_followed_up_at: nul(p.quoteFollowedUpAt),
+  order_id: nul(p.orderId),
 })
 
 const quoteItemRow = (projectId: string, i: QuoteItem, position: number): Row => ({
@@ -427,6 +428,7 @@ const orderItemRow = (orderId: string, i: OrderItem): Row => ({
   unit_price: i.unitPrice,
   qty: i.qty,
   options: i.options ?? '',
+  install: !!i.install,
 })
 
 interface Spec {
@@ -636,6 +638,7 @@ export const projectFromRow = (r: Row, milestones: Row[] = [], expenses: Row[] =
   quoteIssuedAt: opt(r.quote_issued_at as string | null | undefined),
   quoteDecidedAt: opt(r.quote_decided_at as string | null | undefined),
   quoteFollowedUpAt: opt(r.quote_followed_up_at as string | null | undefined),
+  orderId: opt(r.order_id as string | null | undefined),
   quoteItems: [...(more.items ?? [])].sort(byPosition).map((i) => ({
     id: i.id as string,
     section: i.section as string,
@@ -874,6 +877,7 @@ const ordersFromRows = (orders: Row[], items: Row[], notes: Row[]): StoreOrder[]
       unitPrice: num(i.unit_price),
       qty: i.qty as number,
       options: (i.options as string | undefined) || undefined,
+      ...(i.install ? { install: true } : {}),
     })
     byOrder.set(i.order_id as string, list)
   }

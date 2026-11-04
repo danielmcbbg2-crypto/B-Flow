@@ -125,7 +125,7 @@ for (const info of STORE_INFO_PAGES) {
     render(
       { title: info.title, description: info.description, path, jsonLd: [breadcrumbJsonLd(SITE, [{ name: 'Home', path: '/' }, { name: 'Shop', path: '/store' }, { name: info.name, path }])] },
       `<main><h1>${esc(info.title)}</h1>${storeInfoSections(info.slug)
-        .map((sec) => `<h2>${esc(sec.title)}</h2>${sec.paragraphs.map((t) => `<p>${esc(t).replace('{email}', link(`mailto:${BRAND.email}`, BRAND.email)).replace('{phone}', esc(BRAND.phone))}</p>`).join('')}`)
+        .map((sec) => `<h2>${esc(sec.title)}</h2>${sec.paragraphs.map((t) => `<p>${esc(t).replaceAll('{email}', link(`mailto:${BRAND.email}`, BRAND.email)).replaceAll('{phone}', esc(BRAND.phone))}</p>`).join('')}`)
         .join('')}${link('/store', 'Back to the shop')}${nav}</main>`,
     ),
   )

@@ -776,6 +776,67 @@ describe('store', () => {
     await assert.rejects(asAnon(`insert into orders (name, email, phone, delivery, total) values ('x', 'x@x.co', '1', 'pickup', 0)`), /permission denied|row-level security/)
   })
 
+  test('items to install make a quote request linked to the order, on the right client account', async () => {
+    type Placed = { r: { id: string; number: number; install_quote: number | null } }
+    const quoteFor = async (number: number) =>
+      (
+        await pool.query(
+          `select p.status, p.client_id, p.property_id, p.scope_of_works, c.email, c.role, c.auth_id, pr.address
+             from projects p join profiles c on c.id = p.client_id join properties pr on pr.id = p.property_id
+            where p.number = $1`,
+          [number],
+        )
+      ).rows[0]
+    // Installing needs an address, even for pickup.
+    await assert.rejects(asAnon(order([{ product_id: 'sp-1', qty: 1, install: true }], 'inst@example.com')), /address where it.s to be installed/)
+    await assert.rejects(asAnon(order([{ product_id: 'sp-1', qty: 1, install: 'yes' }], 'inst@example.com', ", '1 A St'")), /isn.t right/)
+
+    // A guest: the same product supplied only and installed stays as two lines; only the installed one is in the quote.
+    const g = await asAnon<Placed>(order([{ product_id: 'sp-1', qty: 1, install: true }, { product_id: 'sp-1', qty: 2 }, { product_id: 'sp-2', qty: 1 }], 'inst@example.com', ", '12 Smith St, Fitzroy'"))
+    assert.ok(g.rows[0].r.install_quote)
+    const items = await pool.query(`select qty, install from order_items where order_id = $1 order by install, qty`, [g.rows[0].r.id])
+    assert.deepEqual(items.rows, [{ qty: 1, install: false }, { qty: 2, install: false }, { qty: 1, install: true }])
+    const q = await quoteFor(g.rows[0].r.install_quote!)
+    assert.equal(q.status, 'quote_requested')
+    assert.equal(q.email, 'inst@example.com')
+    assert.equal(q.role, 'client')
+    assert.equal(q.auth_id, null)
+    assert.equal(q.address, '12 Smith St, Fitzroy')
+    assert.match(q.scope_of_works, /1 × Timber vanity 900/)
+    assert.doesNotMatch(q.scope_of_works, /Frameless screen/)
+    assert.equal((await pool.query(`select order_id from projects where number = $1`, [g.rows[0].r.install_quote])).rows[0].order_id, g.rows[0].r.id)
+    // The office hears it needs pricing.
+    assert.equal((await asUser(uid.admin, `select 1 from inbox where title = 'New store order #${g.rows[0].r.number}' and body like '%quote #${g.rows[0].r.install_quote}%'`)).rowCount, 1)
+
+    // The same guest again: same client account and property, a new quote.
+    const g2 = await asAnon<Placed>(order([{ product_id: 'sp-2', qty: 1, install: true }], 'INST@example.com', ", '12 Smith St, Fitzroy'"))
+    const q2 = await quoteFor(g2.rows[0].r.install_quote!)
+    assert.equal(q2.client_id, q.client_id)
+    assert.equal(q2.property_id, q.property_id)
+
+    // Supply only: no quote.
+    assert.equal((await asAnon<Placed>(order([{ product_id: 'sp-1', qty: 1 }], 'inst@example.com'))).rows[0].r.install_quote, null)
+
+    // A guest using a member's email can't add requests to that member's portal.
+    const sarahId = (await pool.query(`select id from profiles where lower(email) = 'sarah@whitfieldproperty.com.au'`)).rows[0].id
+    const before = (await asUser(uid.sarah, `select id from projects`)).rowCount
+    const spoof = await asAnon<Placed>(order([{ product_id: 'sp-1', qty: 1, install: true }], 'sarah@whitfieldproperty.com.au', ", '1 Fake St'"))
+    const sq = await quoteFor(spoof.rows[0].r.install_quote!)
+    assert.notEqual(sq.client_id, sarahId)
+    assert.equal(sq.email, null)
+    assert.equal((await asUser(uid.sarah, `select id from projects`)).rowCount, before)
+
+    // A signed-in client's request goes on their own account, and they see it.
+    const own = await asUser<Placed>(uid.sarah, order([{ product_id: 'sp-1', qty: 1, install: true }], 'sarah@whitfieldproperty.com.au', ", '8 Home Rd, Kew'"))
+    assert.equal((await quoteFor(own.rows[0].r.install_quote!)).client_id, sarahId)
+    assert.equal((await asUser(uid.sarah, `select id from projects where order_id = '${own.rows[0].r.id}'`)).rowCount, 1)
+
+    await pool.query(`delete from projects where order_id is not null`)
+    await pool.query(`delete from orders where id = $1`, [own.rows[0].r.id])
+    await pool.query(`delete from properties where notes like 'From store order #%'`)
+    await pool.query(`delete from profiles where role = 'client' and auth_id is null and (lower(email) = 'inst@example.com' or (email is null and name = 'Jo Buyer'))`)
+  })
+
   test('one email can only place a few orders an hour', async () => {
     for (let i = 0; i < 5; i++) await asAnon(order([{ product_id: 'sp-1', qty: 1 }], 'flood@example.com'))
     await assert.rejects(asAnon(order([{ product_id: 'sp-1', qty: 1 }], 'FLOOD@example.com')), /Too many orders/)

@@ -1,14 +1,16 @@
 import { useState, type FormEvent } from 'react'
-import { ArrowLeft, Plus, Trash2 } from 'lucide-react'
+import { ArrowLeft, Mail, Plus, Trash2 } from 'lucide-react'
 import { Empty, Field, Modal, PageHeader, Sep, Stat, Tabs } from '../../components/ui'
 import { ProjectBy, ProjectProgress } from '../../components/works'
 import { ProjectStatusText } from '../../components/status'
 import { ExpenseTable } from '../provider/ProviderPortal'
 import { hasNoLogin, stampQuoteDecision, useLookup, useStore, type NewProject } from '../../lib/store'
-import { DEFAULT_PERMISSIONS, PROJECT_STATUS_LABEL, type PaymentStage, type Project, type ProjectStatus, type Property, type UserAccount } from '../../lib/types'
+import { DEFAULT_PERMISSIONS, PROJECT_STATUS_LABEL, type PaymentStage, type Project, type ProjectStatus, type Property, type StoreOrder, type UserAccount } from '../../lib/types'
 import { contractTotal, nextInvoiceNumber, paymentAmounts, projectFinancials, quoteTotal, withGst } from '../../lib/quote'
 import { fmtDate, money, toISODate, todayISO, uid } from '../../lib/utils'
 import { navigate } from '../../lib/router'
+import { openOnArrival } from '../../lib/openOnArrival'
+import { TextButton } from '../../components/TextMessage'
 import { CostsPanel, PaymentsPanel, QuoteBuilder, VariationsPanel } from './ProjectCommercials'
 import { DefectsPanel, DiaryPanel, DocumentsPanel, Fact, ScheduleSummary, SchedulePanel } from './ProjectWorkspace'
 import { useHashRoute } from '../../lib/router'
@@ -467,6 +469,39 @@ export function NewProjectForm({ onClose, onCreated, quote = false }: { onClose:
 
 export type EditorTab = 'overview' | 'schedule' | 'diary' | 'defects' | 'documents' | 'quote' | 'variations' | 'payments' | 'costs'
 
+/**
+ * An issued installation quote for a store order: one tap to email or text the price to the person
+ * who ordered (their order's details, as a visitor may have no account email).
+ */
+function SendInstallPrice({ p, order }: { p: Project; order: StoreOrder }) {
+  const { update } = useStore()
+  const first = order.name.split(' ')[0] || 'there'
+  const amount = money(p.quoteItems.length ? quoteTotal(p) : (p.quoteAmount ?? 0))
+  const message = `Hi ${first}, it's Next Phase Maintenance. The installation for your store order #${order.number} comes to ${amount} inc. GST${
+    p.quoteValidUntil ? `, valid until ${fmtDate(p.quoteValidUntil)}` : ''
+  }. Reply to this message to accept or with any questions, and we'll book it in.`
+  const sent = () =>
+    update((d) => {
+      const x = d.projects.find((y) => y.id === p.id)
+      if (x) x.quoteFollowedUpAt = new Date().toISOString()
+    })
+  return (
+    <span className="mr-auto flex flex-wrap items-center gap-2 text-sm">
+      <span className="text-slate-600">Send the price to {order.name}:</span>
+      {order.email && (
+        <a
+          className="btn-ghost px-3 py-1.5"
+          href={`mailto:${order.email}?subject=${encodeURIComponent(`Installation quote for order #${order.number}`)}&body=${encodeURIComponent(message)}`}
+          onClick={sent}
+        >
+          <Mail size={15} aria-hidden="true" /> Email
+        </a>
+      )}
+      {order.phone && <TextButton phone={order.phone} message={message} event={`Install quote P-${p.number}`} label="Text" className="btn-ghost px-3 py-1.5" onOpen={sent} />}
+    </span>
+  )
+}
+
 export function ProjectEditor({
   project,
   onClose,
@@ -564,6 +599,7 @@ export function ProjectEditor({
   // Saved as you go: no draft, so no Save button needed on these tabs.
   const immediate = tab === 'diary' || tab === 'defects' || tab === 'documents'
   const fin = projectFinancials(p, data.invoices)
+  const order = p.orderId ? data.orders.find((o) => o.id === p.orderId) : undefined
   const header = (
     <>
       <p className="text-sm text-slate-600">
@@ -572,6 +608,21 @@ export function ProjectEditor({
         {prop?.address}, {prop?.suburb}
         <Sep />
         <ProjectStatusText s={p.status} />
+        {p.orderId && data.orders.some((o) => o.id === p.orderId) && (
+          <>
+            <Sep />
+            <button
+              type="button"
+              className="font-semibold text-accent-ink underline-offset-2 hover:underline"
+              onClick={() => {
+                openOnArrival('order', p.orderId!)
+                navigate('/admin/store')
+              }}
+            >
+              Store order #{data.orders.find((o) => o.id === p.orderId)?.number}
+            </button>
+          </>
+        )}
         {p.assignedProviderId && (
           <>
             <Sep />
@@ -690,6 +741,7 @@ export function ProjectEditor({
               Issue quote to client
             </button>
           )}
+          {saved.status === 'quoted' && order && <SendInstallPrice p={saved} order={order} />}
           <button className="btn-primary">Save project</button>
         </div>
       </form>
