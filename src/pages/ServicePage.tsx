@@ -9,6 +9,7 @@ import { breadcrumbJsonLd, businessJsonLd } from '../lib/seo'
 import { SERVICE_PAGES, servicePath } from '../lib/services'
 import { useStore } from '../lib/store'
 import { REQUEST_SERVICES, RequestMaintenanceModal, SERVICE_ICONS } from './LeadCapture'
+import { PaymentSafety } from '../components/PaymentSafety'
 
 /** Links to every service page, for the footer of the public pages. */
 export function ServiceLinks({ className = '' }: { className?: string }) {
@@ -169,6 +170,7 @@ export function ServicePage({ slug }: { slug: string }) {
       <footer className="bg-slate-900 text-white">
         <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6">
           <ServiceLinks className="text-white/80" />
+          <PaymentSafety inverted className="mt-8" />
           <div className="mt-10 flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
             <Logo inverted />
             <div className="text-sm text-white/70 sm:text-right">

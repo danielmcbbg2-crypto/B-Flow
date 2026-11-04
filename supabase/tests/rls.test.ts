@@ -12,12 +12,13 @@ import type { AppData } from '../../src/lib/types'
 const pool = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL })
 
 /** Runs each statement as the given auth user under the `authenticated` role, like PostgREST does. */
-async function asUser<T>(uid: string, sql: string, params: unknown[] = []): Promise<pg.QueryResult<T & pg.QueryResultRow>> {
+// Signed in, having done the second sign-in step (aal2) unless aal says otherwise.
+async function asUser<T>(uid: string, sql: string, params: unknown[] = [], aal: 'aal1' | 'aal2' = 'aal2'): Promise<pg.QueryResult<T & pg.QueryResultRow>> {
   const c = await pool.connect()
   try {
     await c.query('begin')
     await c.query('set local role authenticated')
-    await c.query(`select set_config('request.jwt.claims', $1, true)`, [JSON.stringify({ sub: uid, role: 'authenticated' })])
+    await c.query(`select set_config('request.jwt.claims', $1, true)`, [JSON.stringify({ sub: uid, role: 'authenticated', aal })])
     const r = await c.query<T & pg.QueryResultRow>(sql, params)
     await c.query('commit')
     return r
@@ -1618,5 +1619,105 @@ describe('product options', () => {
     assert.deepEqual(h.options.find((o) => o.choice === '900 mm'), { option: 'Size', choice: '900 mm', cost: 210, public: 300, client: 280, trade: 254 })
     assert.equal((await asUser(uid.sarah, `select 1 from product_price_history`)).rowCount, 0)
     await assert.rejects(asUser(uid.admin, `select option_price_snapshot('po-1')`), /permission denied/)
+  })
+})
+
+describe('quickbooks invoices', () => {
+  const order = async (email: string) =>
+    (await asAnon<{ r: { id: string } }>(`select place_order('[{"product_id":"po-1","qty":1,"options":{"o-size":"v-600","o-col":"v-white"}}]'::jsonb, 'Quinn Buyer', '${email}', '0400 111 222', 'pickup') as r`)).rows[0].r.id
+
+  test('a new order waits for its invoice; nobody but the server can set invoice details', async () => {
+    const id = await order('quinn@example.com')
+    const row = async () => (await pool.query(`select invoice_status, qbo_invoice_id, pay_link from orders where id = $1`, [id])).rows[0]
+    assert.deepEqual(await row(), { invoice_status: 'pending', qbo_invoice_id: null, pay_link: '' })
+    await asUser(uid.admin, `update orders set invoice_status = 'paid', pay_link = 'https://evil.example', status = 'confirmed' where id = '${id}'`)
+    assert.deepEqual(await row(), { invoice_status: 'pending', qbo_invoice_id: null, pay_link: '' })
+    assert.equal((await pool.query(`select status from orders where id = $1`, [id])).rows[0].status, 'confirmed')
+    // The server (service role) records it.
+    await pool.query(`update orders set invoice_status = 'sent', qbo_invoice_id = '77', invoice_number = '1043', pay_link = 'https://pay.example/77' where id = $1`, [id])
+    assert.deepEqual(await row(), { invoice_status: 'sent', qbo_invoice_id: '77', pay_link: 'https://pay.example/77' })
+  })
+
+  test('the customer sees their invoice on the confirmation screen with the order id and their email only', async () => {
+    const id = (await pool.query(`select id from orders where email = 'quinn@example.com'`)).rows[0].id
+    const r = (await asAnon<{ r: unknown }>(`select order_invoice('${id}', 'Quinn@Example.com') as r`)).rows[0].r
+    assert.deepEqual(r, { status: 'sent', number: '1043', pay_link: 'https://pay.example/77' })
+    assert.equal((await asAnon<{ r: unknown }>(`select order_invoice('${id}', 'someone@else.com') as r`)).rows[0].r, null)
+  })
+
+  test('the connection (tokens) is server-only; the office only sees whether it is connected', async () => {
+    await pool.query(`insert into qbo_connection (id, realm_id, company_name, refresh_token, connected_at) values (1, '123', 'Next Phase Pty Ltd', 'secret-token', now())`)
+    await assert.rejects(asUser(uid.admin, `select refresh_token from qbo_connection`), /permission denied/)
+    await assert.rejects(asAnon(`select * from qbo_connection`), /permission denied/)
+    const s = (await asUser<{ s: { connected: boolean; company: string; refresh_token?: string } }>(uid.admin, `select qbo_status() as s`)).rows[0].s
+    assert.equal(s.connected, true)
+    assert.equal(s.company, 'Next Phase Pty Ltd')
+    assert.equal(s.refresh_token, undefined)
+    assert.equal((await asUser<{ s: unknown }>(uid.sarah, `select qbo_status() as s`)).rows[0].s, null)
+  })
+
+  test('only the server claims invoices to make, once each; the office can retry a failed one', async () => {
+    await assert.rejects(asUser(uid.admin, `select * from claim_order_invoices(5)`), /permission denied/)
+    const id = await order('rae@example.com')
+    const claimed = (await pool.query(`select id from claim_order_invoices(50)`)).rows.map((r) => r.id)
+    assert.ok(claimed.includes(id))
+    assert.ok(!(await pool.query(`select id from claim_order_invoices(50)`)).rows.some((r) => r.id === id), 'not claimed twice')
+    await pool.query(`update orders set invoice_status = 'failed', invoice_attempts = 6, invoice_error = 'QuickBooks said no' where id = $1`, [id])
+    await assert.rejects(asUser(uid.sarah, `select retry_order_invoice('${id}')`), /Manage store/)
+    await asUser(uid.admin, `select retry_order_invoice('${id}')`)
+    assert.deepEqual((await pool.query(`select invoice_status, invoice_attempts, invoice_error from orders where id = $1`, [id])).rows[0], { invoice_status: 'pending', invoice_attempts: 0, invoice_error: '' })
+  })
+
+  test('orders past the automatic invoice limits wait for the office to approve them', async () => {
+    await assert.rejects(asUser(uid.sarah, `select qbo_set_limits(5, 100)`), /permission/)
+    await assert.rejects(asUser(uid.admin, `select qbo_set_limits(-1, 100)`), /between 0 and 1000/)
+    // Too large for an automatic invoice: held, and the store managers told.
+    await asUser(uid.admin, `select qbo_set_limits(1000, 1)`)
+    const s = (await asUser<{ s: { daily_limit: number; max_total: number } }>(uid.admin, `select qbo_status() as s`)).rows[0].s
+    assert.deepEqual([s.daily_limit, Number(s.max_total)], [1000, 1])
+    const big = await order('big@example.com')
+    await pool.query(`select id from claim_order_invoices(50)`)
+    const held = (await pool.query(`select invoice_status, invoice_error, number from orders where id = $1`, [big])).rows[0]
+    assert.equal(held.invoice_status, 'held')
+    assert.equal(held.invoice_error, 'Over the $1.00 limit for automatic invoices: approve it to send the invoice.')
+    assert.equal(Number((await pool.query(`select count(*) from inbox where title = $1`, [`Order #${held.number}: approve its invoice`])).rows[0].count) > 0, true)
+    // Nobody but the server can approve it by editing the order.
+    await asUser(uid.admin, `update orders set invoice_approved = true, invoice_status = 'pending' where id = '${big}'`)
+    assert.equal((await pool.query(`select invoice_status || ' ' || invoice_approved as v from orders where id = $1`, [big])).rows[0].v, 'held false')
+    // The office approves it: it's invoiced whatever the limits.
+    await asUser(uid.admin, `select retry_order_invoice('${big}')`)
+    assert.ok((await pool.query(`select id from claim_order_invoices(50)`)).rows.some((r) => r.id === big))
+    // The day's number reached: the next one waits too.
+    const used = Number((await pool.query(`select count(*) from orders where invoice_auto_at > now() - interval '24 hours'`)).rows[0].count)
+    await asUser(uid.admin, `select qbo_set_limits(${used}, 100000)`)
+    const next = await order('next@example.com')
+    await pool.query(`select id from claim_order_invoices(50)`)
+    assert.equal((await pool.query(`select invoice_error from orders where id = $1`, [next])).rows[0].invoice_error, `The day’s ${used} automatic invoices have been sent: approve it to send the invoice.`)
+    await asUser(uid.admin, `select qbo_set_limits(${used + 1}, 100000)`)
+    const third = await order('third@example.com')
+    assert.ok((await pool.query(`select id from claim_order_invoices(50)`)).rows.some((r) => r.id === third), 'under the limit again')
+  })
+})
+
+describe('two-step sign-in for admins', () => {
+  test('an admin with only their password (aal1) has no admin access; a client is unaffected', async () => {
+    const full = Number((await asUser<{ n: string }>(uid.admin, `select count(*) as n from profiles`)).rows[0].n)
+    assert.ok(full > 1)
+    // Only their own profile (to know they're an admin and must do the second step).
+    assert.equal(Number((await asUser<{ n: string }>(uid.admin, `select count(*) as n from profiles`, [], 'aal1')).rows[0].n), 1)
+    assert.equal((await asUser<{ a: boolean }>(uid.admin, `select is_admin() as a`, [], 'aal1')).rows[0].a, false)
+    assert.equal((await asUser<{ a: boolean }>(uid.admin, `select has_perm('canManageStore') as a`, [], 'aal1')).rows[0].a, false)
+    assert.equal((await asUser<{ a: string | null }>(uid.admin, `select current_profile_id() as a`, [], 'aal1')).rows[0].a, null)
+    assert.equal(Number((await asUser<{ n: string }>(uid.admin, `select count(*) as n from orders`, [], 'aal1')).rows[0].n), 0)
+    assert.equal(Number((await asUser<{ n: string }>(uid.admin, `select count(*) as n from inbox`, [], 'aal1')).rows[0].n), 0)
+    await assert.rejects(asUser(uid.admin, `select retry_order_invoice('x')`, [], 'aal1'), /Manage store/)
+    assert.equal((await asUser<{ s: unknown }>(uid.admin, `select qbo_status() as s`, [], 'aal1')).rows[0].s, null)
+    await assert.rejects(asUser(uid.admin, `insert into sms_outbox (to_phone, message) values ('0400000000', 'hi')`, [], 'aal1'), /row-level security/)
+    // With the second step, everything is back.
+    assert.equal((await asUser<{ a: boolean }>(uid.admin, `select is_admin() as a`)).rows[0].a, true)
+    // A client's access doesn't depend on it.
+    const id = (await asUser<{ a: string }>(uid.sarah, `select current_profile_id() as a`, [], 'aal1')).rows[0].a
+    assert.ok(id)
+    assert.equal(id, (await asUser<{ a: string }>(uid.sarah, `select current_profile_id() as a`)).rows[0].a)
   })
 })

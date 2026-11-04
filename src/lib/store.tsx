@@ -1,6 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { RealtimeChannel, Session } from '@supabase/supabase-js'
 import type {
+  OrderInvoiceStatus,
+  QuickBooksStatus,
   OrderItem,
   AppData,
   DraftListing,
@@ -147,6 +149,14 @@ type NewRequest = Omit<MaintenanceRequest, 'id' | 'number' | 'createdAt' | 'stat
 type InboxDraft = Omit<InboxMessage, 'id' | 'createdAt' | 'read' | 'acknowledged'>
 
 /** A store order as the checkout sends it; prices are worked out by the database. */
+/** An order just placed: enough for the confirmation screen to show its invoice. */
+export interface PlacedOrder {
+  id: string
+  number: number
+  total: number
+  email: string
+}
+
 export interface OrderInput {
   /** options: option id → value id, one for each of the product's options. */
   items: { productId: string; qty: number; options?: Record<string, string> }[]
@@ -179,14 +189,30 @@ export interface NewProject {
 /**
  * - `loading`: checking the session or loading data (cloud mode)
  * - `set-password`: arrived from an invite or reset email and must choose a password
+ * - `two-step`: an admin signed in with their password must enter a code from their authenticator
+ *   app (or set one up first); until then the database gives them no admin access
  * - `ready`: normal operation (signed in or not)
  */
-export type Phase = 'loading' | 'set-password' | 'ready'
+export type Phase = 'loading' | 'set-password' | 'two-step' | 'ready'
+
+/** Setting up an authenticator app: the QR code to scan, and the key to type in instead. */
+export interface TwoStepSetup {
+  factorId: string
+  qr: string
+  secret: string
+}
 
 interface StoreValue {
   /** True when connected to Supabase; false in single-browser demo mode. */
   cloud: boolean
   phase: Phase
+  /** In the two-step phase: whether to set up an authenticator app first, or just enter a code. */
+  twoStep: 'set-up' | 'code' | null
+  /** The signed-in login's email, while it's not ready yet (the two-step screen shows it). */
+  cloudUserEmail?: string
+  startTwoStepSetup: () => Promise<TwoStepSetup>
+  /** Checks the code (from the app just set up, or the one already set up); then the portal loads. */
+  confirmTwoStep: (code: string, factorId?: string) => Promise<string | null>
   data: AppData
   user: UserAccount | null
   /** Problem saving or loading, shown as a banner. */
@@ -234,7 +260,7 @@ interface StoreValue {
   /** Published products for the public shop (visitors aren't signed in, so they don't have `data`). */
   loadCatalog: () => Promise<Product[]>
   /** Places a store order for anyone; throws with a message the customer can act on. */
-  placeOrder: (o: OrderInput) => Promise<{ number: number; total: number }>
+  placeOrder: (o: OrderInput) => Promise<PlacedOrder>
   /** Anyone, signed in or not: send a maintenance request (with photos) to the office. */
   submitLead: (l: LeadInput) => Promise<{ number: number }>
   leadPhotoUrls: (paths: string[]) => Promise<string[]>
@@ -271,6 +297,14 @@ interface StoreValue {
    * listing switched if it ran out or came back); with a link, it's only read.
    */
   checkSupplierStock: (target: { productId: string } | { url: string }) => Promise<SupplierStock>
+  /** QuickBooks: whether it's connected; the sign-in address to connect; disconnect; retry an order's invoice. */
+  quickBooksStatus: () => Promise<QuickBooksStatus>
+  connectQuickBooks: () => Promise<string>
+  disconnectQuickBooks: () => Promise<void>
+  setQuickBooksLimits: (dailyLimit: number, maxTotal: number) => Promise<void>
+  retryInvoice: (orderId: string) => Promise<void>
+  /** A just-placed order's invoice (its number and pay link), for the confirmation screen. */
+  orderInvoice: (orderId: string, email: string) => Promise<{ status: OrderInvoiceStatus; number: string; payLink: string } | null>
   /** Admins: create a project, with its client and property if they're new. Throws with a message if it can't be saved. */
   createProject: (p: NewProject) => Promise<Project>
   /** Message one person's inbox (admins). */
@@ -297,6 +331,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [demoSessionId, setDemoSessionId] = useState<string | null>(() => (CLOUD ? null : loadDemoSession()))
   const [cloudProfile, setCloudProfile] = useState<UserAccount | null>(null)
   const [phase, setPhase] = useState<Phase>(CLOUD ? 'loading' : 'ready')
+  const [twoStep, setTwoStep] = useState<'set-up' | 'code' | null>(null)
   const [syncError, setSyncError] = useState<string | null>(null)
   const [authNotice, setAuthNotice] = useState<string | null>(null)
   // Kept for this tab only, so a reload stays in the dashboard but a new tab starts as the admin.
@@ -471,6 +506,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setPhase('set-password')
         return
       }
+      // Admins need the second step before the database gives them anything.
+      if (profile.role === 'admin') {
+        const { data: aal } = await client.auth.mfa.getAuthenticatorAssuranceLevel()
+        if (aal?.currentLevel !== 'aal2') {
+          teardown()
+          setData(emptyData())
+          setTwoStep(aal?.nextLevel === 'aal2' ? 'code' : 'set-up')
+          setPhase('two-step')
+          return
+        }
+      }
+      setTwoStep(null)
       teardown()
       signedInAs.current = session.user.id
       setAuthNotice(null)
@@ -498,6 +545,33 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       teardown()
     }
   }, [refresh, setData])
+
+  const startTwoStepSetup = useCallback(async (): Promise<TwoStepSetup> => {
+    if (!supabase) throw new Error('Two-step sign-in is for the live portal.')
+    // A half-finished set-up from before is cleared first (each new one has its own QR code).
+    const { data: list } = await supabase.auth.mfa.listFactors()
+    for (const f of list?.all ?? []) if (f.factor_type === 'totp' && f.status !== 'verified') await supabase.auth.mfa.unenroll({ factorId: f.id })
+    const { data, error } = await supabase.auth.mfa.enroll({ factorType: 'totp', friendlyName: `Authenticator ${new Date().toISOString().slice(0, 16)}`, issuer: 'Next Phase Maintenance' })
+    if (error || !data) throw new Error(error?.message ?? 'Couldn’t start setting up the authenticator app.')
+    return { factorId: data.id, qr: data.totp.qr_code, secret: data.totp.secret }
+  }, [])
+
+  const confirmTwoStep = useCallback(async (code: string, factorId?: string): Promise<string | null> => {
+    if (!supabase) return null
+    const digits = code.replace(/\s/g, '')
+    if (!/^\d{6}$/.test(digits)) return 'Enter the 6-digit code from your authenticator app.'
+    let id = factorId
+    if (!id) {
+      const { data: list } = await supabase.auth.mfa.listFactors()
+      id = list?.totp[0]?.id
+      if (!id) return 'No authenticator app is set up for this login.'
+    }
+    const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId: id, code: digits })
+    if (error) return /invalid|expired/i.test(error.message) ? 'That code didn’t work. Check the time on your phone is set automatically, and enter the newest code.' : error.message
+    // Signed in with both steps now: the auth listener loads the portal.
+    setPhase('loading')
+    return null
+  }, [])
 
   // ───────────── identity ─────────────
 
@@ -940,7 +1014,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const placeOrder = useCallback(
-    async (o: OrderInput): Promise<{ number: number; total: number }> => {
+    async (o: OrderInput): Promise<PlacedOrder> => {
       if (supabase) {
         const { data: res, error } = await supabase.rpc('place_order', {
           p_items: o.items.map((i) => ({ product_id: i.productId, qty: i.qty, options: i.options ?? {} })),
@@ -953,8 +1027,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         })
         if (error) throw new Error(error.message)
         if (user) await refresh()
-        const r = res as { number: number; total: number | string }
-        return { number: r.number, total: Number(r.total) }
+        const r = res as { id: string; number: number; total: number | string }
+        return { id: r.id, number: r.number, total: Number(r.total), email: o.email.trim() }
       }
       // Demo mode follows the same rules as the database.
       const d0 = dataRef.current
@@ -999,9 +1073,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (bad.length) throw new Error(`No longer available: ${bad.join(', ')}`)
       const total = items.reduce((s, i) => s + i.unitPrice * i.qty, 0)
       const number = Math.max(5000, ...d0.orders.map((x) => x.number)) + 1
+      const id = uid('o')
       update((d) => {
         d.orders.unshift({
-          id: uid('o'),
+          id,
           number,
           customerId: user?.id,
           name: o.name.trim(),
@@ -1030,7 +1105,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           })
         }
       })
-      return { number, total }
+      return { id, number, total, email: o.email.trim() }
     },
     [update, refresh, user],
   )
@@ -1254,6 +1329,67 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return demoPhoto(`${colour} (demo)`, [...colour].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 0))
   }, [])
 
+  const quickBooksFn = useCallback(async (body: object) => {
+    const { data: auth } = await supabase!.auth.getSession()
+    const res = await fetch(`${FUNCTIONS_URL}/quickbooks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: ANON_KEY, Authorization: `Bearer ${auth.session?.access_token ?? ANON_KEY}` },
+      body: JSON.stringify(body),
+    })
+    const json = await res.json().catch(() => null)
+    if (!res.ok || !json) throw new Error(json?.error ?? `QuickBooks couldn’t be reached (${res.status}). Try again.`)
+    return json
+  }, [])
+
+  const quickBooksStatus = useCallback(async (): Promise<QuickBooksStatus> => {
+    if (!supabase) return { connected: false, dailyLimit: 20, maxTotal: 5000 }
+    const { data, error } = await supabase.rpc('qbo_status')
+    if (error) throw new Error(error.message)
+    const r = (data ?? {}) as { connected?: boolean; company?: string; connected_at?: string; last_error?: string; daily_limit?: number; max_total?: number | string }
+    return {
+      connected: !!r.connected,
+      company: r.company || undefined,
+      connectedAt: r.connected_at || undefined,
+      lastError: r.last_error || undefined,
+      dailyLimit: r.daily_limit ?? 20,
+      maxTotal: Number(r.max_total ?? 5000),
+    }
+  }, [])
+
+  const setQuickBooksLimits = useCallback(async (dailyLimit: number, maxTotal: number) => {
+    if (!supabase) throw new Error('QuickBooks connects in live mode only.')
+    const { error } = await supabase.rpc('qbo_set_limits', { p_daily: dailyLimit, p_max: maxTotal })
+    if (error) throw new Error(error.message)
+  }, [])
+
+  const connectQuickBooks = useCallback(async () => {
+    if (!supabase) throw new Error('QuickBooks connects in live mode only.')
+    return ((await quickBooksFn({ action: 'connect' })) as { url: string }).url
+  }, [quickBooksFn])
+
+  const disconnectQuickBooks = useCallback(async () => {
+    if (!supabase) return
+    await quickBooksFn({ action: 'disconnect' })
+  }, [quickBooksFn])
+
+  const retryInvoice = useCallback(
+    async (orderId: string) => {
+      if (!supabase) return
+      const { error } = await supabase.rpc('retry_order_invoice', { p_id: orderId })
+      if (error) throw new Error(error.message)
+      await refresh()
+    },
+    [refresh],
+  )
+
+  const orderInvoice = useCallback(async (orderId: string, email: string) => {
+    if (!supabase) return null
+    const { data, error } = await supabase.rpc('order_invoice', { p_id: orderId, p_email: email })
+    if (error || !data) return null
+    const r = data as { status: OrderInvoiceStatus; number: string; pay_link: string }
+    return { status: r.status, number: r.number, payLink: r.pay_link }
+  }, [])
+
   const checkSupplierStock = useCallback(
     async (target: { productId: string } | { url: string }): Promise<SupplierStock> => {
       if (supabase) {
@@ -1400,6 +1536,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setNewPassword,
     acceptLink,
     logout,
+    twoStep,
+    cloudUserEmail: cloudProfile?.email,
+    startTwoStepSetup,
+    confirmTwoStep,
     changePassword,
     notifyAdmins,
     sendSms,
@@ -1420,6 +1560,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     recreatePhotos,
     colourPhoto,
     checkSupplierStock,
+    quickBooksStatus,
+    connectQuickBooks,
+    disconnectQuickBooks,
+    setQuickBooksLimits,
+    retryInvoice,
+    orderInvoice,
     assignRequest,
     pushInbox,
     pushAdminInbox,

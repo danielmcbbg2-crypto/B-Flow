@@ -16,6 +16,9 @@ create function auth.uid() returns uuid language sql stable as $$
     (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')
   )::uuid
 $$;
+create function auth.jwt() returns jsonb language sql stable as $$
+  select coalesce(nullif(current_setting('request.jwt.claims', true), '')::jsonb, '{}'::jsonb)
+$$;
 grant usage on schema auth to anon, authenticated, service_role;
 -- Supabase Auth creates logins as this non-superuser role, which fires the sign-up trigger.
 grant usage on schema auth to supabase_auth_admin;

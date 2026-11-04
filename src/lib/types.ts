@@ -537,6 +537,39 @@ export interface StoreOrder {
   adminNotes: string
   createdAt: string
   items: OrderItem[]
+  /** Its QuickBooks invoice (recorded by the server only). */
+  invoice?: OrderInvoice
+}
+
+export type OrderInvoiceStatus = 'pending' | 'working' | 'sent' | 'failed' | 'paid' | 'voided' | 'refund_needed' | 'skipped' | 'held'
+export const ORDER_INVOICE_LABEL: Record<OrderInvoiceStatus, string> = {
+  pending: 'Being invoiced',
+  working: 'Being invoiced',
+  sent: 'Invoice sent',
+  failed: 'Invoice failed',
+  paid: 'Paid',
+  voided: 'Invoice voided',
+  refund_needed: 'Refund needed',
+  held: 'Awaiting approval',
+  skipped: 'Not invoiced',
+}
+
+export interface OrderInvoice {
+  status: OrderInvoiceStatus
+  number: string
+  payLink: string
+  error: string
+}
+
+/** Whether QuickBooks is connected (office only). */
+export interface QuickBooksStatus {
+  connected: boolean
+  company?: string
+  connectedAt?: string
+  lastError?: string
+  /** Limits on automatic invoices: how many in 24 hours, and the largest (inc. GST). Past them, an order waits for approval. */
+  dailyLimit: number
+  maxTotal: number
 }
 
 /** A product the AI assistant found on the web. */
