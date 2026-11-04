@@ -14,9 +14,23 @@
 // QBO_ENVIRONMENT=sandbox while testing with a sandbox company. The connection's tokens are kept in
 // public.qbo_connection, which only the server can read, and are encrypted there (seal.ts) with a key
 // only this function has (QBO_TOKEN_KEY, or one derived from QBO_CLIENT_SECRET).
+// The connection is locked to one QuickBooks company: QBO_REALM_ID if set, otherwise the first one
+// connected. Connecting another is refused, and every connect, disconnect and refused attempt is
+// sent to all admins (inbox and text), so a stolen admin login can't quietly swap in someone else's
+// company (and its pay links).
 import { createClient } from 'npm:@supabase/supabase-js@2.49.4'
 import { seal, tokenKey, unseal } from './seal.ts'
 import { customerBody, displayName, invoiceBody, qboError, qboErrorCode, quoted, type ItemRow, type OrderRow } from './invoice.ts'
+
+/** Whether the login has done its second sign-in step (its token, already checked by getUser, says "aal2"). Admin powers need it. */
+function secondStep(jwt: string): boolean {
+  try {
+    const p = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+    return JSON.parse(atob(p + '='.repeat((4 - (p.length % 4)) % 4))).aal === 'aal2'
+  } catch {
+    return false
+  }
+}
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -36,6 +50,7 @@ const REDIRECT_URI = Deno.env.get('QBO_REDIRECT_URI') ?? `${Deno.env.get('SUPABA
 const RETURN_URL = (Deno.env.get('QBO_RETURN_URL') ?? 'https://portal.nextphasemaintenance.com.au').replace(/\/+$/, '')
 const CLIENT_ID = Deno.env.get('QBO_CLIENT_ID') ?? ''
 const CLIENT_SECRET = Deno.env.get('QBO_CLIENT_SECRET') ?? ''
+const REALM_LOCK = (Deno.env.get('QBO_REALM_ID') ?? '').trim()
 const basic = () => 'Basic ' + btoa(`${CLIENT_ID}:${CLIENT_SECRET}`)
 
 type Conn = {
@@ -170,6 +185,29 @@ async function adminsNote(title: string, body: string) {
   const to = (admins ?? []).filter((a) => (a.permissions as string[]).includes('canManageStore'))
   if (to.length) await db.from('inbox').insert(to.map((a) => ({ user_id: a.id, title: title.slice(0, 200), body: body.slice(0, 2000) })))
 }
+
+/**
+ * A change to the QuickBooks connection, to every active admin: an inbox message, and a text to
+ * the office alert numbers and admins' mobiles (sent by process-sms-outbox).
+ */
+async function securityAlert(title: string, body: string) {
+  const { data: admins } = await db.from('profiles').select('id, phone').eq('role', 'admin').eq('status', 'active')
+  if (admins?.length) await db.from('inbox').insert(admins.map((a) => ({ user_id: a.id, title: title.slice(0, 200), body: body.slice(0, 2000) })))
+  const { data: settings } = await db.from('settings').select('sms').eq('id', 1).maybeSingle()
+  const phones = new Map<string, string>()
+  for (const p of [...(((settings?.sms as { recipients?: string[] } | null)?.recipients) ?? []), ...(admins ?? []).map((a) => a.phone as string)]) {
+    const digits = (p ?? '').replace(/\D/g, '')
+    if (digits.length >= 8 && !phones.has(digits.slice(-9))) phones.set(digits.slice(-9), p.trim())
+  }
+  if (phones.size) {
+    const message = `Next Phase portal: ${title}. ${body}`.slice(0, 480)
+    const { error } = await db.from('sms_outbox').insert([...phones.values()].map((to_phone) => ({ to_phone, message, event: 'QuickBooks connection', source: 'security' })))
+    if (error) console.error('quickbooks alert text not queued:', error.message)
+  }
+}
+
+const personName = async (id: string | null) =>
+  id ? (((await db.from('profiles').select('name').eq('id', id).maybeSingle()).data?.name as string | undefined) ?? 'an admin') : 'an admin'
 
 /** Creates the order's invoice in QuickBooks and has QuickBooks email it. */
 async function invoiceOrder(conn: Conn, o: OrderRow & { qbo_invoice_id: string | null; invoice_attempts: number }) {
@@ -306,7 +344,7 @@ async function manager(req: Request) {
   const { data: auth } = await db.auth.getUser(jwt)
   if (!auth.user) return null
   const { data: me } = await db.from('profiles').select('id, role, permissions').eq('auth_id', auth.user.id).eq('status', 'active').maybeSingle()
-  return me && me.role === 'admin' && (me.permissions.includes('canManageStore') || me.permissions.includes('canManageInvoices')) ? me : null
+  return me && me.role === 'admin' && secondStep(jwt) && (me.permissions.includes('canManageStore') || me.permissions.includes('canManageInvoices')) ? me : null
 }
 
 const back = (outcome: string) => Response.redirect(`${RETURN_URL}/#/admin/store?quickbooks=${encodeURIComponent(outcome)}`, 302)
@@ -317,10 +355,19 @@ async function callback(url: URL) {
   const code = url.searchParams.get('code') ?? ''
   const state = url.searchParams.get('state') ?? ''
   const realm = url.searchParams.get('realmId') ?? ''
-  const { data: c } = await db.from('qbo_connection').select('oauth_state, oauth_state_at, oauth_by').eq('id', 1).maybeSingle()
+  const { data: c } = await db.from('qbo_connection').select('oauth_state, oauth_state_at, oauth_by, pinned_realm_id').eq('id', 1).maybeSingle()
   const fresh = c?.oauth_state_at && Date.now() - new Date(c.oauth_state_at).getTime() < 15 * 60_000
   if (!code || !realm || !state || !c?.oauth_state || c.oauth_state !== state || !fresh) return back('expired')
   await saveConn({ oauth_state: null, oauth_state_at: null })
+  // Only our own QuickBooks company. (The code isn't exchanged, so nothing of the other company is touched.)
+  const allowed = REALM_LOCK || c.pinned_realm_id
+  if (allowed && realm !== allowed) {
+    await securityAlert(
+      'QuickBooks: another company was refused',
+      `${await personName(c.oauth_by)} tried to connect a different QuickBooks company (ID ${realm}) to the store. It was refused; the store stays with your own company. If this wasn't you or your team, change that admin's password straight away.`,
+    )
+    return back('wrong_company')
+  }
   const r = await tokenRequest({ grant_type: 'authorization_code', code, redirect_uri: REDIRECT_URI })
   if (!r.ok || !r.body.access_token || !r.body.refresh_token) {
     console.error('quickbooks connect failed:', JSON.stringify(r.body).slice(0, 300))
@@ -343,7 +390,11 @@ async function callback(url: URL) {
     /* the name is only for show */
   }
   // A new connection (perhaps to another company) starts afresh.
-  await saveConn({ ...conn, company_name: company, connected_by: c.oauth_by, last_error: '', run_lock_until: null })
+  await saveConn({ ...conn, company_name: company, connected_by: c.oauth_by, last_error: '', run_lock_until: null, pinned_realm_id: c.pinned_realm_id ?? realm })
+  await securityAlert(
+    'QuickBooks connected',
+    `${await personName(c.oauth_by)} connected the store to QuickBooks${company ? ` (${company})` : ''}. New store orders are now invoiced there. If this wasn't you or your team, disconnect it in Admin → Store → Orders and change your passwords.`,
+  )
   return back('connected')
 }
 
@@ -384,6 +435,7 @@ Deno.serve(async (req) => {
       await fetch(REVOKE_URL, { method: 'POST', headers: { Authorization: basic(), 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ token: conn.refresh_token }) }).catch(() => {})
     }
     await saveConn({ realm_id: null, refresh_token: null, access_token: null, access_expires_at: null, company_name: '', connected_at: null, connected_by: null, item_id: null, tax_code_id: null, last_error: '' })
+    await securityAlert('QuickBooks disconnected', `${await personName(me.id)} disconnected the store from QuickBooks. New orders won't be invoiced until it's connected again.`)
     return json({ disconnected: true })
   }
 

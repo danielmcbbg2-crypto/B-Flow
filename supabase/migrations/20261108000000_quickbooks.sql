@@ -30,6 +30,9 @@ create table public.qbo_connection (
   oauth_by          text references public.profiles (id) on delete set null,
   -- One sync at a time (QuickBooks hands out a new refresh token when it's used).
   run_lock_until    timestamptz,
+  -- The one QuickBooks company the store may connect to (the first connected; QBO_REALM_ID overrides).
+  -- Disconnecting keeps it, so a stolen admin login can't swap in another company.
+  pinned_realm_id   text,
   -- Limits on automatic invoices: how many in 24 hours, and the most one may be (inc. GST).
   auto_daily_limit  int not null default 20 check (auto_daily_limit between 0 and 1000),
   auto_max_total    numeric(12,2) not null default 5000 check (auto_max_total >= 0)

@@ -114,6 +114,7 @@ const QB_RETURN: Record<string, string> = {
   connected: 'QuickBooks is connected. New orders are invoiced and emailed straight away.',
   declined: 'QuickBooks wasn’t connected: the connection was declined.',
   expired: 'That QuickBooks sign-in had expired or didn’t match. Click Connect QuickBooks to try again.',
+  wrong_company: 'That’s a different QuickBooks company from the one this store uses, so it wasn’t connected (all admins have been told). Sign in to your own company, or see the README to change company.',
   error: 'QuickBooks couldn’t be connected. Try again, and check the app’s keys in the Supabase secrets.',
 }
 

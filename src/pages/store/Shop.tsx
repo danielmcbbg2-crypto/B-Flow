@@ -11,6 +11,7 @@ import { SITE_URL, usePageMeta } from '../../lib/head'
 import { productMeta, productPath, STORE_META } from '../../lib/seo'
 import { ORDER_STATUS_LABEL, STOCK_LABEL, STORE_CATEGORIES, type OrderInvoiceStatus, type OrderStatus, type Product, type ProductOptionValue, type UserAccount } from '../../lib/types'
 import { cx, fmtDate, money } from '../../lib/utils'
+import { PaymentSafety } from '../../components/PaymentSafety'
 
 const STOCK_TONE: Record<Product['stock'], Tone> = { in_stock: 'green', to_order: 'outline', out_of_stock: 'red' }
 const ORDER_TONE: Record<OrderStatus, Tone> = { new: 'orange', confirmed: 'outline', paid: 'dark', fulfilled: 'green', cancelled: 'red' }
@@ -384,9 +385,10 @@ function Checkout({
           <textarea className="input min-h-[70px]" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Colour, sizes, install needed, best time to call…" />
         </Field>
         <p className="text-xs text-slate-500">
-          No payment now. We'll confirm availability{form.delivery === 'delivery' ? ' and delivery cost' : ''}, then send an invoice to pay by bank transfer.
+          No payment now. We'll email your invoice with ways to pay, and confirm availability{form.delivery === 'delivery' ? ' and the delivery cost' : ''} with you.
           {user?.role === 'provider' && user.status === 'active' && ' Trade prices apply to your account.'}
         </p>
+        <PaymentSafety />
         {acting && <p className="text-sm text-red-600">Orders can't be placed from someone else's dashboard.</p>}
         {error && <p className="text-sm text-red-600">{error}</p>}
         <button className="btn-primary w-full" disabled={busy || acting || missing.length > 0 || tooMany}>
@@ -520,6 +522,7 @@ function OrderPlaced({ placed, onDone }: { placed: PlacedOrder; onDone: () => vo
           availability and email you an invoice with payment details.
         </p>
       )}
+      <PaymentSafety className="mx-auto mt-5 max-w-sm text-left" />
       <div className="mt-6 flex justify-center gap-2">
         <button className={invoice?.payLink ? 'btn-ghost' : 'btn-primary'} onClick={onDone}>Keep shopping</button>
       </div>

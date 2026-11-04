@@ -189,14 +189,30 @@ export interface NewProject {
 /**
  * - `loading`: checking the session or loading data (cloud mode)
  * - `set-password`: arrived from an invite or reset email and must choose a password
+ * - `two-step`: an admin signed in with their password must enter a code from their authenticator
+ *   app (or set one up first); until then the database gives them no admin access
  * - `ready`: normal operation (signed in or not)
  */
-export type Phase = 'loading' | 'set-password' | 'ready'
+export type Phase = 'loading' | 'set-password' | 'two-step' | 'ready'
+
+/** Setting up an authenticator app: the QR code to scan, and the key to type in instead. */
+export interface TwoStepSetup {
+  factorId: string
+  qr: string
+  secret: string
+}
 
 interface StoreValue {
   /** True when connected to Supabase; false in single-browser demo mode. */
   cloud: boolean
   phase: Phase
+  /** In the two-step phase: whether to set up an authenticator app first, or just enter a code. */
+  twoStep: 'set-up' | 'code' | null
+  /** The signed-in login's email, while it's not ready yet (the two-step screen shows it). */
+  cloudUserEmail?: string
+  startTwoStepSetup: () => Promise<TwoStepSetup>
+  /** Checks the code (from the app just set up, or the one already set up); then the portal loads. */
+  confirmTwoStep: (code: string, factorId?: string) => Promise<string | null>
   data: AppData
   user: UserAccount | null
   /** Problem saving or loading, shown as a banner. */
@@ -315,6 +331,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [demoSessionId, setDemoSessionId] = useState<string | null>(() => (CLOUD ? null : loadDemoSession()))
   const [cloudProfile, setCloudProfile] = useState<UserAccount | null>(null)
   const [phase, setPhase] = useState<Phase>(CLOUD ? 'loading' : 'ready')
+  const [twoStep, setTwoStep] = useState<'set-up' | 'code' | null>(null)
   const [syncError, setSyncError] = useState<string | null>(null)
   const [authNotice, setAuthNotice] = useState<string | null>(null)
   // Kept for this tab only, so a reload stays in the dashboard but a new tab starts as the admin.
@@ -489,6 +506,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setPhase('set-password')
         return
       }
+      // Admins need the second step before the database gives them anything.
+      if (profile.role === 'admin') {
+        const { data: aal } = await client.auth.mfa.getAuthenticatorAssuranceLevel()
+        if (aal?.currentLevel !== 'aal2') {
+          teardown()
+          setData(emptyData())
+          setTwoStep(aal?.nextLevel === 'aal2' ? 'code' : 'set-up')
+          setPhase('two-step')
+          return
+        }
+      }
+      setTwoStep(null)
       teardown()
       signedInAs.current = session.user.id
       setAuthNotice(null)
@@ -516,6 +545,33 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       teardown()
     }
   }, [refresh, setData])
+
+  const startTwoStepSetup = useCallback(async (): Promise<TwoStepSetup> => {
+    if (!supabase) throw new Error('Two-step sign-in is for the live portal.')
+    // A half-finished set-up from before is cleared first (each new one has its own QR code).
+    const { data: list } = await supabase.auth.mfa.listFactors()
+    for (const f of list?.all ?? []) if (f.factor_type === 'totp' && f.status !== 'verified') await supabase.auth.mfa.unenroll({ factorId: f.id })
+    const { data, error } = await supabase.auth.mfa.enroll({ factorType: 'totp', friendlyName: `Authenticator ${new Date().toISOString().slice(0, 16)}`, issuer: 'Next Phase Maintenance' })
+    if (error || !data) throw new Error(error?.message ?? 'Couldn’t start setting up the authenticator app.')
+    return { factorId: data.id, qr: data.totp.qr_code, secret: data.totp.secret }
+  }, [])
+
+  const confirmTwoStep = useCallback(async (code: string, factorId?: string): Promise<string | null> => {
+    if (!supabase) return null
+    const digits = code.replace(/\s/g, '')
+    if (!/^\d{6}$/.test(digits)) return 'Enter the 6-digit code from your authenticator app.'
+    let id = factorId
+    if (!id) {
+      const { data: list } = await supabase.auth.mfa.listFactors()
+      id = list?.totp[0]?.id
+      if (!id) return 'No authenticator app is set up for this login.'
+    }
+    const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId: id, code: digits })
+    if (error) return /invalid|expired/i.test(error.message) ? 'That code didn’t work. Check the time on your phone is set automatically, and enter the newest code.' : error.message
+    // Signed in with both steps now: the auth listener loads the portal.
+    setPhase('loading')
+    return null
+  }, [])
 
   // ───────────── identity ─────────────
 
@@ -1480,6 +1536,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setNewPassword,
     acceptLink,
     logout,
+    twoStep,
+    cloudUserEmail: cloudProfile?.email,
+    startTwoStepSetup,
+    confirmTwoStep,
     changePassword,
     notifyAdmins,
     sendSms,

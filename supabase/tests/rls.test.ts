@@ -12,12 +12,13 @@ import type { AppData } from '../../src/lib/types'
 const pool = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL })
 
 /** Runs each statement as the given auth user under the `authenticated` role, like PostgREST does. */
-async function asUser<T>(uid: string, sql: string, params: unknown[] = []): Promise<pg.QueryResult<T & pg.QueryResultRow>> {
+// Signed in, having done the second sign-in step (aal2) unless aal says otherwise.
+async function asUser<T>(uid: string, sql: string, params: unknown[] = [], aal: 'aal1' | 'aal2' = 'aal2'): Promise<pg.QueryResult<T & pg.QueryResultRow>> {
   const c = await pool.connect()
   try {
     await c.query('begin')
     await c.query('set local role authenticated')
-    await c.query(`select set_config('request.jwt.claims', $1, true)`, [JSON.stringify({ sub: uid, role: 'authenticated' })])
+    await c.query(`select set_config('request.jwt.claims', $1, true)`, [JSON.stringify({ sub: uid, role: 'authenticated', aal })])
     const r = await c.query<T & pg.QueryResultRow>(sql, params)
     await c.query('commit')
     return r
@@ -1695,5 +1696,28 @@ describe('quickbooks invoices', () => {
     await asUser(uid.admin, `select qbo_set_limits(${used + 1}, 100000)`)
     const third = await order('third@example.com')
     assert.ok((await pool.query(`select id from claim_order_invoices(50)`)).rows.some((r) => r.id === third), 'under the limit again')
+  })
+})
+
+describe('two-step sign-in for admins', () => {
+  test('an admin with only their password (aal1) has no admin access; a client is unaffected', async () => {
+    const full = Number((await asUser<{ n: string }>(uid.admin, `select count(*) as n from profiles`)).rows[0].n)
+    assert.ok(full > 1)
+    // Only their own profile (to know they're an admin and must do the second step).
+    assert.equal(Number((await asUser<{ n: string }>(uid.admin, `select count(*) as n from profiles`, [], 'aal1')).rows[0].n), 1)
+    assert.equal((await asUser<{ a: boolean }>(uid.admin, `select is_admin() as a`, [], 'aal1')).rows[0].a, false)
+    assert.equal((await asUser<{ a: boolean }>(uid.admin, `select has_perm('canManageStore') as a`, [], 'aal1')).rows[0].a, false)
+    assert.equal((await asUser<{ a: string | null }>(uid.admin, `select current_profile_id() as a`, [], 'aal1')).rows[0].a, null)
+    assert.equal(Number((await asUser<{ n: string }>(uid.admin, `select count(*) as n from orders`, [], 'aal1')).rows[0].n), 0)
+    assert.equal(Number((await asUser<{ n: string }>(uid.admin, `select count(*) as n from inbox`, [], 'aal1')).rows[0].n), 0)
+    await assert.rejects(asUser(uid.admin, `select retry_order_invoice('x')`, [], 'aal1'), /Manage store/)
+    assert.equal((await asUser<{ s: unknown }>(uid.admin, `select qbo_status() as s`, [], 'aal1')).rows[0].s, null)
+    await assert.rejects(asUser(uid.admin, `insert into sms_outbox (to_phone, message) values ('0400000000', 'hi')`, [], 'aal1'), /row-level security/)
+    // With the second step, everything is back.
+    assert.equal((await asUser<{ a: boolean }>(uid.admin, `select is_admin() as a`)).rows[0].a, true)
+    // A client's access doesn't depend on it.
+    const id = (await asUser<{ a: string }>(uid.sarah, `select current_profile_id() as a`, [], 'aal1')).rows[0].a
+    assert.ok(id)
+    assert.equal(id, (await asUser<{ a: string }>(uid.sarah, `select current_profile_id() as a`)).rows[0].a)
   })
 })

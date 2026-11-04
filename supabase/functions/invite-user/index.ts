@@ -9,6 +9,16 @@
 //   { action: 'delete', profileId }  removes the login and the profile.
 import { createClient } from 'npm:@supabase/supabase-js@2.49.4'
 
+/** Whether the login has done its second sign-in step (its token, already checked by getUser, says "aal2"). Admin powers need it. */
+function secondStep(jwt: string): boolean {
+  try {
+    const p = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+    return JSON.parse(atob(p + '='.repeat((4 - (p.length % 4)) % 4))).aal === 'aal2'
+  } catch {
+    return false
+  }
+}
+
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -56,7 +66,7 @@ Deno.serve(async (req) => {
   const { data: auth } = await db.auth.getUser(jwt)
   if (!auth.user) return json({ error: 'Not signed in' }, 401)
   const { data: me } = await db.from('profiles').select('id, role, permissions').eq('auth_id', auth.user.id).eq('status', 'active').maybeSingle()
-  if (!me || me.role !== 'admin' || !me.permissions.includes('canEditPermissions')) {
+  if (!me || me.role !== 'admin' || !me.permissions.includes('canEditPermissions') || !secondStep(jwt)) {
     return json({ error: 'You need the “Edit accounts & permissions” permission' }, 403)
   }
 

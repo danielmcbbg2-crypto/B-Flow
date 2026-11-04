@@ -11,6 +11,7 @@ import { StorePage } from './pages/store/Shop'
 import { ServicePage } from './pages/ServicePage'
 import { useNoIndex } from './lib/head'
 import { pageView } from './lib/analytics'
+import { TwoStepScreen } from './components/TwoStepScreen'
 
 export function App() {
   const { user, phase, cloud, actingAs, stopActingAs } = useStore()
@@ -52,6 +53,8 @@ export function App() {
   // The shop is open to everyone, signed in or not.
   if (area === 'store') return <StorePage productId={route[1]} />
   if (area === 'services') return <ServicePage slug={route[1] ?? ''} />
+  // An admin who has only entered their password: the second step, before anything else of theirs.
+  if (phase === 'two-step') return <TwoStepScreen />
   if (isPortal && phase === 'loading') {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-3 text-sm text-slate-500">
