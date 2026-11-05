@@ -413,6 +413,11 @@ export interface SmsSettings {
   /** Text website enquiries back straight away with `autoReplyMessage` ({first_name} is filled in). */
   autoReply: boolean
   autoReplyMessage: string
+  /** Text clients about issued quotes they haven't answered, `quoteFollowUpDays` days after issuing. */
+  quoteFollowUps: boolean
+  quoteFollowUpDays: number[]
+  /** {first_name}, {title}, {amount}, {valid_until} and {link} are filled in. */
+  quoteFollowUpMessage: string
 }
 
 export const DEFAULT_SMS: SmsSettings = {
@@ -426,6 +431,9 @@ export const DEFAULT_SMS: SmsSettings = {
   bookingReminderTexts: true,
   autoReply: false,
   autoReplyMessage: "Hi {first_name}, it's Daniel from Next Phase Maintenance. Thanks for your enquiry, we've got it. If you can, reply with a few photos of the job and we'll come back to you with a quote.",
+  quoteFollowUps: false,
+  quoteFollowUpDays: [3, 7],
+  quoteFollowUpMessage: "Hi {first_name}, it's Daniel from Next Phase Maintenance. Just checking you got our quote for {title}: {amount} inc. GST{valid_until}. You can read it and accept it here: {link} Happy to answer any questions.",
 }
 
 export interface BankDetails {

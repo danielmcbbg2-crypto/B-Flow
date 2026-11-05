@@ -58,6 +58,12 @@ export function AdminQuotes() {
         <Stat label="Win rate (90 days)" value={stats.winRate === undefined ? '—' : `${stats.winRate}%`} hint={`${stats.wonCount} of ${stats.wonCount + stats.lostCount} answered`} />
         <Stat label="Average quote" value={stats.averageQuote === undefined ? '—' : money(stats.averageQuote)} hint={`${stats.issuedCount} issued in 90 days`} />
       </div>
+      <p className="-mt-3 mb-6 text-sm text-slate-600">
+        {data.smsSettings.quoteFollowUps
+          ? `Automatic follow-up texts are on: clients get a text with their quote's link ${data.smsSettings.quoteFollowUpDays.join(' and ')} days after it's issued, while it's unanswered.`
+          : 'Automatic follow-up texts are off.'}{' '}
+        <a className="underline" href="#/admin/sms">{data.smsSettings.quoteFollowUps ? 'Change' : 'Switch them on'}</a>
+      </p>
 
       {(chase.length > 0 || expiring.length > 0) && (
         <section className="card mb-6 overflow-hidden" aria-labelledby="chase-title">

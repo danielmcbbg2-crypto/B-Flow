@@ -178,6 +178,16 @@ export function SmsGateway() {
                 <textarea className="input min-h-[80px] text-sm" maxLength={480} value={s.autoReplyMessage} onChange={(e) => set({ autoReplyMessage: e.target.value })} />
               </Field>
             )}
+            <label className="flex items-start gap-2 text-sm">
+              <input type="checkbox" className="mt-0.5 h-4 w-4 accent-slate-900" checked={s.quoteFollowUps} onChange={(e) => set({ quoteFollowUps: e.target.checked })} />
+              <span>
+                Quote follow-ups: text clients about quotes they haven't answered, with the quote's link
+                <span className="block text-xs text-slate-500">
+                  Sent in the morning, a set number of days after the quote was issued. Not once it's answered or expired, or within 2 days of you following it up yourself.
+                </span>
+              </span>
+            </label>
+            {s.quoteFollowUps && <QuoteFollowUpSettings s={s} set={set} />}
           </div>
 
           <div className="space-y-2 border-t border-slate-100 pt-5">
@@ -278,3 +288,30 @@ export function SmsGateway() {
     </>
   )
 }
+
+/** When quote follow-up texts go (days after issuing) and what they say. */
+function QuoteFollowUpSettings({ s, set }: { s: SmsSettings; set: (patch: Partial<SmsSettings>) => void }) {
+  const [days, setDays] = useState(s.quoteFollowUpDays.join(', '))
+  const parsed = [...new Set(days.split(/[\s,]+/).filter(Boolean).map(Number))].filter((n) => Number.isInteger(n) && n > 0 && n <= 90).sort((a, b) => a - b)
+  return (
+    <div className="ml-6 space-y-3">
+      <Field label="Days after issuing (e.g. 3, 7)">
+        <input
+          className="input num w-40"
+          value={days}
+          onChange={(e) => setDays(e.target.value)}
+          onBlur={() => {
+            const next = parsed.length ? parsed.slice(0, 4) : [3, 7]
+            setDays(next.join(', '))
+            set({ quoteFollowUpDays: next })
+          }}
+        />
+      </Field>
+      <Field label="Text ({first_name}, {title}, {amount}, {valid_until} and {link} are filled in)">
+        <textarea className="input min-h-[90px] text-sm" maxLength={480} value={s.quoteFollowUpMessage} onChange={(e) => set({ quoteFollowUpMessage: e.target.value })} />
+      </Field>
+      {!s.quoteFollowUpMessage.includes('{link}') && <p className="text-xs text-amber-700">Add {'{link}'} so the client can open and accept the quote from the text.</p>}
+    </div>
+  )
+}
+

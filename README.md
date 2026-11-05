@@ -68,6 +68,7 @@ Some texts go out on their own, without anyone tapping Send. **ClickSend** sends
 - **Booking reminders:** the afternoon before each booking (5 pm in summer, 4 pm in winter, Melbourne time), the trade and the client are texted the time, address and job. This covers project tasks on running projects and scheduled maintenance jobs. It reaches everyone with a mobile on file, including people without a portal login, and each booking is texted once per person. On by default.
 - **Office alerts:** a text to your admin phones when a client lodges a request (Admin → Text messages → Office alerts).
 - **Website enquiry auto-reply** (off until you switch it on): texts people back straight away when they send a maintenance request from the website, in your own words.
+- **Quote follow-ups** (off until you switch it on): each morning, the client of every issued quote they haven't answered gets a text with the quote's link, a set number of days after it was issued (3 and 7 to start), in your own words ({first_name}, {title}, {amount}, {valid_until} and {link} are filled in). Not once it's answered or has expired, or within 2 days of you following it up yourself; each counts as a follow-up on the Quotes board. Clients need a mobile on file.
 
 These texts don't appear in your iPhone's Messages. They're listed in the **Automatic text log** (Admin → Text messages) with whether ClickSend accepted them. Booking reminders that went out are ticked off as "Auto-texted" in the booking reminders queue. Texts you write yourself still open in Messages on your phone (section 4).
 

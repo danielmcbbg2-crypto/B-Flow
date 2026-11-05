@@ -1859,3 +1859,47 @@ describe('quote link and deposit', () => {
     assert.equal((await pool.query(`select count(*) from claim_deposit_invoices(50)`)).rows[0].count, '0', 'not claimed twice')
   })
 })
+
+describe('automatic quote follow-ups', () => {
+  const issued = async (title: string, daysAgo: number, phone = '0400 777 888') => {
+    const client = (await pool.query(`insert into profiles (name, email, phone, role, status) values ('Fay Follow', 'fay-${title}@example.com', $1, 'client', 'active') returning id`, [phone])).rows[0].id
+    const prop = (await pool.query(`insert into properties (client_id, address) values ($1, '3 Oak St') returning id`, [client])).rows[0].id
+    const id = (await pool.query(`insert into projects (client_id, property_id, title, quote_amount, status) values ($1, $2, $3, 4400, 'quoted') returning id`, [client, prop, title])).rows[0].id
+    await pool.query(`update projects set quote_issued_at = now() - make_interval(days => $2) where id = $1`, [id, daysAgo])
+    return id
+  }
+  const texts = async (id: string) => (await pool.query(`select message, event from sms_outbox where source = 'quote_followup' and event like 'Quote follow-up · P-' || (select number from projects where id = $1) || ' · %' order by created_at`, [id])).rows
+  const on = (patch: object) => pool.query(`update settings set sms = sms || $1::jsonb where id = 1`, [JSON.stringify(patch)])
+
+  test('off until switched on; then due quotes get one text with their link, once', async () => {
+    const id = await issued('Fence fu', 3)
+    assert.equal((await pool.query(`select send_quote_followups()`)).rows[0].send_quote_followups, 0)
+    await on({ quoteFollowUps: true, quoteFollowUpDays: [3, 7] })
+    await pool.query(`select send_quote_followups()`)
+    const [t] = await texts(id)
+    const token = (await pool.query(`select quote_token from projects where id = $1`, [id])).rows[0].quote_token
+    assert.equal(t.message, `Hi Fay, it's Daniel from Next Phase Maintenance. Just checking you got our quote for Fence fu: $4,400.00 inc. GST. You can read it and accept it here: https://portal.nextphasemaintenance.com.au/#/quote/${token} Happy to answer any questions.`)
+    assert.match(t.event, / · 1$/)
+    assert.equal((await pool.query(`select quote_followed_up_at > now() - interval '1 minute' as ok from projects where id = $1`, [id])).rows[0].ok, true)
+    await pool.query(`select send_quote_followups()`)
+    assert.equal((await texts(id)).length, 1, 'not twice')
+  })
+
+  test('the next step goes out later; never when answered, expired, followed up recently or without a mobile', async () => {
+    await on({ quoteFollowUps: true, quoteFollowUpDays: [3, 7] })
+    const id = await issued('Deck fu', 8)
+    await pool.query(`select send_quote_followups()`)
+    assert.deepEqual((await texts(id)).map((t) => t.event.slice(-1)), ['2'], 'only the latest due step')
+    const answered = await issued('Shed fu', 4)
+    await pool.query(`update projects set status = 'approved' where id = $1`, [answered])
+    const expired = await issued('Gate fu', 4)
+    await pool.query(`update projects set quote_valid_until = current_date - 1 where id = $1`, [expired])
+    const recent = await issued('Path fu', 4)
+    await pool.query(`update projects set quote_followed_up_at = now() - interval '1 day' where id = $1`, [recent])
+    const nophone = await issued('Roof fu', 4, '')
+    const early = await issued('Wall fu', 1)
+    await pool.query(`select send_quote_followups()`)
+    for (const x of [answered, expired, recent, nophone, early]) assert.equal((await texts(x)).length, 0)
+    await on({ quoteFollowUps: false })
+  })
+})
