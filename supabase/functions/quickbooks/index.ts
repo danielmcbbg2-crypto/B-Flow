@@ -9,7 +9,8 @@
 //   GET ?code&state&realmId  QuickBooks sending the office back after they approve the connection.
 //   POST { action: 'connect' }  (store managers) the QuickBooks sign-in address to send them to.
 //   POST { action: 'disconnect' }  (store managers) revokes the connection.
-// It also sends the deposit invoices of accepted quotes (queued by the database when a quote is
+// It also keeps issued quotes as QuickBooks estimates (created or updated when a quote is issued,
+// marked Accepted or Rejected when it's answered), and sends the deposit invoices of accepted quotes (queued by the database when a quote is
 // accepted), records them in invoices, and marks them paid.
 //
 // Secrets: QBO_CLIENT_ID and QBO_CLIENT_SECRET (from the app made at developer.intuit.com), and
@@ -22,7 +23,7 @@
 // company (and its pay links).
 import { createClient } from 'npm:@supabase/supabase-js@2.49.4'
 import { seal, tokenKey, unseal } from './seal.ts'
-import { customerBody, depositBody, displayName, invoiceBody, qboError, qboErrorCode, quoted, type ItemRow, type OrderRow } from './invoice.ts'
+import { customerBody, depositBody, displayName, estimateBody, invoiceBody, qboError, qboErrorCode, quoted, type ItemRow, type OrderRow } from './invoice.ts'
 
 /** Whether the login has done its second sign-in step (its token, already checked by getUser, says "aal2"). Admin powers need it. */
 function secondStep(jwt: string): boolean {
@@ -65,6 +66,7 @@ type Conn = {
   tax_code_id: string | null
   last_paid_check: string | null
   deposit_item_id?: string | null
+  estimate_item_id?: string | null
 }
 
 const TOKENS = ['refresh_token', 'access_token'] as const
@@ -183,6 +185,64 @@ async function depositItem(conn: Conn): Promise<string> {
   conn.deposit_item_id = id
   await saveConn({ deposit_item_id: id })
   return id
+}
+
+/** The item quoted work goes against on estimates ("Quoted work"), found or made once. */
+async function estimateItem(conn: Conn): Promise<string> {
+  if (conn.estimate_item_id) return conn.estimate_item_id
+  await setup(conn)
+  const found = (await query(conn, "select * from Item where Name = 'Quoted work'")).Item?.[0] as { Id: string } | undefined
+  let id = found?.Id
+  if (!id) {
+    const accounts = ((await query(conn, "select * from Account where AccountType = 'Income' and Active = true")).Account ?? []) as { Id: string; Name: string }[]
+    const account = accounts.find((a) => /service|sales/i.test(a.Name)) ?? accounts[0]
+    if (!account) throw new Error('QuickBooks has no income account for estimates. Add one in QuickBooks (Chart of accounts).')
+    id = ((await qbo(conn, 'POST', 'item', { Name: 'Quoted work', Type: 'Service', IncomeAccountRef: { value: account.Id } })) as { Item: { Id: string } }).Item.Id
+  }
+  conn.estimate_item_id = id
+  await saveConn({ estimate_item_id: id })
+  return id
+}
+
+type EstimateRow = {
+  id: string; number: number; title: string; status: string; client_id: string; qbo_estimate_id: string | null; estimate_attempts: number
+  quote_amount: number | string | null; quote_valid_until: string | null; quote_inclusions: string; quote_exclusions: string
+  quote_answered_name: string; quote_decided_at: string | null; quote_issued_at: string | null
+}
+
+/** Creates or updates a quote's estimate, and marks it Accepted or Rejected once answered. */
+async function syncEstimate(conn: Conn, q: EstimateRow) {
+  const { data: client } = await db.from('profiles').select('name, email, phone').eq('id', q.client_id).maybeSingle()
+  if (!client?.email?.trim()) throw new Error('The client has no email address, which QuickBooks needs to find or add them. Add it to their account, then try again.')
+  const customerId = await customerFor(conn, { id: q.id, number: q.number, name: client.name, email: client.email, phone: client.phone ?? '', delivery: 'pickup', address: '', total: 0 })
+  const { data: items } = await db.from('project_quote_items').select('section, description, qty, unit, rate').eq('project_id', q.id).order('position')
+  const itemId = await estimateItem(conn)
+  const today = (q.quote_issued_at ? new Date(q.quote_issued_at) : new Date()).toLocaleDateString('en-CA', { timeZone: 'Australia/Melbourne' })
+  const body = estimateBody(q, items ?? [], customerId, itemId, conn.tax_code_id ?? '', today)
+  const answer =
+    q.status === 'rejected'
+      ? { TxnStatus: 'Rejected' }
+      : ['approved', 'in_progress', 'completed'].includes(q.status)
+        ? { TxnStatus: 'Accepted', ...(q.quote_answered_name ? { AcceptedBy: q.quote_answered_name.slice(0, 100) } : {}), ...(q.quote_decided_at ? { AcceptedDate: q.quote_decided_at.slice(0, 10) } : {}) }
+        : { TxnStatus: 'Pending' }
+  let est: { Id: string; SyncToken: string; DocNumber?: string }
+  if (!q.qbo_estimate_id) {
+    est = ((await qbo(conn, 'POST', 'estimate', { ...body, ...answer }, { requestid: `estimate-${q.id}` })) as { Estimate: typeof est }).Estimate
+  } else {
+    const now = ((await qbo(conn, 'GET', `estimate/${q.qbo_estimate_id}`)) as { Estimate: typeof est }).Estimate
+    // Issued (again): the lines as they are now; answered: just its status.
+    const patch = q.status === 'quoted' ? { ...body, ...answer, Id: now.Id, SyncToken: now.SyncToken } : { ...answer, Id: now.Id, SyncToken: now.SyncToken, sparse: true }
+    est = ((await qbo(conn, 'POST', 'estimate', patch)) as { Estimate: typeof est }).Estimate
+  }
+  await db.from('projects').update({ qbo_estimate_id: est.Id, estimate_number: est.DocNumber ?? '', estimate_status: 'synced', estimate_error: '' }).eq('id', q.id)
+}
+
+async function failEstimate(q: EstimateRow, message: string) {
+  const attempts = q.estimate_attempts + 1
+  await db
+    .from('projects')
+    .update({ estimate_status: 'failed', estimate_error: message.slice(0, 400), estimate_attempts: attempts, estimate_next_try: new Date(Date.now() + attempts * 15 * 60_000).toISOString() })
+    .eq('id', q.id)
 }
 
 type DepositRow = { id: string; number: number; title: string; client_id: string; property_id: string | null; deposit_amount: number | string; deposit_attempts: number; first_stage: string | null }
@@ -392,6 +452,21 @@ async function run() {
   try {
     // Orders from before QuickBooks was connected aren't invoiced by it.
     if (conn.connected_at) await db.from('orders').update({ invoice_status: 'skipped' }).eq('invoice_status', 'pending').lt('created_at', conn.connected_at)
+    // Estimates first (a quote's estimate before its deposit invoice); not for quotes issued before QuickBooks was connected.
+    if (conn.connected_at) await db.from('projects').update({ estimate_status: 'skipped' }).eq('estimate_status', 'pending').is('qbo_estimate_id', null).lt('quote_issued_at', conn.connected_at)
+    for (let round = 0; round < 10; round++) {
+      const { data: claimed, error } = await db.rpc('claim_quote_estimates', { max_rows: 5 })
+      if (error) throw new Error(error.message)
+      if (!claimed?.length) break
+      for (const q of claimed as EstimateRow[]) {
+        try {
+          await syncEstimate(conn, q)
+        } catch (e) {
+          await failEstimate(q, (e as Error).message)
+          if (!conn.refresh_token) return { invoiced, failed, stopped: 'connection expired' }
+        }
+      }
+    }
     // Deposits of quotes accepted before QuickBooks was connected aren't sent by it.
     if (conn.connected_at) await db.from('projects').update({ deposit_status: 'skipped' }).eq('deposit_status', 'pending').lt('quote_decided_at', conn.connected_at)
     for (let round = 0; round < 10; round++) {
@@ -482,6 +557,7 @@ async function callback(url: URL) {
     tax_code_id: null,
     last_paid_check: null,
     deposit_item_id: null,
+    estimate_item_id: null,
   }
   let company = ''
   try {
@@ -534,7 +610,7 @@ Deno.serve(async (req) => {
     if (conn?.refresh_token) {
       await fetch(REVOKE_URL, { method: 'POST', headers: { Authorization: basic(), 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ token: conn.refresh_token }) }).catch(() => {})
     }
-    await saveConn({ realm_id: null, refresh_token: null, access_token: null, access_expires_at: null, company_name: '', connected_at: null, connected_by: null, item_id: null, tax_code_id: null, deposit_item_id: null, last_error: '' })
+    await saveConn({ realm_id: null, refresh_token: null, access_token: null, access_expires_at: null, company_name: '', connected_at: null, connected_by: null, item_id: null, tax_code_id: null, deposit_item_id: null, estimate_item_id: null, last_error: '' })
     await securityAlert('QuickBooks disconnected', `${await personName(me.id)} disconnected the store from QuickBooks. New orders won't be invoiced until it's connected again.`)
     return json({ disconnected: true })
   }

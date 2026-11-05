@@ -319,6 +319,8 @@ export interface Project {
   quoteAnsweredName?: string
   /** Set by the database and server: the deposit invoice sent once the quote is accepted. */
   deposit?: QuoteDeposit
+  /** Set by the server: the quote as a QuickBooks estimate. */
+  estimate?: { status: 'none' | 'pending' | 'working' | 'synced' | 'failed' | 'skipped'; number: string; error: string }
   variations: Variation[]
   payments: PaymentStage[]
   /** Office only: not loaded for clients. */

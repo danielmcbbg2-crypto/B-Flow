@@ -15,7 +15,7 @@ import { CostsPanel, PaymentsPanel, QuoteBuilder, VariationsPanel } from './Proj
 import { DefectsPanel, DiaryPanel, DocumentsPanel, Fact, ScheduleSummary, SchedulePanel } from './ProjectWorkspace'
 import { useHashRoute } from '../../lib/router'
 import { BookingReminders } from './BookingReminders'
-import { DepositPanel, SendQuoteLink } from './QuoteLinkPanels'
+import { DepositPanel, EstimateLine, SendQuoteLink } from './QuoteLinkPanels'
 
 /**
  * The diary, defects and documents are saved as they're added (by the office, trades and the
@@ -745,6 +745,7 @@ export function ProjectEditor({
           )}
           {saved.status === 'quoted' && order && <SendInstallPrice p={saved} order={order} />}
           {saved.status === 'quoted' && !order && !dirty && <SendQuoteLink p={saved} />}
+          {!dirty && <EstimateLine p={saved} />}
           <button className="btn-primary">Save project</button>
         </div>
       </form>

@@ -100,6 +100,49 @@ export function depositBody(q: { number: number; title: string }, amount: number
   }
 }
 
+export interface EstimateQuote {
+  number: number
+  title: string
+  quote_amount: number | string | null
+  quote_valid_until: string | null
+  quote_inclusions: string
+  quote_exclusions: string
+}
+
+/**
+ * A quote as a QuickBooks estimate: its lines at their rates excluding GST (as the quote prices
+ * them), or one GST-inclusive line for a quote given as a single amount.
+ */
+export function estimateBody(q: EstimateQuote, items: { section: string; description: string; qty: number | string; unit: string; rate: number | string }[], customerId: string, itemId: string, taxCodeId: string, today: string) {
+  const tax = taxCodeId ? { TaxCodeRef: { value: taxCodeId } } : {}
+  const lines = items.length
+    ? items.map((i) => {
+        const qty = Number(i.qty)
+        const rate = Number(i.rate)
+        return {
+          DetailType: 'SalesItemLineDetail',
+          Amount: round2(qty * rate),
+          Description: [i.section.trim(), i.description.trim()].filter(Boolean).join(': ').concat(i.unit ? ` (${i.unit})` : '').slice(0, 4000),
+          SalesItemLineDetail: { ItemRef: { value: itemId }, Qty: qty, UnitPrice: rate, ...tax },
+        }
+      })
+    : (() => {
+        const gross = round2(Number(q.quote_amount ?? 0))
+        const net = taxCodeId ? round2(gross / 1.1) : gross
+        return [{ DetailType: 'SalesItemLineDetail', Amount: net, Description: q.title.slice(0, 4000), SalesItemLineDetail: { ItemRef: { value: itemId }, Qty: 1, UnitPrice: net, ...(taxCodeId ? { TaxCodeRef: { value: taxCodeId }, TaxInclusiveAmt: gross } : {}) } }]
+      })()
+  const memo = [q.quote_inclusions.trim() && `Included: ${q.quote_inclusions.trim()}`, q.quote_exclusions.trim() && `Not included: ${q.quote_exclusions.trim()}`].filter(Boolean).join('\n')
+  return {
+    CustomerRef: { value: customerId },
+    TxnDate: today,
+    ...(q.quote_valid_until ? { ExpirationDate: q.quote_valid_until } : {}),
+    Line: lines,
+    GlobalTaxCalculation: !taxCodeId ? 'NotApplicable' : items.length ? 'TaxExcluded' : 'TaxInclusive',
+    PrivateNote: `Quote P-${q.number}: ${q.title}`.slice(0, 4000),
+    ...(memo ? { CustomerMemo: { value: memo.slice(0, 1000) } } : {}),
+  }
+}
+
 /** A readable reason from a QuickBooks error reply. */
 export function qboError(body: unknown, status: number): string {
   const b = body as { Fault?: { Error?: { Message?: string; Detail?: string; code?: string }[] }; error?: string; error_description?: string }

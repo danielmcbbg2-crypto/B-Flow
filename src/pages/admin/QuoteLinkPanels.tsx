@@ -109,3 +109,36 @@ export function DepositPanel({ p }: { p: Project }) {
     </section>
   )
 }
+
+/** The quote as a QuickBooks estimate: its number, or why it didn't go, with Try again. */
+export function EstimateLine({ p }: { p: Project }) {
+  const { retryQuoteEstimate } = useStore()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const e = p.estimate
+  if (!e || e.status === 'none') return null
+  const retry = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      await retryQuoteEstimate(p.id)
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <span className="mr-auto flex flex-wrap items-center gap-2 text-xs text-slate-500" aria-label="QuickBooks estimate">
+      {e.status === 'synced' && <>QuickBooks estimate <span className="num font-semibold text-slate-700">{e.number}</span></>}
+      {(e.status === 'pending' || e.status === 'working') && 'Updating its QuickBooks estimate…'}
+      {e.status === 'skipped' && 'Not in QuickBooks (issued before it was connected).'}
+      {e.status === 'failed' && <span className="text-red-600">QuickBooks estimate failed: {e.error}</span>}
+      {(e.status === 'failed' || e.status === 'skipped') && (
+        <button type="button" className="underline" disabled={busy} onClick={() => void retry()}>{busy ? 'Sending…' : e.status === 'failed' ? 'Try again' : 'Add it to QuickBooks'}</button>
+      )}
+      {error && <span className="text-red-600">{error}</span>}
+    </span>
+  )
+}
+

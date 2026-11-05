@@ -646,6 +646,9 @@ export const projectFromRow = (r: Row, milestones: Row[] = [], expenses: Row[] =
   orderId: opt(r.order_id as string | null | undefined),
   quoteToken: opt(r.quote_token as string | null | undefined),
   quoteAnsweredName: opt(r.quote_answered_name as string | null | undefined),
+  estimate: r.estimate_status
+    ? { status: r.estimate_status as NonNullable<Project['estimate']>['status'], number: (r.estimate_number as string | undefined) ?? '', error: (r.estimate_error as string | undefined) ?? '' }
+    : undefined,
   deposit: r.deposit_status
     ? {
         status: r.deposit_status as DepositStatus,

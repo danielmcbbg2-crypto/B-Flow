@@ -310,6 +310,8 @@ interface StoreValue {
   quoteByToken: (token: string) => Promise<QuoteLinkView | null>
   /** The client accepts (with their name) or declines from the link. */
   answerQuoteByToken: (token: string, accept: boolean, name: string) => Promise<QuoteLinkView>
+  /** The office sends a failed (or skipped) quote estimate to QuickBooks again. */
+  retryQuoteEstimate: (projectId: string) => Promise<void>
   /** The office sends (again) an accepted quote's deposit invoice. */
   sendQuoteDeposit: (projectId: string) => Promise<void>
   /** The AI quote drafter: an itemised draft for the quote, from its request, site notes and photos. */
@@ -1376,6 +1378,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return linkView(data as Record<string, unknown>)
   }, [])
 
+  const retryQuoteEstimate = useCallback(
+    async (projectId: string) => {
+      if (!supabase) throw new Error('Estimates go to QuickBooks in live mode.')
+      const { error } = await supabase.rpc('retry_quote_estimate', { p_id: projectId })
+      if (error) throw new Error(error.message)
+      await refresh()
+    },
+    [refresh],
+  )
+
   const sendQuoteDeposit = useCallback(
     async (projectId: string) => {
       if (!supabase) throw new Error('Deposit invoices are sent through QuickBooks in live mode.')
@@ -1699,6 +1711,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     quoteByToken,
     answerQuoteByToken,
     sendQuoteDeposit,
+    retryQuoteEstimate,
     recreatePhotos,
     colourPhoto,
     checkSupplierStock,

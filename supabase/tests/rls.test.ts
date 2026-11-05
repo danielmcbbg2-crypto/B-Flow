@@ -1903,3 +1903,24 @@ describe('automatic quote follow-ups', () => {
     await on({ quoteFollowUps: false })
   })
 })
+
+describe('quotes as QuickBooks estimates', () => {
+  test('issuing queues its estimate; answering queues the update; only the server records it', async () => {
+    const id = (await asUser<{ id: string }>(uid.admin, `insert into projects (client_id, property_id, title, quote_amount) values ('u-client-1', 'p-1', 'Est deck', 5500) returning id`)).rows[0].id
+    const est = async () => (await pool.query(`select estimate_status, qbo_estimate_id from projects where id = $1`, [id])).rows[0]
+    assert.equal((await est()).estimate_status, 'none')
+    await asUser(uid.admin, `update projects set status = 'quoted' where id = $1`, [id])
+    assert.equal((await est()).estimate_status, 'pending')
+    await asUser(uid.admin, `update projects set qbo_estimate_id = 'x', estimate_status = 'synced' where id = $1`, [id])
+    assert.deepEqual(await est(), { estimate_status: 'pending', qbo_estimate_id: null })
+    await assert.rejects(asUser(uid.admin, `select * from claim_quote_estimates(5)`), /permission denied/)
+    assert.ok((await pool.query(`select id from claim_quote_estimates(50)`)).rows.some((r) => r.id === id))
+    await pool.query(`update projects set estimate_status = 'synced', qbo_estimate_id = '77' where id = $1`, [id])
+    await asUser(uid.sarah, `update projects set status = 'approved' where id = $1`, [id])
+    assert.deepEqual(await est(), { estimate_status: 'pending', qbo_estimate_id: '77' })
+    await pool.query(`update projects set estimate_status = 'failed' where id = $1`, [id])
+    await assert.rejects(asUser(uid.sarah, `select retry_quote_estimate($1)`, [id]), /Manage projects/)
+    await asUser(uid.admin, `select retry_quote_estimate($1)`, [id])
+    assert.equal((await est()).estimate_status, 'pending')
+  })
+})
