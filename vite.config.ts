@@ -9,5 +9,8 @@ export default defineConfig(({ mode }) => ({
   build: {
     // `vite build --mode single-file` embeds images in the bundle, for a self-contained demo page.
     assetsInlineLimit: mode === 'single-file' ? 100_000_000 : 4096,
+    // No inline module-preload polyfill, so the Content-Security-Policy (netlify.toml) can keep
+    // script-src to 'self' with no 'unsafe-inline'. Every target browser preloads modules natively.
+    modulePreload: { polyfill: false },
   },
 }))
