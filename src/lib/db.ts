@@ -13,6 +13,7 @@ import type {
   Lead,
   TextLogEntry,
   QuoteTemplate,
+  DepositStatus,
   MaintenanceRequest,
   Milestone,
   OrderItem,
@@ -346,6 +347,9 @@ const settingsRow = (d: AppData): Row => ({
     bookingReminderTexts: d.smsSettings.bookingReminderTexts,
     autoReply: d.smsSettings.autoReply,
     autoReplyMessage: d.smsSettings.autoReplyMessage.slice(0, 480),
+    quoteFollowUps: d.smsSettings.quoteFollowUps,
+    quoteFollowUpDays: d.smsSettings.quoteFollowUpDays,
+    quoteFollowUpMessage: d.smsSettings.quoteFollowUpMessage.slice(0, 480),
   },
   bank: d.bank,
   pricing: d.pricing,
@@ -640,6 +644,19 @@ export const projectFromRow = (r: Row, milestones: Row[] = [], expenses: Row[] =
   quoteDecidedAt: opt(r.quote_decided_at as string | null | undefined),
   quoteFollowedUpAt: opt(r.quote_followed_up_at as string | null | undefined),
   orderId: opt(r.order_id as string | null | undefined),
+  quoteToken: opt(r.quote_token as string | null | undefined),
+  quoteAnsweredName: opt(r.quote_answered_name as string | null | undefined),
+  estimate: r.estimate_status
+    ? { status: r.estimate_status as NonNullable<Project['estimate']>['status'], number: (r.estimate_number as string | undefined) ?? '', error: (r.estimate_error as string | undefined) ?? '' }
+    : undefined,
+  deposit: r.deposit_status
+    ? {
+        status: r.deposit_status as DepositStatus,
+        amount: r.deposit_amount == null ? undefined : Number(r.deposit_amount),
+        invoiceId: opt(r.deposit_invoice_id as string | null | undefined),
+        error: (r.deposit_error as string | undefined) ?? '',
+      }
+    : undefined,
   quoteItems: [...(more.items ?? [])].sort(byPosition).map((i) => ({
     id: i.id as string,
     section: i.section as string,
@@ -764,6 +781,7 @@ const invoiceFromRow = (r: Row): QuickBooksInvoice => ({
   projectId: opt(r.project_id as string | null),
   clientId: r.client_id as string,
   qbInvoiceNumber: r.qb_invoice_number as string,
+  payLink: (r.pay_link as string | undefined) || undefined,
   amount: num(r.amount),
   status: r.status as QuickBooksInvoice['status'],
   bankTransferRef: r.bank_transfer_ref as string,

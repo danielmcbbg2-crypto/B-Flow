@@ -313,6 +313,14 @@ export interface Project {
   quoteFollowedUpAt?: string
   /** The store order this quote is for (installing what was bought). */
   orderId?: string
+  /** Set by the database: the private link the client opens the quote with (once issued). */
+  quoteToken?: string
+  /** Who accepted or declined it from the link, as they typed their name. */
+  quoteAnsweredName?: string
+  /** Set by the database and server: the deposit invoice sent once the quote is accepted. */
+  deposit?: QuoteDeposit
+  /** Set by the server: the quote as a QuickBooks estimate. */
+  estimate?: { status: 'none' | 'pending' | 'working' | 'synced' | 'failed' | 'skipped'; number: string; error: string }
   variations: Variation[]
   payments: PaymentStage[]
   /** Office only: not loaded for clients. */
@@ -324,6 +332,45 @@ export interface Project {
 }
 
 export type InvoiceStatus = 'draft' | 'sent' | 'paid'
+
+export type DepositStatus = 'none' | 'pending' | 'working' | 'sent' | 'failed' | 'held' | 'paid' | 'skipped'
+export const DEPOSIT_STATUS_LABEL: Record<DepositStatus, string> = {
+  none: 'No deposit',
+  pending: 'Being sent',
+  working: 'Being sent',
+  sent: 'Deposit invoice sent',
+  failed: 'Deposit invoice failed',
+  held: 'Deposit held',
+  paid: 'Deposit paid',
+  skipped: 'Not sent',
+}
+
+/** A quote as the client sees it from their private link. */
+export interface QuoteLinkView {
+  number: number
+  title: string
+  client: string
+  address: string
+  scope: string
+  status: ProjectStatus
+  validUntil?: string
+  issuedAt?: string
+  answeredAt?: string
+  answeredName: string
+  items: { section: string; description: string; qty: number; unit: string; rate: number }[]
+  inclusions: string
+  exclusions: string
+  /** Inc. GST. */
+  total: number
+  deposit: { status: DepositStatus; amount?: number; number?: string; payLink: string }
+}
+
+export interface QuoteDeposit {
+  status: DepositStatus
+  amount?: number
+  invoiceId?: string
+  error: string
+}
 
 export interface QuickBooksInvoice {
   id: string
@@ -337,6 +384,8 @@ export interface QuickBooksInvoice {
   paidDate?: string
   dueDate: string
   createdAt: string
+  /** Set by the server for invoices QuickBooks made: the pay link it emailed. */
+  payLink?: string
 }
 
 export interface SmsNotification {
@@ -366,6 +415,11 @@ export interface SmsSettings {
   /** Text website enquiries back straight away with `autoReplyMessage` ({first_name} is filled in). */
   autoReply: boolean
   autoReplyMessage: string
+  /** Text clients about issued quotes they haven't answered, `quoteFollowUpDays` days after issuing. */
+  quoteFollowUps: boolean
+  quoteFollowUpDays: number[]
+  /** {first_name}, {title}, {amount}, {valid_until} and {link} are filled in. */
+  quoteFollowUpMessage: string
 }
 
 export const DEFAULT_SMS: SmsSettings = {
@@ -379,6 +433,9 @@ export const DEFAULT_SMS: SmsSettings = {
   bookingReminderTexts: true,
   autoReply: false,
   autoReplyMessage: "Hi {first_name}, it's Daniel from Next Phase Maintenance. Thanks for your enquiry, we've got it. If you can, reply with a few photos of the job and we'll come back to you with a quote.",
+  quoteFollowUps: false,
+  quoteFollowUpDays: [3, 7],
+  quoteFollowUpMessage: "Hi {first_name}, it's Daniel from Next Phase Maintenance. Just checking you got our quote for {title}: {amount} inc. GST{valid_until}. You can read it and accept it here: {link} Happy to answer any questions.",
 }
 
 export interface BankDetails {
@@ -632,6 +689,17 @@ export interface FoundProduct {
   summary: string
   /** The photo on the product page (live mode), for the preview only; empty if none was found. */
   image?: string
+}
+
+/** An itemised quote the AI quote drafter wrote for the office to check (nothing is saved until they add it). */
+export interface QuoteDraft {
+  lines: (Omit<QuoteItem, 'id'> & { basis: 'price_book' | 'estimate' | 'allowance' })[]
+  inclusions: string
+  exclusions: string
+  assumptions: string[]
+  questions: string[]
+  photosUsed: number
+  priceBookLines: number
 }
 
 /** A listing the AI assistant drafted for the admin to review. */

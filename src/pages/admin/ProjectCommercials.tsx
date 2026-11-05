@@ -6,6 +6,7 @@ import { useStore } from '../../lib/store'
 import { approvedVariationsExGst, contractTotal, GST_RATE, itemsSubtotal, lineTotal, paymentAmounts, projectFinancials, quoteTotal, sections, withGst } from '../../lib/quote'
 import { COST_CATEGORIES, QUOTE_ITEM_KIND_LABEL, type PaymentStage, type Project, type QuickBooksInvoice, type QuoteItem, type QuoteItemKind } from '../../lib/types'
 import { fmtDate, money, todayISO, uid } from '../../lib/utils'
+import { QuoteDrafter } from './QuoteDrafter'
 
 type Panel = { p: Project; set: (patch: Partial<Project>) => void }
 
@@ -39,6 +40,7 @@ export function QuoteBuilder({ p, set }: Panel) {
 
   return (
     <div className="space-y-4">
+      <QuoteDrafter p={p} set={set} />
       <QuoteSources p={p} set={set} />
       {p.quoteItems.length === 0 && (
         <div className="space-y-3">

@@ -6,6 +6,8 @@ import type {
   OrderItem,
   AppData,
   DraftListing,
+  QuoteDraft,
+  QuoteLinkView,
   FoundProduct,
   InboxMessage,
   Lead,
@@ -120,6 +122,28 @@ async function streamFunction<T>(name: string, body: Record<string, unknown>, on
     }
   }
   throw new Error('The assistant stopped before it finished. Try again.')
+}
+
+/** The quote link's answer as the app uses it. */
+function linkView(r: Record<string, unknown>): QuoteLinkView {
+  const d = (r.deposit ?? {}) as Record<string, unknown>
+  return {
+    number: Number(r.number),
+    title: String(r.title ?? ''),
+    client: String(r.client ?? ''),
+    address: String(r.address ?? ''),
+    scope: String(r.scope ?? ''),
+    status: r.status as QuoteLinkView['status'],
+    validUntil: (r.valid_until as string | null) ?? undefined,
+    issuedAt: (r.issued_at as string | null) ?? undefined,
+    answeredAt: (r.answered_at as string | null) ?? undefined,
+    answeredName: String(r.answered_name ?? ''),
+    items: ((r.items as Record<string, unknown>[]) ?? []).map((i) => ({ section: String(i.section ?? ''), description: String(i.description ?? ''), qty: Number(i.qty), unit: String(i.unit ?? ''), rate: Number(i.rate) })),
+    inclusions: String(r.inclusions ?? ''),
+    exclusions: String(r.exclusions ?? ''),
+    total: Number(r.total),
+    deposit: { status: (d.status as QuoteLinkView['deposit']['status']) ?? 'none', amount: d.amount == null ? undefined : Number(d.amount), number: (d.number as string | null) ?? undefined, payLink: String(d.pay_link ?? '') },
+  }
 }
 
 /** Waits like a slow server call would, for demo mode; rejects if `signal` is aborted. */
@@ -282,6 +306,16 @@ interface StoreValue {
   findProducts: (query: string, onProgress?: (text: string) => void, signal?: AbortSignal) => Promise<{ products: FoundProduct[]; note: string }>
   /** Store managers: the AI assistant drafts a listing from a found product, for review. */
   draftListing: (product: FoundProduct, instructions?: string, onProgress?: (text: string) => void, signal?: AbortSignal) => Promise<DraftListing>
+  /** A quote from its private link (null if the link isn't valid); for clients without a login. */
+  quoteByToken: (token: string) => Promise<QuoteLinkView | null>
+  /** The client accepts (with their name) or declines from the link. */
+  answerQuoteByToken: (token: string, accept: boolean, name: string) => Promise<QuoteLinkView>
+  /** The office sends a failed (or skipped) quote estimate to QuickBooks again. */
+  retryQuoteEstimate: (projectId: string) => Promise<void>
+  /** The office sends (again) an accepted quote's deposit invoice. */
+  sendQuoteDeposit: (projectId: string) => Promise<void>
+  /** The AI quote drafter: an itemised draft for the quote, from its request, site notes and photos. */
+  draftQuote: (p: Pick<Project, 'id' | 'title' | 'description' | 'scopeOfWorks'>, notes: string, onProgress?: (text: string) => void, signal?: AbortSignal) => Promise<QuoteDraft>
   /** New photos of the product on a supplier page, made by AI from the supplier's photos (store managers). */
   /** New photos of a product from the supplier's; `colours` (its colour or finish choices) each get a studio shot. */
   recreatePhotos: (
@@ -1330,6 +1364,64 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  const quoteByToken = useCallback(async (token: string): Promise<QuoteLinkView | null> => {
+    if (!supabase) return null
+    const { data, error } = await supabase.rpc('quote_by_token', { p_token: token })
+    if (error) throw new Error(error.message)
+    return data ? linkView(data as Record<string, unknown>) : null
+  }, [])
+
+  const answerQuoteByToken = useCallback(async (token: string, accept: boolean, name: string): Promise<QuoteLinkView> => {
+    if (!supabase) throw new Error('Quote links work in live mode only.')
+    const { data, error } = await supabase.rpc('answer_quote_by_token', { p_token: token, p_accept: accept, p_name: name })
+    if (error) throw new Error(error.message)
+    return linkView(data as Record<string, unknown>)
+  }, [])
+
+  const retryQuoteEstimate = useCallback(
+    async (projectId: string) => {
+      if (!supabase) throw new Error('Estimates go to QuickBooks in live mode.')
+      const { error } = await supabase.rpc('retry_quote_estimate', { p_id: projectId })
+      if (error) throw new Error(error.message)
+      await refresh()
+    },
+    [refresh],
+  )
+
+  const sendQuoteDeposit = useCallback(
+    async (projectId: string) => {
+      if (!supabase) throw new Error('Deposit invoices are sent through QuickBooks in live mode.')
+      const { error } = await supabase.rpc('send_quote_deposit', { p_id: projectId })
+      if (error) throw new Error(error.message)
+      await refresh()
+    },
+    [refresh],
+  )
+
+  const draftQuote = useCallback(
+    async (p: Pick<Project, 'id' | 'title' | 'description' | 'scopeOfWorks'>, notes: string, onProgress?: (text: string) => void, signal?: AbortSignal): Promise<QuoteDraft> => {
+      if (supabase) {
+        return streamFunction<QuoteDraft>('quote-assistant', { projectId: p.id, notes, title: p.title, description: p.description, scope: p.scopeOfWorks }, onProgress, signal)
+      }
+      onProgress?.('Drafting the quote…')
+      await demoWait(500, signal)
+      return {
+        lines: [
+          { section: 'Preparation', description: 'Protect floors and furniture, set up work area', kind: 'labour', qty: 2, unit: 'hr', rate: 75, basis: 'estimate' },
+          { section: 'Repairs', description: 'Patch and sand damaged plaster', kind: 'labour', qty: 4, unit: 'hr', rate: 75, basis: 'estimate' },
+          { section: 'Repairs', description: 'Plaster, compound and consumables', kind: 'materials', qty: 1, unit: 'item', rate: 120, basis: 'estimate' },
+        ],
+        inclusions: 'All labour and materials listed\nClean-up and removal of debris',
+        exclusions: 'Painting (quoted separately)',
+        assumptions: ['Demo mode: this is a sample draft. In live mode Claude reads the request, your notes and the photos, and prices from your past quotes.'],
+        questions: ['Confirm the area of damage on site'],
+        photosUsed: 0,
+        priceBookLines: 0,
+      }
+    },
+    [],
+  )
+
   const draftListing = useCallback(
     async (product: FoundProduct, instructions?: string, onProgress?: (text: string) => void, signal?: AbortSignal): Promise<DraftListing> => {
       if (supabase) {
@@ -1615,6 +1707,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     deleteLead,
     findProducts,
     draftListing,
+    draftQuote,
+    quoteByToken,
+    answerQuoteByToken,
+    sendQuoteDeposit,
+    retryQuoteEstimate,
     recreatePhotos,
     colourPhoto,
     checkSupplierStock,

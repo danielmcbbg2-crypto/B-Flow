@@ -1798,3 +1798,129 @@ describe('product details (specs, highlights, barcode, compliance)', () => {
   })
 })
 
+
+describe('quote link and deposit', () => {
+  const quote = async (title: string, amount: number) => {
+    const id = (await asUser<{ id: string }>(uid.admin, `insert into projects (client_id, property_id, title, quote_amount) values ('u-client-1', 'p-1', $1, $2) returning id`, [title, amount])).rows[0].id
+    await asUser(uid.admin, `update projects set status = 'quoted' where id = $1`, [id])
+    return id
+  }
+  const row = async (id: string) =>
+    (await pool.query(`select status, quote_decision, quote_answered_name, deposit_status, deposit_amount::text as deposit, deposit_error, quote_token from projects where id = $1`, [id])).rows[0]
+
+  test('issuing gives the quote a private link; nobody but the server can set it or the deposit', async () => {
+    const id = await quote('Link deck', 8800)
+    const r = await row(id)
+    assert.match(r.quote_token, /^[0-9a-f]{64}$/)
+    await asUser(uid.admin, `update projects set quote_token = 'x', deposit_status = 'paid', deposit_amount = 1 where id = $1`, [id])
+    assert.deepEqual([(await row(id)).quote_token, (await row(id)).deposit_status], [r.quote_token, 'none'])
+    const seen = (await asAnon<{ q: { title: string; total: string; client: string; status: string } }>(`select quote_by_token($1) as q`, [r.quote_token])).rows[0].q
+    assert.deepEqual([seen.title, Number(seen.total), seen.status], ['Link deck', 8800, 'quoted'])
+    assert.equal((await asAnon<{ q: unknown }>(`select quote_by_token('nope') as q`)).rows[0].q, null)
+  })
+
+  test('accepting from the link records who, tells the office and queues a 10% deposit; it can’t be answered twice', async () => {
+    const id = await quote('Link fence', 8800)
+    const token = (await row(id)).quote_token
+    await assert.rejects(asAnon(`select answer_quote_by_token($1, true, '')`, [token]), /Type your name/)
+    await asAnon(`select answer_quote_by_token($1, true, 'Sarah Client')`, [token])
+    const r = await row(id)
+    assert.deepEqual([r.status, r.quote_decision, r.quote_answered_name, r.deposit_status, r.deposit], ['approved', 'approved', 'Sarah Client', 'pending', '880.00'])
+    assert.ok(Number((await pool.query(`select count(*) from inbox where title = (select 'Quote P-' || number || ' accepted' from projects where id = $1)`, [id])).rows[0].count) > 0)
+    await assert.rejects(asAnon(`select answer_quote_by_token($1, false, '')`, [token]), /already been answered/)
+  })
+
+  test('a first payment stage over the legal deposit is held; fixing it lets the office send it', async () => {
+    const id = await quote('Link bathroom', 25000)
+    await pool.query(`insert into project_payments (project_id, position, title, basis, value) values ($1, 0, 'Deposit', 'percent', 10)`, [id])
+    await asUser(uid.sarah, `update projects set status = 'approved' where id = $1`, [id])
+    let r = await row(id)
+    assert.equal(r.deposit_status, 'held')
+    assert.match(r.deposit_error, /\$2,500\.00\) is more than the deposit allowed for a contract of \$25,000\.00/)
+    await assert.rejects(asUser(uid.admin, `select send_quote_deposit($1)`, [id]), /more than the deposit allowed/)
+    await pool.query(`update project_payments set value = 5 where project_id = $1`, [id])
+    await assert.rejects(asUser(uid.sarah, `select send_quote_deposit($1)`, [id]), /Manage projects/)
+    await asUser(uid.admin, `select send_quote_deposit($1)`, [id])
+    r = await row(id)
+    assert.deepEqual([r.deposit_status, r.deposit], ['pending', '1250.00'])
+  })
+
+  test('declining queues nothing; an expired quote can’t be answered; only the server claims deposits', async () => {
+    const id = await quote('Link pergola', 5000)
+    const token = (await row(id)).quote_token
+    await asAnon(`select answer_quote_by_token($1, false, '')`, [token])
+    assert.deepEqual([(await row(id)).status, (await row(id)).deposit_status], ['rejected', 'none'])
+    const old = await quote('Link shed', 5000)
+    await asUser(uid.admin, `update projects set quote_valid_until = '2020-01-01' where id = $1`, [old])
+    await assert.rejects(asAnon(`select answer_quote_by_token($1, true, 'Sam')`, [(await row(old)).quote_token]), /expired on 01\/01\/2020/)
+    await assert.rejects(asUser(uid.admin, `select * from claim_deposit_invoices(5)`), /permission denied/)
+    const claimed = (await pool.query(`select id, deposit_amount::text as amount from claim_deposit_invoices(50)`)).rows
+    assert.ok(claimed.some((c) => c.amount === '880.00'))
+    assert.equal((await pool.query(`select count(*) from claim_deposit_invoices(50)`)).rows[0].count, '0', 'not claimed twice')
+  })
+})
+
+describe('automatic quote follow-ups', () => {
+  const issued = async (title: string, daysAgo: number, phone = '0400 777 888') => {
+    const client = (await pool.query(`insert into profiles (name, email, phone, role, status) values ('Fay Follow', 'fay-${title}@example.com', $1, 'client', 'active') returning id`, [phone])).rows[0].id
+    const prop = (await pool.query(`insert into properties (client_id, address) values ($1, '3 Oak St') returning id`, [client])).rows[0].id
+    const id = (await pool.query(`insert into projects (client_id, property_id, title, quote_amount, status) values ($1, $2, $3, 4400, 'quoted') returning id`, [client, prop, title])).rows[0].id
+    await pool.query(`update projects set quote_issued_at = now() - make_interval(days => $2) where id = $1`, [id, daysAgo])
+    return id
+  }
+  const texts = async (id: string) => (await pool.query(`select message, event from sms_outbox where source = 'quote_followup' and event like 'Quote follow-up · P-' || (select number from projects where id = $1) || ' · %' order by created_at`, [id])).rows
+  const on = (patch: object) => pool.query(`update settings set sms = sms || $1::jsonb where id = 1`, [JSON.stringify(patch)])
+
+  test('off until switched on; then due quotes get one text with their link, once', async () => {
+    const id = await issued('Fence fu', 3)
+    assert.equal((await pool.query(`select send_quote_followups()`)).rows[0].send_quote_followups, 0)
+    await on({ quoteFollowUps: true, quoteFollowUpDays: [3, 7] })
+    await pool.query(`select send_quote_followups()`)
+    const [t] = await texts(id)
+    const token = (await pool.query(`select quote_token from projects where id = $1`, [id])).rows[0].quote_token
+    assert.equal(t.message, `Hi Fay, it's Daniel from Next Phase Maintenance. Just checking you got our quote for Fence fu: $4,400.00 inc. GST. You can read it and accept it here: https://portal.nextphasemaintenance.com.au/#/quote/${token} Happy to answer any questions.`)
+    assert.match(t.event, / · 1$/)
+    assert.equal((await pool.query(`select quote_followed_up_at > now() - interval '1 minute' as ok from projects where id = $1`, [id])).rows[0].ok, true)
+    await pool.query(`select send_quote_followups()`)
+    assert.equal((await texts(id)).length, 1, 'not twice')
+  })
+
+  test('the next step goes out later; never when answered, expired, followed up recently or without a mobile', async () => {
+    await on({ quoteFollowUps: true, quoteFollowUpDays: [3, 7] })
+    const id = await issued('Deck fu', 8)
+    await pool.query(`select send_quote_followups()`)
+    assert.deepEqual((await texts(id)).map((t) => t.event.slice(-1)), ['2'], 'only the latest due step')
+    const answered = await issued('Shed fu', 4)
+    await pool.query(`update projects set status = 'approved' where id = $1`, [answered])
+    const expired = await issued('Gate fu', 4)
+    await pool.query(`update projects set quote_valid_until = current_date - 1 where id = $1`, [expired])
+    const recent = await issued('Path fu', 4)
+    await pool.query(`update projects set quote_followed_up_at = now() - interval '1 day' where id = $1`, [recent])
+    const nophone = await issued('Roof fu', 4, '')
+    const early = await issued('Wall fu', 1)
+    await pool.query(`select send_quote_followups()`)
+    for (const x of [answered, expired, recent, nophone, early]) assert.equal((await texts(x)).length, 0)
+    await on({ quoteFollowUps: false })
+  })
+})
+
+describe('quotes as QuickBooks estimates', () => {
+  test('issuing queues its estimate; answering queues the update; only the server records it', async () => {
+    const id = (await asUser<{ id: string }>(uid.admin, `insert into projects (client_id, property_id, title, quote_amount) values ('u-client-1', 'p-1', 'Est deck', 5500) returning id`)).rows[0].id
+    const est = async () => (await pool.query(`select estimate_status, qbo_estimate_id from projects where id = $1`, [id])).rows[0]
+    assert.equal((await est()).estimate_status, 'none')
+    await asUser(uid.admin, `update projects set status = 'quoted' where id = $1`, [id])
+    assert.equal((await est()).estimate_status, 'pending')
+    await asUser(uid.admin, `update projects set qbo_estimate_id = 'x', estimate_status = 'synced' where id = $1`, [id])
+    assert.deepEqual(await est(), { estimate_status: 'pending', qbo_estimate_id: null })
+    await assert.rejects(asUser(uid.admin, `select * from claim_quote_estimates(5)`), /permission denied/)
+    assert.ok((await pool.query(`select id from claim_quote_estimates(50)`)).rows.some((r) => r.id === id))
+    await pool.query(`update projects set estimate_status = 'synced', qbo_estimate_id = '77' where id = $1`, [id])
+    await asUser(uid.sarah, `update projects set status = 'approved' where id = $1`, [id])
+    assert.deepEqual(await est(), { estimate_status: 'pending', qbo_estimate_id: '77' })
+    await pool.query(`update projects set estimate_status = 'failed' where id = $1`, [id])
+    await assert.rejects(asUser(uid.sarah, `select retry_quote_estimate($1)`, [id]), /Manage projects/)
+    await asUser(uid.admin, `select retry_quote_estimate($1)`, [id])
+    assert.equal((await est()).estimate_status, 'pending')
+  })
+})
