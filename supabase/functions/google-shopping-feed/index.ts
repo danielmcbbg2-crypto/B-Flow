@@ -110,8 +110,7 @@ const BASIC = 'id, title, description, category, brand, sku, price, images, stoc
 Deno.serve(async (req) => {
   if (req.method !== 'GET' && req.method !== 'HEAD') return new Response('Method not allowed', { status: 405 })
   const rows: Row[] = []
-  // With the listing details (specs, highlights, gtin, compliance) where the database has them, else the basics.
-  // Those columns aren't in the database yet, so for now the feed uses the basics.
+  // With the listing details (specs, highlights, gtin, compliance; migration 20261110000000) where the database has them, else the basics.
   let cols = `${BASIC}, specs, highlights, gtin, compliance`
   for (let from = 0; ; from += 1000) {
     let { data, error } = await db.from('products').select(cols).eq('status', 'published').order('id').range(from, from + 999)

@@ -1721,3 +1721,19 @@ describe('two-step sign-in for admins', () => {
     assert.equal(id, (await asUser<{ a: string }>(uid.sarah, `select current_profile_id() as a`)).rows[0].a)
   })
 })
+
+describe('product details (specs, highlights, barcode, compliance)', () => {
+  test('store managers set them, visitors read them on published products, bad shapes are refused', async () => {
+    await pool.query(`insert into products (id, title, price, status) values ('pdet-1', 'Detail vanity', 900, 'published')`)
+    await asUser(uid.admin, `update products set specs = '[{"label":"Width","value":"900 mm"}]', highlights = '{"Soft-close drawers"}', gtin = '9312345678907', compliance = '{"welsStars":4,"welsWater":"6 L/min","standards":["AS/NZS 3718"],"warranty":"15 years"}' where id = 'pdet-1'`)
+    const r = (await asAnon<{ specs: unknown; gtin: string; stars: string }>(`select specs, gtin, compliance->>'welsStars' as stars from products where id = 'pdet-1'`)).rows[0]
+    assert.deepEqual(r, { specs: [{ label: 'Width', value: '900 mm' }], gtin: '9312345678907', stars: '4' })
+    // Only store managers change them.
+    await asUser(uid.sarah, `update products set gtin = '' where id = 'pdet-1'`)
+    assert.equal((await pool.query(`select gtin from products where id = 'pdet-1'`)).rows[0].gtin, '9312345678907')
+    for (const bad of [`specs = '[{"label":"Width"}]'`, `specs = '["Width 900"]'`, `gtin = '12ab'`, `compliance = '{"welsStars":9}'`, `compliance = '{"warranty":15}'`, `compliance = '[]'`]) {
+      await assert.rejects(pool.query(`update products set ${bad} where id = 'pdet-1'`), /violates check constraint/, bad)
+    }
+  })
+})
+
