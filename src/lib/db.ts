@@ -24,8 +24,10 @@ import type {
   Product,
   Project,
   ProjectCost,
+  ProductCompliance,
   OrderInvoiceStatus,
   ProductOption,
+  ProductSpec,
   ProductSource,
   SupplierStock,
   Pricing,
@@ -169,6 +171,7 @@ const projectRow = (p: Project): Row => ({
   quote_issued_at: nul(p.quoteIssuedAt),
   quote_decided_at: nul(p.quoteDecidedAt),
   quote_followed_up_at: nul(p.quoteFollowedUpAt),
+  order_id: nul(p.orderId),
 })
 
 const quoteItemRow = (projectId: string, i: QuoteItem, position: number): Row => ({
@@ -359,6 +362,14 @@ const productRow = (p: Product): Row => ({
   images: p.images,
   // The client and trade add-ons are set by the database (with the client and trade prices).
   options: (p.options ?? []).map((g) => ({ id: g.id, name: g.name, values: g.values.map((v) => ({ id: v.id, label: v.label, price: v.price, available: v.available, ...(v.image ? { image: v.image } : {}) })) })),
+  // Listings saved before these details existed (or by older code) still save, with them empty.
+  specs: p.specs ?? [],
+  highlights: p.highlights ?? [],
+  seo_title: p.seoTitle ?? '',
+  meta_description: p.metaDescription ?? '',
+  image_alt: p.imageAlt ?? [],
+  gtin: p.gtin ?? '',
+  compliance: p.compliance ?? {},
   status: p.status,
   stock: p.stock,
   created_by: nul(p.createdBy),
@@ -418,6 +429,7 @@ const orderItemRow = (orderId: string, i: OrderItem): Row => ({
   unit_price: i.unitPrice,
   qty: i.qty,
   options: i.options ?? '',
+  install: !!i.install,
 })
 
 interface Spec {
@@ -627,6 +639,7 @@ export const projectFromRow = (r: Row, milestones: Row[] = [], expenses: Row[] =
   quoteIssuedAt: opt(r.quote_issued_at as string | null | undefined),
   quoteDecidedAt: opt(r.quote_decided_at as string | null | undefined),
   quoteFollowedUpAt: opt(r.quote_followed_up_at as string | null | undefined),
+  orderId: opt(r.order_id as string | null | undefined),
   quoteItems: [...(more.items ?? [])].sort(byPosition).map((i) => ({
     id: i.id as string,
     section: i.section as string,
@@ -817,6 +830,13 @@ export const productsFromRows = (products: Row[], tradePrices: Row[] = [], sourc
             return { id: v.id, label: v.label, price: num(v.price), available: v.available !== false, clientPrice: c === undefined ? undefined : num(c), tradePrice: t === undefined ? undefined : num(t), ...(typeof v.image === 'string' && v.image ? { image: v.image } : {}) }
           }),
         })),
+        specs: ((r.specs as ProductSpec[] | undefined) ?? []).map((x) => ({ label: String(x.label ?? ''), value: String(x.value ?? '') })),
+        highlights: (r.highlights as string[] | undefined) ?? [],
+        seoTitle: (r.seo_title as string | undefined) ?? '',
+        metaDescription: (r.meta_description as string | undefined) ?? '',
+        imageAlt: (r.image_alt as string[] | undefined) ?? [],
+        gtin: (r.gtin as string | undefined) ?? '',
+        compliance: (r.compliance as ProductCompliance | undefined) ?? {},
         status: r.status as Product['status'],
         stock: r.stock as Product['stock'],
         source: s
@@ -858,6 +878,7 @@ const ordersFromRows = (orders: Row[], items: Row[], notes: Row[]): StoreOrder[]
       unitPrice: num(i.unit_price),
       qty: i.qty as number,
       options: (i.options as string | undefined) || undefined,
+      ...(i.install ? { install: true } : {}),
     })
     byOrder.set(i.order_id as string, list)
   }

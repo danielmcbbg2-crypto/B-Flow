@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { track } from '../../lib/analytics'
-import { ArrowLeft, CheckCircle2, Minus, Package, Plus, Search, ShoppingCart, Trash2 } from 'lucide-react'
-import { Empty, Field, Modal, PageHeader, Status, type Tone } from '../../components/ui'
+import { ArrowLeft, BadgeCheck, CheckCircle2, Minus, Plus, Receipt, Search, ShieldCheck, ShoppingCart, Trash2, Wrench } from 'lucide-react'
+import { Empty, Field, PageHeader, Status, type Tone } from '../../components/ui'
 import { Logo } from '../../components/Logo'
 import { SignInModal } from '../../components/SignInModal'
 import { useStore, type PlacedOrder } from '../../lib/store'
@@ -9,114 +9,15 @@ import { lineKey, useCart } from '../../lib/cart'
 import { navigate } from '../../lib/router'
 import { SITE_URL, usePageMeta } from '../../lib/head'
 import { productMeta, productPath, STORE_META } from '../../lib/seo'
-import { ORDER_STATUS_LABEL, STOCK_LABEL, STORE_CATEGORIES, type OrderInvoiceStatus, type OrderStatus, type Product, type ProductOptionValue, type UserAccount } from '../../lib/types'
+import { ORDER_STATUS_LABEL, STORE_CATEGORIES, type OrderInvoiceStatus, type OrderStatus, type Product, type UserAccount } from '../../lib/types'
+import { ProductCard, ProductView } from './ProductView'
+import { StoreFooter, StoreInfo } from './StoreInfo'
+import { isStoreInfo } from '../../lib/storePolicy'
+import { cheapestChoice, choicePhoto, choiceText, defaultChoice, ProductImage, unitPrice, useCatalog, type Choice } from './shopping'
 import { cx, fmtDate, money } from '../../lib/utils'
 import { PaymentSafety } from '../../components/PaymentSafety'
 
-const STOCK_TONE: Record<Product['stock'], Tone> = { in_stock: 'green', to_order: 'outline', out_of_stock: 'red' }
 const ORDER_TONE: Record<OrderStatus, Tone> = { new: 'orange', confirmed: 'outline', paid: 'dark', fulfilled: 'green', cancelled: 'red' }
-
-type Choice = Record<string, string>
-
-const tierOf = (p: Product, user: UserAccount | null) =>
-  user?.status !== 'active' ? 'public' : user.role === 'provider' && p.tradePrice !== undefined ? 'trade' : user.role === 'client' && p.clientPrice !== undefined ? 'client' : 'public'
-
-/** What an option value adds for this person (their tier's add-on, as place_order works it out). */
-export function addOn(v: ProductOptionValue, p: Product, user: UserAccount | null): number {
-  const tier = tierOf(p, user)
-  return (tier === 'trade' ? v.tradePrice : tier === 'client' ? v.clientPrice : undefined) ?? v.price
-}
-
-/**
- * Signed-in service providers pay the trade price and signed-in clients the client price, where one
- * is set; everyone else the public price, plus what the chosen options add (place_order applies the
- * same rule).
- */
-export function unitPrice(p: Product, user: UserAccount | null, choice: Choice = {}): number {
-  const tier = tierOf(p, user)
-  const base = tier === 'trade' ? p.tradePrice! : tier === 'client' ? p.clientPrice! : p.price
-  return base + (p.options ?? []).reduce((sum, g) => {
-    const v = g.values.find((x) => x.id === choice[g.id])
-    return sum + (v ? addOn(v, p, user) : 0)
-  }, 0)
-}
-
-/** The first available value of each option. */
-const defaultChoice = (p: Product): Choice =>
-  Object.fromEntries((p.options ?? []).map((g) => [g.id, (g.values.find((v) => v.available) ?? g.values[0])?.id ?? '']))
-
-/** "Size: 900 mm · Colour: Oak", or null if a choice is missing or no longer offered. */
-function choiceText(p: Product, choice: Choice = {}): string | null {
-  const opts = p.options ?? []
-  if (Object.keys(choice).some((k) => !opts.some((g) => g.id === k))) return null
-  const parts: string[] = []
-  for (const g of opts) {
-    const v = g.values.find((x) => x.id === choice[g.id])
-    if (!v || !v.available) return null
-    parts.push(`${g.name}: ${v.label}`)
-  }
-  return parts.join(' · ')
-}
-
-/** Published products: from the signed-in person's data, or loaded for a visitor. */
-function useCatalog() {
-  const { data, user, loadCatalog, phase } = useStore()
-  const [visitor, setVisitor] = useState<{ products: Product[]; error?: string } | null>(null)
-  useEffect(() => {
-    if (user || phase !== 'ready') return
-    let live = true
-    loadCatalog()
-      .then((products) => live && setVisitor({ products }))
-      .catch((e: Error) => live && setVisitor({ products: [], error: e.message }))
-    return () => {
-      live = false
-    }
-  }, [user, phase, loadCatalog])
-  if (user) return { products: data.products.filter((p) => p.status === 'published'), loading: false, error: undefined }
-  return { products: visitor?.products ?? [], loading: !visitor, error: visitor?.error }
-}
-
-function Price({ p, user, large, choice, from }: { p: Product; user: UserAccount | null; large?: boolean; choice?: Choice; from?: boolean }) {
-  const price = unitPrice(p, user, choice)
-  const retail = unitPrice(p, null, choice)
-  return (
-    <span className={cx('num', large ? 'text-2xl font-bold' : 'font-semibold')}>
-      {from && <span className="mr-1 text-xs font-normal text-slate-500">From</span>}
-      {money(price)}
-      {price !== retail && (
-        <span className="ml-2 align-middle text-xs font-normal text-slate-500">
-          {user?.role === 'provider' ? 'Trade price' : 'Member price'} <span className="line-through">{money(retail)}</span>
-        </span>
-      )}
-    </span>
-  )
-}
-
-/** The cheapest choice of a product (for "From $…" on the product card). */
-const cheapestChoice = (p: Product, user: UserAccount | null): Choice =>
-  Object.fromEntries(
-    (p.options ?? []).map((g) => {
-      const open = g.values.filter((v) => v.available)
-      const best = (open.length ? open : g.values).reduce((a, b) => (addOn(b, p, user) < addOn(a, p, user) ? b : a))
-      return [g.id, best.id]
-    }),
-  )
-const varies = (p: Product) => (p.options ?? []).some((g) => g.values.some((v) => v.price !== g.values[0].price))
-
-/** The photo of the first chosen option that has one (e.g. the colour picked), if any. */
-const choicePhoto = (p: Product, choice: Choice = {}) =>
-  (p.options ?? []).map((g) => g.values.find((v) => v.id === choice[g.id])?.image).find(Boolean)
-
-function ProductImage({ p, className, src }: { p: Product; className?: string; src?: string }) {
-  const photo = src ?? p.images[0]
-  return photo ? (
-    <img src={photo} alt="" className={cx('object-cover', className)} loading="lazy" />
-  ) : (
-    <div className={cx('flex items-center justify-center bg-slate-100 text-slate-400', className)} aria-hidden="true">
-      <Package size={40} strokeWidth={1.25} />
-    </div>
-  )
-}
 
 /**
  * The shop: browse, product details, cart and checkout. Used on the public store page and in the
@@ -127,8 +28,23 @@ export function Shop({ portal, productId }: { portal?: boolean; productId?: stri
   const { products, loading, error } = useCatalog()
   const cart = useCart()
   const [view, setView] = useState<'browse' | 'cart'>('browse')
-  const [category, setCategory] = useState('All')
+  // The category is kept in the address (?category=Tapware) on the public shop, so it can be shared.
+  const [category, setCategoryState] = useState(() => (portal ? 'All' : new URLSearchParams(window.location.search).get('category') ?? 'All'))
+  const setCategory = (c: string) => {
+    setCategoryState(c)
+    if (portal) return
+    const url = new URL(window.location.href)
+    if (c === 'All') url.searchParams.delete('category')
+    else url.searchParams.set('category', c)
+    window.history.replaceState(null, '', url)
+  }
+  // Back and forward (and links) can change the address's category while the shop stays open.
+  useEffect(() => {
+    if (portal || productId) return
+    setCategoryState(new URLSearchParams(window.location.search).get('category') ?? 'All')
+  }, [portal, productId])
   const [query, setQuery] = useState('')
+  const [sort, setSort] = useState<Sort>('featured')
   // On the public shop each product has its own address (/store/<id>/<name>), so the open product
   // follows the address; in the portals it's just opened in place.
   const routed = !portal
@@ -141,143 +57,179 @@ export function Shop({ portal, productId }: { portal?: boolean; productId?: stri
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openId])
   const setOpen = (p: Product | null) => {
-    if (routed) navigate(p ? productPath(p) : '/store')
-    else setLocal(p)
+    setView('browse')
+    if (routed) navigate(p ? productPath(p) : category === 'All' ? '/store' : `/store?category=${encodeURIComponent(category)}`)
+    else {
+      setLocal(p)
+      window.scrollTo(0, 0)
+    }
   }
   usePageMeta(!routed || loading ? null : open ? productMeta(open, SITE_URL) : STORE_META(SITE_URL))
   const [placed, setPlaced] = useState<PlacedOrder | null>(null)
 
   const categories = useMemo(() => STORE_CATEGORIES.filter((c) => products.some((p) => p.category === c)), [products])
   const q = query.trim().toLowerCase()
-  const shown = products.filter(
-    (p) => (category === 'All' || p.category === category) && (!q || `${p.title} ${p.brand} ${p.sku} ${p.description}`.toLowerCase().includes(q)),
+  const shown = sortProducts(
+    products.filter((p) => (category === 'All' || p.category === category) && (!q || `${p.title} ${p.brand} ${p.sku} ${p.description} ${(p.highlights ?? []).join(' ')}`.toLowerCase().includes(q))),
+    sort,
+    user,
   )
+  const addToCart = (p: Product, qty = 1, chosen?: Choice, install = false) => {
+    cart.add(p.id, qty, chosen, install)
+    track('add_to_cart', { currency: 'AUD', items: [{ item_id: p.id, item_name: p.title, quantity: qty }] })
+  }
 
   if (placed) return <OrderPlaced placed={placed} onDone={() => { setPlaced(null); setView('browse') }} />
 
-  const header = (
-    <div className="mb-5 flex flex-wrap items-center gap-2">
-      {view === 'cart' ? (
-        <button className="btn-ghost" onClick={() => setView('browse')}>
-          <ArrowLeft size={16} /> Back to products
-        </button>
-      ) : (
-        <>
-          <label className="relative min-w-0 flex-1 sm:max-w-xs">
-            <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden="true" />
-            <input className="input pl-9" placeholder="Search products" aria-label="Search products" value={query} onChange={(e) => setQuery(e.target.value)} />
-          </label>
-          <select className="input w-auto" aria-label="Category" value={category} onChange={(e) => setCategory(e.target.value)}>
-            <option>All</option>
-            {categories.map((c) => <option key={c}>{c}</option>)}
-          </select>
-        </>
-      )}
-      <button className={cx('ml-auto', cart.count ? 'btn-primary' : 'btn-ghost')} onClick={() => setView('cart')}>
-        <ShoppingCart size={16} /> Cart{cart.count ? <span className="num">({cart.count})</span> : null}
-      </button>
-    </div>
+  const cartButton = (
+    <button className={cx('ml-auto', cart.count ? 'btn-primary' : 'btn-ghost')} onClick={() => setView('cart')}>
+      <ShoppingCart size={16} /> Cart{cart.count ? <span className="num">({cart.count})</span> : null}
+    </button>
   )
+
+  if (loading) return <p className="text-sm text-slate-500">Loading products…</p>
+  if (error) return <Empty title="The shop couldn't load">{error}</Empty>
+
+  if (view === 'cart') {
+    return (
+      <>
+        <div className="mb-5 flex flex-wrap items-center gap-2">
+          <button className="btn-ghost" onClick={() => setView('browse')}>
+            <ArrowLeft size={16} /> {open ? 'Back to the product' : 'Back to products'}
+          </button>
+        </div>
+        <Checkout cart={cart} products={products} portal={portal} acting={!!actingAs} onPlaced={(r) => { track('purchase', { transaction_id: String(r.number), value: r.total, currency: 'AUD' }); cart.clear(); setPlaced(r) }} />
+      </>
+    )
+  }
+
+  if (open) {
+    return (
+      <>
+        <div className="mb-4 flex justify-end">{cartButton}</div>
+        <ProductView
+          key={open.id}
+          p={open}
+          user={user}
+          choice={choice}
+          setChoice={setChoice}
+          related={products.filter((r) => r.category === open.category && r.id !== open.id).slice(0, 4)}
+          onBack={() => setOpen(null)}
+          onAdd={(qty, install) => addToCart(open, qty, (open.options ?? []).length ? choice : undefined, install)}
+          onViewCart={() => setView('cart')}
+          onOpen={(r) => setOpen(r)}
+        />
+      </>
+    )
+  }
 
   return (
     <>
-      {header}
-      {loading ? (
-        <p className="text-sm text-slate-500">Loading products…</p>
-      ) : error ? (
-        <Empty title="The shop couldn't load">{error}</Empty>
-      ) : view === 'cart' ? (
-        <Checkout cart={cart} products={products} portal={portal} acting={!!actingAs} onPlaced={(r) => { track('purchase', { transaction_id: String(r.number), value: r.total, currency: 'AUD' }); cart.clear(); setPlaced(r) }} />
-      ) : shown.length === 0 ? (
+      {routed && <StoreIntro products={products} categories={categories} onCategory={setCategory} />}
+      <div id="products" className="mb-4 flex scroll-mt-20 flex-wrap items-center gap-2">
+        <label className="relative min-w-0 flex-1 basis-56 sm:max-w-xs">
+          <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden="true" />
+          <input className="input pl-9" type="search" placeholder="Search products" aria-label="Search products" value={query} onChange={(e) => setQuery(e.target.value)} />
+        </label>
+        <select className="input w-auto" aria-label="Sort by" value={sort} onChange={(e) => setSort(e.target.value as Sort)}>
+          {(Object.keys(SORT_LABEL) as Sort[]).map((s) => <option key={s} value={s}>{SORT_LABEL[s]}</option>)}
+        </select>
+        {cartButton}
+      </div>
+      <div className="mb-6 flex flex-wrap gap-2" role="group" aria-label="Category">
+        {['All', ...categories].map((c) => (
+          <button
+            key={c}
+            onClick={() => setCategory(c)}
+            aria-pressed={category === c}
+            className={cx('border px-3 py-1.5 text-sm', category === c ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-300 bg-white hover:border-slate-900')}
+          >
+            {c} <span className={cx('num', category === c ? 'text-white/70' : 'text-slate-500')}>{c === 'All' ? products.length : products.filter((p) => p.category === c).length}</span>
+          </button>
+        ))}
+      </div>
+      {shown.length === 0 ? (
         <Empty title={products.length ? 'Nothing matches' : 'No products yet'}>{products.length ? 'Try another search or category.' : 'Check back soon.'}</Empty>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {shown.map((p) => (
-            <article key={p.id} className="card flex flex-col overflow-hidden">
-              <button className="text-left" onClick={() => setOpen(p)} aria-label={`View ${p.title}`}>
-                <ProductImage p={p} className="aspect-[4/3] w-full" />
-              </button>
-              <div className="flex flex-1 flex-col p-4">
-                <p className="text-xs text-slate-500">{[p.category, p.brand].filter(Boolean).join(' · ')}</p>
-                {routed ? (
-                  <a href={productPath(p)} className="mt-1 font-semibold leading-snug hover:underline">{p.title}</a>
-                ) : (
-                  <button className="mt-1 text-left font-semibold leading-snug hover:underline" onClick={() => setOpen(p)}>{p.title}</button>
-                )}
-                <div className="mt-2"><Status tone={STOCK_TONE[p.stock]}>{STOCK_LABEL[p.stock]}</Status></div>
-                {(p.options ?? []).length > 0 && (
-                  <p className="mt-2 text-xs text-slate-500">{p.options.map((g) => `${g.values.length} ${g.name.toLowerCase()}${g.values.length === 1 ? '' : ' options'}`).join(' · ')}</p>
-                )}
-                <div className="mt-auto flex items-center justify-between gap-2 pt-4">
-                  <Price p={p} user={user} choice={cheapestChoice(p, user)} from={varies(p)} />
-                  {(p.options ?? []).length > 0 ? (
-                    <button className="btn-ghost px-3 py-1.5" disabled={p.stock === 'out_of_stock'} onClick={() => setOpen(p)} aria-label={`Choose options for ${p.title}`}>
-                      Choose
-                    </button>
-                  ) : (
-                    <button className="btn-ghost px-3 py-1.5" disabled={p.stock === 'out_of_stock'} onClick={() => { cart.add(p.id); track('add_to_cart', { currency: 'AUD', items: [{ item_id: p.id, item_name: p.title }] }) }} aria-label={`Add ${p.title} to cart`}>
-                      <Plus size={15} /> Add
-                    </button>
-                  )}
-                </div>
-              </div>
-            </article>
-          ))}
-        </div>
-      )}
-      {open && (
-        <Modal open onClose={() => setOpen(null)} title={open.title} width="max-w-3xl">
-          <div className="grid gap-5 md:grid-cols-2">
-            <div className="space-y-2">
-              <ProductImage p={open} src={choicePhoto(open, choice)} className="aspect-[4/3] w-full" />
-              {open.images.length > 1 && (
-                <div className="grid grid-cols-4 gap-2">
-                  {open.images.slice(1).map((src) => <img key={src} src={src} alt="" className="aspect-square w-full object-cover" loading="lazy" />)}
-                </div>
-              )}
-            </div>
-            <div>
-              <p className="text-xs text-slate-500">{[open.category, open.brand, open.sku].filter(Boolean).join(' · ')}</p>
-              <div className="mt-2"><Price p={open} user={user} choice={choice} large /></div>
-              <p className="mt-1 text-xs text-slate-500">Inc. GST</p>
-              <div className="mt-3"><Status tone={STOCK_TONE[open.stock]}>{STOCK_LABEL[open.stock]}</Status></div>
-              {(open.options ?? []).length > 0 && (
-                <div className="mt-4 space-y-3">
-                  {open.options.map((g) => (
-                    <Field key={g.id} label={g.name}>
-                      <select className="input" value={choice[g.id] ?? ''} onChange={(e) => setChoice({ ...choice, [g.id]: e.target.value })}>
-                        {g.values.map((v) => {
-                          const extra = addOn(v, open, user)
-                          return (
-                            <option key={v.id} value={v.id} disabled={!v.available}>
-                              {v.label}
-                              {extra > 0 ? ` (+${money(extra)})` : ''}
-                              {v.available ? '' : ' (unavailable)'}
-                            </option>
-                          )
-                        })}
-                      </select>
-                    </Field>
-                  ))}
-                </div>
-              )}
-              {open.description && <p className="mt-4 whitespace-pre-wrap text-sm leading-relaxed text-slate-700">{open.description}</p>}
-              <button
-                className="btn-primary mt-6"
-                disabled={open.stock === 'out_of_stock' || choiceText(open, choice) === null}
-                onClick={() => {
-                  cart.add(open.id, 1, (open.options ?? []).length ? choice : undefined)
-                  track('add_to_cart', { currency: 'AUD', items: [{ item_id: open.id, item_name: open.title }] })
-                  setOpen(null)
-                }}
-              >
-                <ShoppingCart size={16} /> Add to cart
-              </button>
-            </div>
+        <>
+          <p className="mb-3 text-sm text-slate-500" aria-live="polite"><span className="num">{shown.length}</span> {shown.length === 1 ? 'product' : 'products'}</p>
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
+            {shown.map((p) => (
+              <ProductCard key={p.id} p={p} user={user} routed={routed} onOpen={() => setOpen(p)} onAdd={() => addToCart(p)} />
+            ))}
           </div>
-        </Modal>
+        </>
       )}
     </>
+  )
+}
+
+type Sort = 'featured' | 'price-low' | 'price-high' | 'name'
+const SORT_LABEL: Record<Sort, string> = { featured: 'Featured', 'price-low': 'Price: low to high', 'price-high': 'Price: high to low', name: 'Name' }
+function sortProducts(list: Product[], sort: Sort, user: UserAccount | null): Product[] {
+  const from = (p: Product) => unitPrice(p, user, cheapestChoice(p, user))
+  if (sort === 'price-low') return [...list].sort((a, b) => from(a) - from(b))
+  if (sort === 'price-high') return [...list].sort((a, b) => from(b) - from(a))
+  if (sort === 'name') return [...list].sort((a, b) => a.title.localeCompare(b.title))
+  // Featured: by category, in the shop's order, then the most complete listings first.
+  const order = (p: Product) => STORE_CATEGORIES.indexOf(p.category as (typeof STORE_CATEGORIES)[number])
+  return [...list].sort((a, b) => order(a) - order(b) || (b.highlights?.length ?? 0) - (a.highlights?.length ?? 0) || a.title.localeCompare(b.title))
+}
+
+/** The top of the public shop: what it is, why buy here, and its categories. */
+function StoreIntro({ products, categories, onCategory }: { products: Product[]; categories: string[]; onCategory: (c: string) => void }) {
+  const pick = (c: string) => {
+    onCategory(c)
+    document.getElementById('products')?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
+  }
+  return (
+    <div className="mb-10 space-y-8">
+      <section className="bg-slate-900 px-6 py-10 text-white sm:px-10 sm:py-14">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-accent">Next Phase Maintenance shop</p>
+        <h1 className="mt-3 max-w-2xl font-display text-3xl font-bold leading-tight text-balance sm:text-5xl">Quality bathroom fixtures at honest prices</h1>
+        <p className="mt-4 max-w-xl text-base font-light text-white/80 sm:text-lg">
+          Vanities, shower screens, toilets and tapware for Melbourne homes and rentals. Buy on its own, or have our team supply and install it.
+        </p>
+        <div className="mt-7 flex flex-col gap-3 sm:flex-row">
+          <button className="btn-accent px-6 py-3 text-base" onClick={() => pick('All')}>Shop all products</button>
+          <a href="/store/delivery" className="btn border border-white px-6 py-3 text-base text-white hover:bg-white hover:text-slate-900">Delivery and installation</a>
+        </div>
+      </section>
+      <ul className="grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
+        {[
+          { icon: BadgeCheck, title: 'Australian standards', body: 'WELS ratings and WaterMark details on every tap and toilet.' },
+          { icon: Receipt, title: 'Prices include GST', body: 'The price you see is the price you pay for the product.' },
+          { icon: Wrench, title: 'Supply and install', body: 'One team to supply and fit it, anywhere in Melbourne.' },
+          { icon: ShieldCheck, title: 'Your rights protected', body: 'Australian Consumer Law guarantees on everything we sell.' },
+        ].map(({ icon: Icon, title, body }) => (
+          <li key={title} className="flex gap-3 border border-slate-200 bg-white p-4">
+            <Icon size={22} className="shrink-0 text-accent-ink" aria-hidden="true" />
+            <span>
+              <span className="block font-semibold text-slate-900">{title}</span>
+              <span className="text-slate-600">{body}</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+      <section aria-labelledby="shop-categories">
+        <h2 id="shop-categories" className="rule-above font-display text-xl font-bold">Shop by category</h2>
+        <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+          {categories.map((c) => {
+            const items = products.filter((p) => p.category === c)
+            const cover = items.find((p) => p.images.length) ?? items[0]
+            return (
+              <button key={c} onClick={() => pick(c)} className="group overflow-hidden border border-slate-200 bg-white text-left">
+                {cover && <ProductImage p={cover} src={cover.images[1] ?? cover.images[0]} className="aspect-[4/3] w-full transition-transform duration-300 group-hover:scale-[1.03] motion-reduce:transition-none" />}
+                <span className="flex items-center justify-between gap-2 p-3">
+                  <span className="font-semibold">{c}</span>
+                  <span className="num text-sm text-slate-500">{items.length}</span>
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      </section>
+    </div>
   )
 }
 
@@ -315,6 +267,8 @@ function Checkout({
     .sort((a, b) => (a.title ?? '').localeCompare(b.title ?? ''))
   const total = lines.reduce((s, l) => s + (l.p ? unitPrice(l.p, user, l.options) * l.qty : 0), 0)
   const missing = lines.filter((l) => !l.p)
+  const installing = lines.some((l) => l.p && l.install)
+  const needsAddress = form.delivery === 'delivery' || installing
   const tooMany = lines.length - missing.length > 30
 
   const submit = async (e: FormEvent) => {
@@ -323,7 +277,13 @@ function Checkout({
     setBusy(true)
     setError(null)
     try {
-      onPlaced(await placeOrder({ ...form, items: lines.filter((l) => l.p).map((l) => ({ productId: l.productId, qty: l.qty, options: l.options })) }))
+      onPlaced(
+        await placeOrder({
+          ...form,
+          address: needsAddress ? form.address : '',
+          items: lines.filter((l) => l.p).map((l) => ({ productId: l.productId, qty: l.qty, options: l.options, install: !!l.install })),
+        }),
+      )
     } catch (err) {
       setError((err as Error).message)
     } finally {
@@ -342,6 +302,12 @@ function Checkout({
               <p className="font-semibold leading-snug">{l.p ? l.p.title : l.title ? `${l.title}: options no longer available` : 'No longer available'}</p>
               {l.chosen && <p className="text-xs text-slate-600">{l.chosen}</p>}
               {l.p && <p className="num text-xs text-slate-500">{money(unitPrice(l.p, user, l.options))} each</p>}
+              {l.p && (
+                <label className="mt-1.5 inline-flex cursor-pointer items-center gap-2 text-xs text-slate-700">
+                  <input type="checkbox" className="accent-slate-900" checked={!!l.install} onChange={(e) => cart.setInstall(l, e.target.checked)} />
+                  Install it for me <span className="text-slate-500">(quoted after you order)</span>
+                </label>
+              )}
             </div>
             {l.p && (
               <div className="flex items-center gap-1">
@@ -354,7 +320,7 @@ function Checkout({
           </div>
         ))}
         <div className="flex items-center justify-between p-4">
-          <span className="font-semibold">Total (inc. GST)</span>
+          <span className="font-semibold">Total (inc. GST){installing && <span className="block text-xs font-normal text-slate-500">Installation quoted separately</span>}</span>
           <span className="num text-lg font-bold">{money(total)}</span>
         </div>
         {missing.length > 0 && <p className="p-4 text-sm text-red-600">Some items are no longer available; remove them to continue.</p>}
@@ -376,8 +342,8 @@ function Checkout({
             ))}
           </div>
         </fieldset>
-        {form.delivery === 'delivery' && (
-          <Field label="Delivery address">
+        {needsAddress && (
+          <Field label={form.delivery === 'delivery' && installing ? 'Delivery and installation address' : installing ? 'Installation address' : 'Delivery address'}>
             <input className="input" required autoComplete="street-address" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
           </Field>
         )}
@@ -386,6 +352,7 @@ function Checkout({
         </Field>
         <p className="text-xs text-slate-500">
           No payment now. We'll email your invoice with ways to pay, and confirm availability{form.delivery === 'delivery' ? ' and the delivery cost' : ''} with you.
+          {installing && " Installation is quoted separately after you order: we'll send you the price, and you only pay for it if you accept."}
           {user?.role === 'provider' && user.status === 'active' && ' Trade prices apply to your account.'}
         </p>
         <PaymentSafety />
@@ -454,6 +421,12 @@ export function StorePage({ productId }: { productId?: string }) {
       <header className="sticky top-0 z-40 border-b border-slate-200 bg-white">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6">
           <Logo sub="Store" />
+          <nav aria-label="Shop" className="ml-auto mr-2 hidden items-center gap-5 text-sm md:flex">
+            <a href="/" className="text-slate-700 hover:text-slate-900">Maintenance services</a>
+            <a href="/store/delivery" className="text-slate-700 hover:text-slate-900">Delivery</a>
+            <a href="/store/returns" className="text-slate-700 hover:text-slate-900">Returns</a>
+            <a href="/store/contact" className="text-slate-700 hover:text-slate-900">Contact</a>
+          </nav>
           {user ? (
             <button
               className="btn-accent text-[15px] font-normal"
@@ -466,10 +439,10 @@ export function StorePage({ productId }: { productId?: string }) {
           )}
         </div>
       </header>
-      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
-        <PageHeader title="Shop" subtitle="Vanities, shower screens, tapware and more. Order online and we'll confirm, invoice and deliver or install." />
-        <Shop productId={productId} />
+      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
+        {isStoreInfo(productId) ? <StoreInfo slug={productId} /> : <Shop productId={productId} />}
       </main>
+      <StoreFooter />
       <SignInModal open={signIn} onClose={() => setSignIn(false)} />
     </div>
   )
@@ -520,6 +493,12 @@ function OrderPlaced({ placed, onDone }: { placed: PlacedOrder; onDone: () => vo
         <p className="mt-2 text-sm text-slate-600">
           Total <span className="num font-semibold text-slate-900">{money(placed.total)}</span> inc. GST. Nothing has been charged: we'll check
           availability and email you an invoice with payment details.
+        </p>
+      )}
+      {placed.installQuote && (
+        <p className="mt-3 text-sm text-slate-600">
+          We'll also price the installation you asked for (quote <span className="num">#{placed.installQuote}</span>) and send it to you. You only pay for
+          installation if you accept the quote.
         </p>
       )}
       <PaymentSafety className="mx-auto mt-5 max-w-sm text-left" />

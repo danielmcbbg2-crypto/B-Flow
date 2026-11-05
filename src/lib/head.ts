@@ -38,6 +38,7 @@ export function applyMeta(m: PageMeta) {
   setMeta('property', 'og:url', url)
   setMeta('property', 'og:type', m.type ?? 'website')
   setMeta('property', 'og:image', m.image)
+  setMeta('property', 'og:image:alt', m.image ? m.imageAlt : undefined)
   setMeta('name', 'twitter:card', m.image ? 'summary_large_image' : 'summary')
   document.head.querySelectorAll('script[data-page-ld]').forEach((s) => s.remove())
   for (const ld of m.jsonLd ?? []) {

@@ -2,9 +2,13 @@ import { Fragment, useEffect, useState, type FormEvent } from 'react'
 import { ExternalLink, Package, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { Empty, Field, Modal, PageHeader, PhotoInput, Status, Tabs, type Tone } from '../../components/ui'
 import { useLookup, useStore } from '../../lib/store'
-import { ORDER_STATUS_LABEL, STOCK_LABEL, STORE_CATEGORIES, SUPPLIER_STOCK_LABEL, type OrderStatus, type OrderInvoiceStatus, type QuickBooksStatus, ORDER_INVOICE_LABEL, type OptionPrice, type PriceChange, type Pricing, type Product, type ProductOption, type ProductSource, type StoreOrder, type SupplierStock } from '../../lib/types'
+import { ListingDetails } from './ListingDetails'
+import { EMPTY_LISTING, ORDER_STATUS_LABEL, STOCK_LABEL, STORE_CATEGORIES, SUPPLIER_STOCK_LABEL, type OrderStatus, type OrderInvoiceStatus, type QuickBooksStatus, ORDER_INVOICE_LABEL, type OptionPrice, type PriceChange, type Pricing, type Product, type ProductOption, type ProductSource, type StoreOrder, type SupplierStock } from '../../lib/types'
 import { cx, fmtDate, fmtDateTime, money, uid } from '../../lib/utils'
 import { ProductAssistant } from './ProductAssistant'
+import { openOnArrival, takeOpenOnArrival } from '../../lib/openOnArrival'
+import { navigate } from '../../lib/router'
+import { quoteStage } from '../../lib/quote'
 import { CLOUD } from '../../lib/supabase'
 import { autoOptions, autoPrices, manualOptions, marginOf, optionAddOn } from '../../lib/pricing'
 
@@ -33,6 +37,7 @@ export const EMPTY_PRODUCT = (): Product => ({
   sku: '',
   price: 0,
   images: [],
+  ...EMPTY_LISTING(),
   status: 'draft',
   stock: 'in_stock',
   createdAt: new Date().toISOString(),
@@ -235,7 +240,8 @@ function InvoiceLimits({ status, onSaved }: { status: QuickBooksStatus; onSaved:
 function Orders() {
   const { data } = useStore()
   const lk = useLookup()
-  const [openId, setOpenId] = useState<string | null>(null)
+  // Opened from its install quote: straight into that order.
+  const [openId, setOpenId] = useState<string | null>(() => takeOpenOnArrival('order'))
   const [show, setShow] = useState<'open' | 'all'>('open')
   const list = data.orders.filter((o) => show === 'all' || !['fulfilled', 'cancelled'].includes(o.status))
   const open = data.orders.find((o) => o.id === openId)
@@ -279,7 +285,10 @@ function Orders() {
                       {o.trade ? ' · trade prices' : ''}
                     </p>
                   </td>
-                  <td className="td text-sm text-slate-600">{o.items.map((i) => `${i.qty} × ${i.title}${i.options ? ` (${i.options})` : ''}`).join(', ')}</td>
+                  <td className="td text-sm text-slate-600">
+                    {o.items.map((i) => `${i.qty} × ${i.title}${i.options ? ` (${i.options})` : ''}${i.install ? ' + install' : ''}`).join(', ')}
+                    {o.items.some((i) => i.install) && <span className="mt-1 block text-xs font-semibold text-accent-ink">Installation to quote</span>}
+                  </td>
                   <td className="td num text-right">{money(o.total)}</td>
                   <td className="td"><Status tone={ORDER_TONE[o.status]}>{ORDER_STATUS_LABEL[o.status]}</Status></td>
                   <td className="td">
@@ -350,7 +359,8 @@ function OrderInvoicePanel({ order }: { order: StoreOrder }) {
 }
 
 function OrderDetail({ order, onClose }: { order: StoreOrder; onClose: () => void }) {
-  const { update } = useStore()
+  const { data, update } = useStore()
+  const installQuote = data.projects.find((p) => p.orderId === order.id)
   const [status, setStatus] = useState(order.status)
   const [notes, setNotes] = useState(order.adminNotes)
   const save = (e: FormEvent) => {
@@ -371,7 +381,7 @@ function OrderDetail({ order, onClose }: { order: StoreOrder; onClose: () => voi
           ['Placed', fmtDateTime(order.createdAt)],
           ['Email', <a className="underline-offset-2 hover:underline" href={`mailto:${order.email}`}>{order.email}</a>],
           ['Phone', <a className="num underline-offset-2 hover:underline" href={`tel:${order.phone.replace(/[\s()-]/g, '')}`}>{order.phone}</a>],
-          ['Delivery', order.delivery === 'pickup' ? 'Pickup' : `Delivery to ${order.address}`],
+          ['Delivery', order.delivery === 'pickup' ? (order.address ? `Pickup · install at ${order.address}` : 'Pickup') : `Delivery to ${order.address}`],
           ['Pricing', order.trade ? 'Trade prices' : 'Retail prices'],
         ].map(([k, v]) => (
           <div key={k as string}>
@@ -384,7 +394,12 @@ function OrderDetail({ order, onClose }: { order: StoreOrder; onClose: () => voi
         <tbody className="divide-y divide-slate-100">
           {order.items.map((i) => (
             <tr key={i.id}>
-              <td className="py-2">{i.title}{i.sku && <span className="ml-2 text-xs text-slate-500">{i.sku}</span>}{i.options && <span className="block text-xs text-slate-600">{i.options}</span>}</td>
+              <td className="py-2">
+                {i.title}
+                {i.sku && <span className="ml-2 text-xs text-slate-500">{i.sku}</span>}
+                {i.options && <span className="block text-xs text-slate-600">{i.options}</span>}
+                {i.install && <span className="block text-xs font-semibold text-accent-ink">Supply and install (installation quoted separately)</span>}
+              </td>
               <td className="num py-2 text-right text-slate-600">{i.qty} × {money(i.unitPrice)}</td>
               <td className="num py-2 text-right font-semibold">{money(i.qty * i.unitPrice)}</td>
             </tr>
@@ -396,6 +411,25 @@ function OrderDetail({ order, onClose }: { order: StoreOrder; onClose: () => voi
         </tbody>
       </table>
       {order.notes && <p className="mt-3 rounded-md bg-slate-50 p-3 text-sm text-slate-700"><span className="font-semibold">Customer notes: </span>{order.notes}</p>}
+      {installQuote && (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border border-accent/40 bg-accent-soft p-3 text-sm">
+          <span>
+            <span className="font-semibold">Installation requested.</span> Quote <span className="num">P-{installQuote.number}</span>:{' '}
+            {quoteStage(installQuote) === 'requested' ? 'not priced yet' : quoteStage(installQuote) === 'pricing' ? 'being priced' : quoteStage(installQuote) === 'issued' ? 'sent to the customer' : quoteStage(installQuote) === 'won' ? 'accepted' : quoteStage(installQuote) === 'lost' ? 'declined' : 'in progress'}
+            {installQuote.quoteAmount ? ` · ${money(installQuote.quoteAmount)}` : ''}
+          </span>
+          <button
+            type="button"
+            className="btn-primary px-3 py-1.5"
+            onClick={() => {
+              openOnArrival('quote', installQuote.id)
+              navigate('/admin/quotes')
+            }}
+          >
+            {quoteStage(installQuote) === 'requested' ? 'Price the installation' : 'Open the quote'}
+          </button>
+        </div>
+      )}
       <OrderInvoicePanel order={order} />
       <form className="mt-5 grid gap-4 border-t border-slate-200 pt-4 sm:grid-cols-2" onSubmit={save}>
         <Field label="Status">
@@ -764,6 +798,7 @@ export function ProductEditor({ product, notice, onClose, onSaved }: { product: 
     if (clientPrice !== undefined && !(clientPrice >= 0)) return setError('Enter a valid client price, or leave it empty.')
     if (cost !== undefined && !(cost >= 0)) return setError('Enter a valid cost, or leave it empty.')
     if (p.status === 'published' && !p.description.trim()) return setError('Add a description before publishing.')
+    if (p.gtin && !/^\d{8,14}$/.test(p.gtin)) return setError('The barcode should be 8 to 14 digits, or leave it empty.')
     const opts = optionDraft.options.map((g) => ({ ...g, name: g.name.trim(), values: g.values.map((v) => ({ ...v, label: v.label.trim() })) }))
     if (opts.some((g) => !g.name || g.values.some((v) => !v.label))) return setError('Give each option a name and each choice a label (or remove the empty ones).')
     if (opts.some((g) => g.values.every((v) => !v.available))) return setError('Each option needs at least one available choice.')
@@ -852,9 +887,11 @@ export function ProductEditor({ product, notice, onClose, onSaved }: { product: 
         </Field>
         <div className="sm:col-span-2">
           <span className="label">Photos (first is the main one)</span>
-          <PhotoInput value={p.images} onChange={(images) => set({ images })} max={8} />
+          {/* Each photo keeps its description when photos are moved or removed. */}
+          <PhotoInput value={p.images} onChange={(images) => set({ images, imageAlt: images.map((u) => p.imageAlt?.[p.images.indexOf(u)] ?? '') })} max={8} />
           <p className="mt-1 text-xs text-slate-500">Use your own photos or ones the supplier lets you use.</p>
         </div>
+        <ListingDetails p={p} price={price} set={set} />
         <fieldset className="grid gap-4 rounded-md border border-slate-200 p-4 sm:col-span-2 sm:grid-cols-2">
           <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Office only</legend>
           <Field label="Supplier"><input className="input" value={source.supplier} onChange={(e) => setSource({ ...source, supplier: e.target.value })} /></Field>
