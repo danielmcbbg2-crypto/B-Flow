@@ -12,7 +12,7 @@ import { productMeta, productPath, STORE_META } from '../../lib/seo'
 import { ORDER_STATUS_LABEL, STORE_CATEGORIES, type OrderInvoiceStatus, type OrderStatus, type Product, type UserAccount } from '../../lib/types'
 import { ProductCard, ProductView } from './ProductView'
 import { StoreFooter, StoreInfo } from './StoreInfo'
-import { isStoreInfo } from '../../lib/storePolicy'
+import { DELIVERY_METHODS, isStoreInfo, type DeliveryMethod } from '../../lib/storePolicy'
 import { cheapestChoice, choicePhoto, choiceText, defaultChoice, ProductImage, unitPrice, useCatalog, type Choice } from './shopping'
 import { cx, fmtDate, money } from '../../lib/utils'
 import { PaymentSafety } from '../../components/PaymentSafety'
@@ -199,7 +199,7 @@ function StoreIntro({ products, categories, onCategory }: { products: Product[];
         {[
           { icon: BadgeCheck, title: 'Australian standards', body: 'WELS ratings and WaterMark details on every tap and toilet.' },
           { icon: Receipt, title: 'Prices include GST', body: 'The price you see is the price you pay for the product.' },
-          { icon: Wrench, title: 'Supply and install', body: 'One team to supply and fit it, anywhere in Melbourne.' },
+          { icon: Wrench, title: 'Supply and install', body: 'Licensed and insured trades to supply and fit it, across metro Melbourne.' },
           { icon: ShieldCheck, title: 'Your rights protected', body: 'Australian Consumer Law guarantees on everything we sell.' },
         ].map(({ icon: Icon, title, body }) => (
           <li key={title} className="flex gap-3 border border-slate-200 bg-white p-4">
@@ -251,7 +251,7 @@ function Checkout({
     name: user?.name ?? '',
     email: user?.email ?? '',
     phone: user?.phone ?? '',
-    delivery: 'pickup' as 'pickup' | 'delivery',
+    delivery: 'pickup' as DeliveryMethod,
     address: '',
     notes: '',
   }))
@@ -268,7 +268,9 @@ function Checkout({
   const total = lines.reduce((s, l) => s + (l.p ? unitPrice(l.p, user, l.options) * l.qty : 0), 0)
   const missing = lines.filter((l) => !l.p)
   const installing = lines.some((l) => l.p && l.install)
-  const needsAddress = form.delivery === 'delivery' || installing
+  const needsAddress = form.delivery !== 'pickup' || installing
+  // Installation is offered in Melbourne only.
+  const installTooFar = installing && form.delivery === 'australia'
   const tooMany = lines.length - missing.length > 30
 
   const submit = async (e: FormEvent) => {
@@ -333,17 +335,23 @@ function Checkout({
         <Field label="Phone"><input className="input num" type="tel" required autoComplete="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></Field>
         <fieldset>
           <legend className="label">Pickup or delivery</legend>
-          <div className="grid grid-cols-2 gap-2">
-            {(['pickup', 'delivery'] as const).map((d) => (
-              <label key={d} className={cx('flex cursor-pointer items-center gap-2 rounded-md border p-3 text-sm', form.delivery === d ? 'border-slate-900 bg-slate-50' : 'border-slate-200')}>
-                <input type="radio" name="delivery" className="accent-slate-900" checked={form.delivery === d} onChange={() => setForm({ ...form, delivery: d })} />
-                {d === 'pickup' ? 'Pickup' : 'Delivery'}
+          <div className="grid gap-2">
+            {DELIVERY_METHODS.map((d) => (
+              <label key={d.id} className={cx('flex cursor-pointer items-start gap-2 rounded-md border p-3 text-sm', form.delivery === d.id ? 'border-slate-900 bg-slate-50' : 'border-slate-200')}>
+                <input type="radio" name="delivery" className="mt-0.5 accent-slate-900" checked={form.delivery === d.id} onChange={() => setForm({ ...form, delivery: d.id })} />
+                <span>
+                  <span className="block font-medium">{d.name}</span>
+                  <span className="block text-xs text-slate-500">{d.detail}</span>
+                </span>
               </label>
             ))}
           </div>
         </fieldset>
+        {installTooFar && (
+          <p className="text-sm text-red-600">Installation is available in metro Melbourne only. Untick “Install it for me” to order with Australia-wide delivery, or choose a Melbourne option.</p>
+        )}
         {needsAddress && (
-          <Field label={form.delivery === 'delivery' && installing ? 'Delivery and installation address' : installing ? 'Installation address' : 'Delivery address'}>
+          <Field label={form.delivery !== 'pickup' && installing ? 'Delivery and installation address' : installing ? 'Installation address (metro Melbourne)' : 'Delivery address'}>
             <input className="input" required autoComplete="street-address" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
           </Field>
         )}
@@ -351,14 +359,14 @@ function Checkout({
           <textarea className="input min-h-[70px]" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Colour, sizes, install needed, best time to call…" />
         </Field>
         <p className="text-xs text-slate-500">
-          No payment now. We'll email your invoice with ways to pay, and confirm availability{form.delivery === 'delivery' ? ' and the delivery cost' : ''} with you.
+          No payment now. We'll email your invoice with ways to pay, and confirm availability{form.delivery !== 'pickup' ? " and the delivery cost before dispatch. If the delivery cost doesn't suit, you can switch to pickup or cancel for a full refund" : ''}.
           {installing && " Installation is quoted separately after you order: we'll send you the price, and you only pay for it if you accept."}
           {user?.role === 'provider' && user.status === 'active' && ' Trade prices apply to your account.'}
         </p>
         <PaymentSafety />
         {acting && <p className="text-sm text-red-600">Orders can't be placed from someone else's dashboard.</p>}
         {error && <p className="text-sm text-red-600">{error}</p>}
-        <button className="btn-primary w-full" disabled={busy || acting || missing.length > 0 || tooMany}>
+        <button className="btn-primary w-full" disabled={busy || acting || missing.length > 0 || tooMany || installTooFar}>
           {busy ? 'Placing order…' : `Place order · ${money(total)}`}
         </button>
         {!portal && !user && <p className="text-xs text-slate-500">Already a client or trade? Sign in to see your orders and trade prices.</p>}

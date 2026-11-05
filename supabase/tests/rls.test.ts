@@ -773,6 +773,22 @@ describe('store', () => {
       asAnon(`select place_order('[{"product_id":"sp-1","qty":1}]'::jsonb, 'Jo', 'jo2@example.com', '0400 111 222', 'delivery', '') as r`),
       /delivery address/,
     )
+    // Same-day and Australia-wide delivery need an address too; anything else isn't a delivery option.
+    for (const d of ['same_day', 'australia']) {
+      await assert.rejects(
+        asAnon(`select place_order('[{"product_id":"sp-1","qty":1}]'::jsonb, 'Jo', 'jo2@example.com', '0400 111 222', '${d}', '') as r`),
+        /delivery address/,
+      )
+    }
+    await assert.rejects(
+      asAnon(`select place_order('[{"product_id":"sp-1","qty":1}]'::jsonb, 'Jo', 'jo2@example.com', '0400 111 222', 'drone', '1 A St') as r`),
+      /delivery option/,
+    )
+    // Installation is Melbourne only: not with Australia-wide delivery.
+    await assert.rejects(
+      asAnon(`select place_order('[{"product_id":"sp-1","qty":1,"install":true}]'::jsonb, 'Jo', 'jo2@example.com', '0400 111 222', 'australia', '1 Main St, Perth WA') as r`),
+      /metro Melbourne only/,
+    )
     // Visitors can't write orders directly.
     await assert.rejects(asAnon(`insert into orders (name, email, phone, delivery, total) values ('x', 'x@x.co', '1', 'pickup', 0)`), /permission denied|row-level security/)
   })
