@@ -155,11 +155,13 @@ export interface PlacedOrder {
   number: number
   total: number
   email: string
+  /** The number of the quote request made for the items to install, if any. */
+  installQuote?: number
 }
 
 export interface OrderInput {
   /** options: option id → value id, one for each of the product's options. */
-  items: { productId: string; qty: number; options?: Record<string, string> }[]
+  items: { productId: string; qty: number; options?: Record<string, string>; install?: boolean }[]
   name: string
   email: string
   phone: string
@@ -1017,7 +1019,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     async (o: OrderInput): Promise<PlacedOrder> => {
       if (supabase) {
         const { data: res, error } = await supabase.rpc('place_order', {
-          p_items: o.items.map((i) => ({ product_id: i.productId, qty: i.qty, options: i.options ?? {} })),
+          p_items: o.items.map((i) => ({ product_id: i.productId, qty: i.qty, options: i.options ?? {}, install: !!i.install })),
           p_name: o.name,
           p_email: o.email,
           p_phone: o.phone,
@@ -1027,8 +1029,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         })
         if (error) throw new Error(error.message)
         if (user) await refresh()
-        const r = res as { id: string; number: number; total: number | string }
-        return { id: r.id, number: r.number, total: Number(r.total), email: o.email.trim() }
+        const r = res as { id: string; number: number; total: number | string; install_quote?: number | null }
+        return { id: r.id, number: r.number, total: Number(r.total), email: o.email.trim(), installQuote: r.install_quote ?? undefined }
       }
       // Demo mode follows the same rules as the database.
       const d0 = dataRef.current
@@ -1037,16 +1039,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (o.phone.replace(/\D/g, '').length < 8) throw new Error('Enter a phone number we can reach you on')
       if (o.delivery === 'delivery' && !o.address.trim()) throw new Error('Enter the delivery address')
       if (o.items.length === 0) throw new Error('Your cart is empty')
+      if (o.items.some((i) => i.install) && !o.address.trim()) throw new Error("Enter the address where it's to be installed")
       if (o.items.length > 30) throw new Error('Up to 30 different products per order. Please split it into two orders.')
       const trade = user?.role === 'provider' && user.status === 'active'
       const client = user?.role === 'client' && user.status === 'active'
       // The same product with the same choices is one line.
-      const merged = new Map<string, { productId: string; qty: number; options: Record<string, string> }>()
+      const merged = new Map<string, { productId: string; qty: number; options: Record<string, string>; install: boolean }>()
       for (const i of o.items) {
         const options = i.options ?? {}
-        const key = `${i.productId}|${JSON.stringify(Object.entries(options).sort())}`
+        const key = `${i.productId}|${JSON.stringify(Object.entries(options).sort())}|${!!i.install}`
         const had = merged.get(key)
-        merged.set(key, { productId: i.productId, options, qty: (had?.qty ?? 0) + i.qty })
+        merged.set(key, { productId: i.productId, options, install: !!i.install, qty: (had?.qty ?? 0) + i.qty })
       }
       const bad: string[] = []
       const items: OrderItem[] = []
@@ -1068,13 +1071,68 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           chosen.push(`${g.name}: ${v.label}`)
         }
         const base = trade && p.tradePrice !== undefined ? p.tradePrice : client && p.clientPrice !== undefined ? p.clientPrice : p.price
-        items.push({ id: uid('oi'), productId: p.id, title: p.title, sku: p.sku, unitPrice: base + extra, qty: i.qty, options: chosen.join(' · ') || undefined })
+        items.push({ id: uid('oi'), productId: p.id, title: p.title, sku: p.sku, unitPrice: base + extra, qty: i.qty, options: chosen.join(' · ') || undefined, ...(i.install ? { install: true } : {}) })
       }
       if (bad.length) throw new Error(`No longer available: ${bad.join(', ')}`)
       const total = items.reduce((s, i) => s + i.unitPrice * i.qty, 0)
       const number = Math.max(5000, ...d0.orders.map((x) => x.number)) + 1
       const id = uid('o')
+      // Items to install: a quote request in Quotes, linked to the order (as place_order does).
+      const toInstall = items.filter((i) => i.install).sort((a, b) => a.title.localeCompare(b.title))
+      const installQuote = toInstall.length ? Math.max(200, ...d0.projects.map((x) => x.number)) + 1 : undefined
       update((d) => {
+        if (installQuote) {
+          const email = o.email.trim()
+          let clientId = client ? user!.id : d.users.find((u) => u.role === 'client' && !u.hasLogin && !u.passwordHash && u.email.toLowerCase() === email.toLowerCase())?.id
+          if (!clientId) {
+            clientId = uid('u')
+            d.users.push({
+              id: clientId,
+              name: o.name.trim(),
+              email: d.users.some((u) => u.email.toLowerCase() === email.toLowerCase()) ? '' : email,
+              phone: o.phone.trim(),
+              role: 'client',
+              permissions: ['canSubmitRequests'],
+              status: 'invited',
+              createdAt: new Date().toISOString(),
+              passwordHash: '',
+              hasLogin: false,
+            })
+          }
+          const address = o.address.trim()
+          let propertyId = d.properties.find((x) => x.clientId === clientId && x.address.trim().toLowerCase() === address.toLowerCase())?.id
+          if (!propertyId) {
+            propertyId = uid('pr')
+            d.properties.push({ id: propertyId, clientId, address, suburb: '', postcode: '', paintColors: { walls: '', trim: '', ceiling: '' }, skirtProfile: '', claddingType: '', accessCode: '', notes: `From store order #${number}` })
+          }
+          d.projects.unshift({
+            id: uid('p'),
+            number: installQuote,
+            clientId,
+            propertyId,
+            title: `Install: store order #${number}`,
+            description: `Installation requested with store order #${number} (supplied with the order).\n\nContact: ${o.name.trim()}, ${o.phone.trim()}, ${email}${o.notes.trim() ? `\n\nCustomer notes: ${o.notes.trim()}` : ''}`,
+            type: 'renovation',
+            budget: 0,
+            scopeOfWorks: `Install:\n${toInstall.map((i) => `${i.qty} × ${i.title}${i.options ? ` (${i.options})` : ''}`).join('\n')}`,
+            status: 'quote_requested',
+            milestones: [],
+            expenses: [],
+            createdAt: new Date().toISOString(),
+            createdBy: user?.id,
+            quoteItems: [],
+            quoteInclusions: '',
+            quoteExclusions: '',
+            orderId: id,
+            variations: [],
+            payments: [],
+            costs: [],
+            tasks: [],
+            diary: [],
+            defects: [],
+            documents: [],
+          })
+        }
         d.orders.unshift({
           id,
           number,
@@ -1097,7 +1155,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             id: uid('n'),
             userId: a.id,
             title: `New store order #${number}`,
-            body: `${o.name.trim()}${trade ? ' (trade)' : ''} — ${items.reduce((s, i) => s + i.qty, 0)} item(s), ${money(total)}, ${o.delivery}`,
+            body: `${o.name.trim()}${trade ? ' (trade)' : ''} — ${items.reduce((s, i) => s + i.qty, 0)} item(s), ${money(total)}, ${o.delivery}${installQuote ? `. Installation requested: quote #${installQuote} is waiting to be priced in Quotes.` : ''}`,
             createdAt: new Date().toISOString(),
             read: false,
             requiresAck: false,
@@ -1105,7 +1163,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           })
         }
       })
-      return { id, number, total, email: o.email.trim() }
+      return { id, number, total, email: o.email.trim(), installQuote }
     },
     [update, refresh, user],
   )

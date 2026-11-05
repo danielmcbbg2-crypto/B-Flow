@@ -62,8 +62,14 @@ const DRAFT_SYSTEM = `${BUSINESS}
 
 You draft listings for the store for the owner to review. Read the product page with web_fetch, then call save_listing once with:
 - title: clear and specific (brand, product type, key size or finish), under 80 characters.
-- description: 80 to 160 words in plain Australian English, written in your own words (never copy the supplier's text): what it is, who it suits, finish and materials, and what is included. End with one sentence saying Next Phase Maintenance can supply and install it.
-- specs: short facts stated on the page (dimensions, material, finish, WELS or other ratings, warranty), one per item.
+- description: 120 to 200 words in plain Australian English, written in your own words (never copy the supplier's text), as flowing paragraphs with no bullet points: what it is, who it suits, finish and materials, and what is included. End with one sentence saying Next Phase Maintenance can supply it on its own, or supply and install it across Melbourne. Don't claim who does the installation (e.g. licensed trades); the shop says that separately once confirmed.
+- specs: short facts stated on the page, one per item as "Label: value" (e.g. "Dimensions: 750 W x 460 D x 550 H mm", "Material: Solid brass", "Included: 2 x flexible hoses"). Put the dimensions first.
+- highlights: 3 to 6 short selling points (under 70 characters each) a buyer cares about, each supported by the page.
+- seo_title: 30 to 60 characters for search results: product type, key size or finish and one distinguishing feature, e.g. "750mm Oak Wall Hung Vanity, Soft-Close Drawers". No shop name, no "best" or "cheapest".
+- meta_description: 120 to 160 characters for search results and link previews: what it is, its main benefit and "Melbourne supply and install".
+- image_alt: one plain description of the product's main photo (what it is, colour or finish, view), under 120 characters.
+- compliance: only what the page states. welsStars (number), welsWater (as labelled, e.g. "6.0 L/min" or "4.5/3 L flush"), welsReg (the WELS registration number), watermark (the WaterMark licence number and standard), standards (other standards met, e.g. "AS/NZS 2208 Grade A safety glass"), warranty (the maker's warranty in plain words). Use 0 or an empty string for anything the page doesn't state, and say in notes what's missing for taps, showers and toilets (Australia requires the WELS rating to be shown when they're advertised) and for anything that connects to water (WaterMark).
+Australian Consumer Law: no claims the page can't back up (no "best", "cheapest", "guaranteed", "lifetime", "Australian made" unless stated), and never describe a warranty as replacing the customer's consumer guarantees.
 - category, brand and sku/model from the page. brand is the maker's brand only: leave it empty if the page doesn't name a maker separate from the shop selling it.
 - suggested_price: the retail price in AUD including GST as shown on the page, or an empty string if none is shown.
 - notes: anything the owner should check before publishing (missing specs, price excluding GST, lead times, conflicting details).
@@ -111,7 +117,24 @@ const DRAFT_TOOL = {
     properties: {
       title: { type: 'string' },
       description: { type: 'string' },
-      specs: { type: 'array', items: { type: 'string' } },
+      specs: { type: 'array', items: { type: 'string' }, description: 'Each as "Label: value"' },
+      highlights: { type: 'array', items: { type: 'string' } },
+      seo_title: { type: 'string' },
+      meta_description: { type: 'string' },
+      image_alt: { type: 'string' },
+      compliance: {
+        type: 'object',
+        properties: {
+          welsStars: { type: 'number', description: 'WELS star rating, or 0 if not stated' },
+          welsWater: { type: 'string' },
+          welsReg: { type: 'string' },
+          watermark: { type: 'string' },
+          standards: { type: 'array', items: { type: 'string' } },
+          warranty: { type: 'string' },
+        },
+        required: ['welsStars', 'welsWater', 'welsReg', 'watermark', 'standards', 'warranty'],
+        additionalProperties: false,
+      },
       category: { type: 'string', enum: CATEGORIES },
       brand: { type: 'string' },
       sku: { type: 'string' },
@@ -148,7 +171,7 @@ const DRAFT_TOOL = {
         },
       },
     },
-    required: ['title', 'description', 'specs', 'category', 'brand', 'sku', 'suggested_price', 'notes', 'photos', 'options'],
+    required: ['title', 'description', 'specs', 'highlights', 'seo_title', 'meta_description', 'image_alt', 'compliance', 'category', 'brand', 'sku', 'suggested_price', 'notes', 'photos', 'options'],
     additionalProperties: false,
   },
 }

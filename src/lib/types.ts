@@ -311,6 +311,8 @@ export interface Project {
   quoteDecidedAt?: string
   /** When the office last followed up an unanswered quote. */
   quoteFollowedUpAt?: string
+  /** The store order this quote is for (installing what was bought). */
+  orderId?: string
   variations: Variation[]
   payments: PaymentStage[]
   /** Office only: not loaded for clients. */
@@ -436,6 +438,18 @@ export interface Product {
   images: string[]
   /** Choices the customer makes (e.g. Size, Colour): one value of each. */
   options: ProductOption[]
+  /** Specifications, in display order. */
+  specs: ProductSpec[]
+  /** Up to 6 short selling points. */
+  highlights: string[]
+  /** For search results and link previews; empty: the title (and a snippet of the description) are used. */
+  seoTitle: string
+  metaDescription: string
+  /** A description of each photo, in the order of `images`. */
+  imageAlt: string[]
+  /** Barcode (GTIN/EAN/UPC), if the maker gives one. */
+  gtin: string
+  compliance: ProductCompliance
   status: 'draft' | 'published' | 'archived'
   stock: 'in_stock' | 'to_order' | 'out_of_stock'
   /** Store managers only: where it comes from. */
@@ -443,6 +457,38 @@ export interface Product {
   createdBy?: string
   createdAt: string
 }
+
+export interface ProductSpec {
+  label: string
+  value: string
+}
+
+/** What Australian rules ask a listing to state, where it applies (all optional). */
+export interface ProductCompliance {
+  /** WELS star rating (taps, toilets, showers, urinals). */
+  welsStars?: number
+  /** WELS water use as labelled, e.g. "6.0 L/min" or "4.5/3 L flush". */
+  welsWater?: string
+  /** WELS registration number, e.g. "T31433". */
+  welsReg?: string
+  /** WaterMark certification: licence number and standard, e.g. "WMK 25123 (AS/NZS 3718)". */
+  watermark?: string
+  /** Other standards met, e.g. "AS/NZS 2208 Grade A safety glass". */
+  standards?: string[]
+  /** The maker's warranty in plain words, e.g. "5 years on the cartridge". */
+  warranty?: string
+}
+
+/** A new listing's details, before anything is filled in. */
+export const EMPTY_LISTING = (): Pick<Product, 'specs' | 'highlights' | 'seoTitle' | 'metaDescription' | 'imageAlt' | 'gtin' | 'compliance'> => ({
+  specs: [],
+  highlights: [],
+  seoTitle: '',
+  metaDescription: '',
+  imageAlt: [],
+  gtin: '',
+  compliance: {},
+})
 
 /** A choice on a product, e.g. Size, with the values to pick from. */
 export interface ProductOption {
@@ -506,6 +552,8 @@ export interface OrderItem {
   qty: number
   /** The options chosen, e.g. "Size: 900 mm · Colour: Oak". */
   options?: string
+  /** The customer asked for it to be installed (quoted separately). */
+  install?: boolean
 }
 
 export type OrderStatus = 'new' | 'confirmed' | 'paid' | 'fulfilled' | 'cancelled'
@@ -604,6 +652,12 @@ export interface DraftListing {
   options?: { name: string; choices: { label: string; price: string; available: boolean }[] }[]
   /** Where the options came from: the shop's own product data (exact) or the page's wording. */
   optionsFrom?: 'shop' | 'page'
+  /** Newer drafts: selling points, search title and description, a photo description, compliance details. */
+  highlights?: string[]
+  seo_title?: string
+  meta_description?: string
+  image_alt?: string
+  compliance?: Partial<Record<keyof ProductCompliance, unknown>>
 }
 
 export type LeadStatus = 'new' | 'contacted' | 'won' | 'lost'
