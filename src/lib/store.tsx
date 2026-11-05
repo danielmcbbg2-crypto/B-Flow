@@ -6,6 +6,7 @@ import type {
   OrderItem,
   AppData,
   DraftListing,
+  QuoteDraft,
   FoundProduct,
   InboxMessage,
   Lead,
@@ -282,6 +283,8 @@ interface StoreValue {
   findProducts: (query: string, onProgress?: (text: string) => void, signal?: AbortSignal) => Promise<{ products: FoundProduct[]; note: string }>
   /** Store managers: the AI assistant drafts a listing from a found product, for review. */
   draftListing: (product: FoundProduct, instructions?: string, onProgress?: (text: string) => void, signal?: AbortSignal) => Promise<DraftListing>
+  /** The AI quote drafter: an itemised draft for the quote, from its request, site notes and photos. */
+  draftQuote: (p: Pick<Project, 'id' | 'title' | 'description' | 'scopeOfWorks'>, notes: string, onProgress?: (text: string) => void, signal?: AbortSignal) => Promise<QuoteDraft>
   /** New photos of the product on a supplier page, made by AI from the supplier's photos (store managers). */
   /** New photos of a product from the supplier's; `colours` (its colour or finish choices) each get a studio shot. */
   recreatePhotos: (
@@ -1330,6 +1333,30 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  const draftQuote = useCallback(
+    async (p: Pick<Project, 'id' | 'title' | 'description' | 'scopeOfWorks'>, notes: string, onProgress?: (text: string) => void, signal?: AbortSignal): Promise<QuoteDraft> => {
+      if (supabase) {
+        return streamFunction<QuoteDraft>('quote-assistant', { projectId: p.id, notes, title: p.title, description: p.description, scope: p.scopeOfWorks }, onProgress, signal)
+      }
+      onProgress?.('Drafting the quote…')
+      await demoWait(500, signal)
+      return {
+        lines: [
+          { section: 'Preparation', description: 'Protect floors and furniture, set up work area', kind: 'labour', qty: 2, unit: 'hr', rate: 75, basis: 'estimate' },
+          { section: 'Repairs', description: 'Patch and sand damaged plaster', kind: 'labour', qty: 4, unit: 'hr', rate: 75, basis: 'estimate' },
+          { section: 'Repairs', description: 'Plaster, compound and consumables', kind: 'materials', qty: 1, unit: 'item', rate: 120, basis: 'estimate' },
+        ],
+        inclusions: 'All labour and materials listed\nClean-up and removal of debris',
+        exclusions: 'Painting (quoted separately)',
+        assumptions: ['Demo mode: this is a sample draft. In live mode Claude reads the request, your notes and the photos, and prices from your past quotes.'],
+        questions: ['Confirm the area of damage on site'],
+        photosUsed: 0,
+        priceBookLines: 0,
+      }
+    },
+    [],
+  )
+
   const draftListing = useCallback(
     async (product: FoundProduct, instructions?: string, onProgress?: (text: string) => void, signal?: AbortSignal): Promise<DraftListing> => {
       if (supabase) {
@@ -1615,6 +1642,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     deleteLead,
     findProducts,
     draftListing,
+    draftQuote,
     recreatePhotos,
     colourPhoto,
     checkSupplierStock,

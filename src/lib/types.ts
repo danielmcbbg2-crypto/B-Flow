@@ -634,6 +634,17 @@ export interface FoundProduct {
   image?: string
 }
 
+/** An itemised quote the AI quote drafter wrote for the office to check (nothing is saved until they add it). */
+export interface QuoteDraft {
+  lines: (Omit<QuoteItem, 'id'> & { basis: 'price_book' | 'estimate' | 'allowance' })[]
+  inclusions: string
+  exclusions: string
+  assumptions: string[]
+  questions: string[]
+  photosUsed: number
+  priceBookLines: number
+}
+
 /** A listing the AI assistant drafted for the admin to review. */
 export interface DraftListing {
   title: string
