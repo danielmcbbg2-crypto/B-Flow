@@ -472,6 +472,17 @@ function ProjectList() {
                     </ol>
                   </div>
                 )}
+                {(() => {
+                  const inv = p.deposit?.status === 'sent' && p.deposit.invoiceId ? mine.invoices.find((i) => i.id === p.deposit!.invoiceId) : undefined
+                  return inv?.payLink ? (
+                    <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-4 text-sm">
+                      <span>
+                        Deposit invoice {inv.qbInvoiceNumber}: <span className="num font-semibold">{money(inv.amount)}</span> inc. GST, emailed to you.
+                      </span>
+                      <a className="btn-primary" href={inv.payLink} target="_blank" rel="noreferrer">Pay deposit</a>
+                    </div>
+                  ) : null
+                })()}
                 {p.status === 'quoted' && quoteTotal(p) > 0 && canQuote && (
                   <div className="mt-4 flex gap-2 border-t border-slate-100 pt-4">
                     <button className="btn-primary" onClick={() => respond(p.id, true)}>Accept quote</button>

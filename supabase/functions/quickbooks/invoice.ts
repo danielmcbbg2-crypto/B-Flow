@@ -73,6 +73,33 @@ export function invoiceBody(o: OrderRow, items: ItemRow[], customerId: string, i
   }
 }
 
+/** A quote's deposit invoice: one GST-inclusive line, due in 7 days. */
+export function depositBody(q: { number: number; title: string }, amount: number, email: string, customerId: string, itemId: string, taxCodeId: string, today: string) {
+  const gross = round2(amount)
+  const net = taxCodeId ? round2(gross / 1.1) : gross
+  const due = new Date(`${today}T00:00:00Z`)
+  due.setUTCDate(due.getUTCDate() + 7)
+  return {
+    CustomerRef: { value: customerId },
+    BillEmail: { Address: email.trim() },
+    TxnDate: today,
+    DueDate: due.toISOString().slice(0, 10),
+    Line: [
+      {
+        DetailType: 'SalesItemLineDetail',
+        Amount: net,
+        Description: `Deposit for quote P-${q.number}: ${q.title}`.slice(0, 4000),
+        SalesItemLineDetail: { ItemRef: { value: itemId }, Qty: 1, UnitPrice: net, ...(taxCodeId ? { TaxCodeRef: { value: taxCodeId }, TaxInclusiveAmt: gross } : {}) },
+      },
+    ],
+    GlobalTaxCalculation: taxCodeId ? 'TaxInclusive' : 'NotApplicable',
+    AllowOnlineCreditCardPayment: true,
+    AllowOnlineACHPayment: true,
+    PrivateNote: `Deposit for quote P-${q.number}`,
+    CustomerMemo: { value: `Thanks for accepting quote P-${q.number}. This deposit secures your booking; we'll be in touch to schedule the work.`.slice(0, 1000) },
+  }
+}
+
 /** A readable reason from a QuickBooks error reply. */
 export function qboError(body: unknown, status: number): string {
   const b = body as { Fault?: { Error?: { Message?: string; Detail?: string; code?: string }[] }; error?: string; error_description?: string }

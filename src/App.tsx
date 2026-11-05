@@ -10,6 +10,7 @@ import { LogoMark } from './components/Logo'
 import { StorePage } from './pages/store/Shop'
 import { ServicePage } from './pages/ServicePage'
 import { LeadReply } from './pages/LeadReply'
+import { QuoteLink } from './pages/QuoteLink'
 import { useNoIndex } from './lib/head'
 import { pageView } from './lib/analytics'
 import { TwoStepScreen } from './components/TwoStepScreen'
@@ -23,11 +24,11 @@ export function App() {
   const role = actingAs?.role ?? user?.role
   const allowed = !!user && (area === user.role || area === role)
   // The portals and sign-in links are private: kept out of search results.
-  useNoIndex(isPortal || area.startsWith('accept') || area === 'reply')
+  useNoIndex(isPortal || area.startsWith('accept') || area === 'reply' || area === 'quote')
   // Page views of the public site (the portals aren't tracked); after the page has set its title.
   const path = route.join('/')
   useEffect(() => {
-    if (isPortal || area.startsWith('accept') || area === 'reply') return
+    if (isPortal || area.startsWith('accept') || area === 'reply' || area === 'quote') return
     const t = setTimeout(pageView, 0)
     return () => clearTimeout(t)
   }, [path, isPortal, area])
@@ -52,6 +53,8 @@ export function App() {
   }
   // A Service.com.au lead's reply page, from the link texted to the office (the link is the key).
   if (area === 'reply' && route[1]) return <LeadReply token={route[1]} />
+  // A client's quote, from the private link sent with it (the link is the key).
+  if (area === 'quote' && route[1]) return <QuoteLink token={route[1]} />
   if (phase === 'set-password') return <SetPasswordScreen />
   // The shop is open to everyone, signed in or not.
   if (area === 'store') return <StorePage productId={route[1]} />

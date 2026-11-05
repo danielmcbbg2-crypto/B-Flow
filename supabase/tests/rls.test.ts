@@ -1798,3 +1798,64 @@ describe('product details (specs, highlights, barcode, compliance)', () => {
   })
 })
 
+
+describe('quote link and deposit', () => {
+  const quote = async (title: string, amount: number) => {
+    const id = (await asUser<{ id: string }>(uid.admin, `insert into projects (client_id, property_id, title, quote_amount) values ('u-client-1', 'p-1', $1, $2) returning id`, [title, amount])).rows[0].id
+    await asUser(uid.admin, `update projects set status = 'quoted' where id = $1`, [id])
+    return id
+  }
+  const row = async (id: string) =>
+    (await pool.query(`select status, quote_decision, quote_answered_name, deposit_status, deposit_amount::text as deposit, deposit_error, quote_token from projects where id = $1`, [id])).rows[0]
+
+  test('issuing gives the quote a private link; nobody but the server can set it or the deposit', async () => {
+    const id = await quote('Link deck', 8800)
+    const r = await row(id)
+    assert.match(r.quote_token, /^[0-9a-f]{64}$/)
+    await asUser(uid.admin, `update projects set quote_token = 'x', deposit_status = 'paid', deposit_amount = 1 where id = $1`, [id])
+    assert.deepEqual([(await row(id)).quote_token, (await row(id)).deposit_status], [r.quote_token, 'none'])
+    const seen = (await asAnon<{ q: { title: string; total: string; client: string; status: string } }>(`select quote_by_token($1) as q`, [r.quote_token])).rows[0].q
+    assert.deepEqual([seen.title, Number(seen.total), seen.status], ['Link deck', 8800, 'quoted'])
+    assert.equal((await asAnon<{ q: unknown }>(`select quote_by_token('nope') as q`)).rows[0].q, null)
+  })
+
+  test('accepting from the link records who, tells the office and queues a 10% deposit; it can’t be answered twice', async () => {
+    const id = await quote('Link fence', 8800)
+    const token = (await row(id)).quote_token
+    await assert.rejects(asAnon(`select answer_quote_by_token($1, true, '')`, [token]), /Type your name/)
+    await asAnon(`select answer_quote_by_token($1, true, 'Sarah Client')`, [token])
+    const r = await row(id)
+    assert.deepEqual([r.status, r.quote_decision, r.quote_answered_name, r.deposit_status, r.deposit], ['approved', 'approved', 'Sarah Client', 'pending', '880.00'])
+    assert.ok(Number((await pool.query(`select count(*) from inbox where title = (select 'Quote P-' || number || ' accepted' from projects where id = $1)`, [id])).rows[0].count) > 0)
+    await assert.rejects(asAnon(`select answer_quote_by_token($1, false, '')`, [token]), /already been answered/)
+  })
+
+  test('a first payment stage over the legal deposit is held; fixing it lets the office send it', async () => {
+    const id = await quote('Link bathroom', 25000)
+    await pool.query(`insert into project_payments (project_id, position, title, basis, value) values ($1, 0, 'Deposit', 'percent', 10)`, [id])
+    await asUser(uid.sarah, `update projects set status = 'approved' where id = $1`, [id])
+    let r = await row(id)
+    assert.equal(r.deposit_status, 'held')
+    assert.match(r.deposit_error, /\$2,500\.00\) is more than the deposit allowed for a contract of \$25,000\.00/)
+    await assert.rejects(asUser(uid.admin, `select send_quote_deposit($1)`, [id]), /more than the deposit allowed/)
+    await pool.query(`update project_payments set value = 5 where project_id = $1`, [id])
+    await assert.rejects(asUser(uid.sarah, `select send_quote_deposit($1)`, [id]), /Manage projects/)
+    await asUser(uid.admin, `select send_quote_deposit($1)`, [id])
+    r = await row(id)
+    assert.deepEqual([r.deposit_status, r.deposit], ['pending', '1250.00'])
+  })
+
+  test('declining queues nothing; an expired quote can’t be answered; only the server claims deposits', async () => {
+    const id = await quote('Link pergola', 5000)
+    const token = (await row(id)).quote_token
+    await asAnon(`select answer_quote_by_token($1, false, '')`, [token])
+    assert.deepEqual([(await row(id)).status, (await row(id)).deposit_status], ['rejected', 'none'])
+    const old = await quote('Link shed', 5000)
+    await asUser(uid.admin, `update projects set quote_valid_until = '2020-01-01' where id = $1`, [old])
+    await assert.rejects(asAnon(`select answer_quote_by_token($1, true, 'Sam')`, [(await row(old)).quote_token]), /expired on 01\/01\/2020/)
+    await assert.rejects(asUser(uid.admin, `select * from claim_deposit_invoices(5)`), /permission denied/)
+    const claimed = (await pool.query(`select id, deposit_amount::text as amount from claim_deposit_invoices(50)`)).rows
+    assert.ok(claimed.some((c) => c.amount === '880.00'))
+    assert.equal((await pool.query(`select count(*) from claim_deposit_invoices(50)`)).rows[0].count, '0', 'not claimed twice')
+  })
+})

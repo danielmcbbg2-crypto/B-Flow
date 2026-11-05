@@ -15,6 +15,7 @@ import { CostsPanel, PaymentsPanel, QuoteBuilder, VariationsPanel } from './Proj
 import { DefectsPanel, DiaryPanel, DocumentsPanel, Fact, ScheduleSummary, SchedulePanel } from './ProjectWorkspace'
 import { useHashRoute } from '../../lib/router'
 import { BookingReminders } from './BookingReminders'
+import { DepositPanel, SendQuoteLink } from './QuoteLinkPanels'
 
 /**
  * The diary, defects and documents are saved as they're added (by the office, trades and the
@@ -731,6 +732,7 @@ export function ProjectEditor({
         {tab === 'quote' && <QuoteBuilder p={p} set={set} />}
         {tab === 'variations' && <VariationsPanel p={p} set={set} original={saved} />}
         {tab === 'payments' && asPage && <div className="mb-5">{milestonesEditor}</div>}
+        {tab === 'payments' && <DepositPanel p={saved} />}
         {tab === 'payments' && <PaymentsPanel p={p} set={set} invoices={data.invoices} dirty={dirty} canInvoice={can('canManageInvoices')} onClaim={claim} />}
         {tab === 'costs' && <CostsPanel p={p} set={set} invoices={data.invoices} />}
         {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
@@ -742,6 +744,7 @@ export function ProjectEditor({
             </button>
           )}
           {saved.status === 'quoted' && order && <SendInstallPrice p={saved} order={order} />}
+          {saved.status === 'quoted' && !order && !dirty && <SendQuoteLink p={saved} />}
           <button className="btn-primary">Save project</button>
         </div>
       </form>

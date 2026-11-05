@@ -313,6 +313,12 @@ export interface Project {
   quoteFollowedUpAt?: string
   /** The store order this quote is for (installing what was bought). */
   orderId?: string
+  /** Set by the database: the private link the client opens the quote with (once issued). */
+  quoteToken?: string
+  /** Who accepted or declined it from the link, as they typed their name. */
+  quoteAnsweredName?: string
+  /** Set by the database and server: the deposit invoice sent once the quote is accepted. */
+  deposit?: QuoteDeposit
   variations: Variation[]
   payments: PaymentStage[]
   /** Office only: not loaded for clients. */
@@ -324,6 +330,45 @@ export interface Project {
 }
 
 export type InvoiceStatus = 'draft' | 'sent' | 'paid'
+
+export type DepositStatus = 'none' | 'pending' | 'working' | 'sent' | 'failed' | 'held' | 'paid' | 'skipped'
+export const DEPOSIT_STATUS_LABEL: Record<DepositStatus, string> = {
+  none: 'No deposit',
+  pending: 'Being sent',
+  working: 'Being sent',
+  sent: 'Deposit invoice sent',
+  failed: 'Deposit invoice failed',
+  held: 'Deposit held',
+  paid: 'Deposit paid',
+  skipped: 'Not sent',
+}
+
+/** A quote as the client sees it from their private link. */
+export interface QuoteLinkView {
+  number: number
+  title: string
+  client: string
+  address: string
+  scope: string
+  status: ProjectStatus
+  validUntil?: string
+  issuedAt?: string
+  answeredAt?: string
+  answeredName: string
+  items: { section: string; description: string; qty: number; unit: string; rate: number }[]
+  inclusions: string
+  exclusions: string
+  /** Inc. GST. */
+  total: number
+  deposit: { status: DepositStatus; amount?: number; number?: string; payLink: string }
+}
+
+export interface QuoteDeposit {
+  status: DepositStatus
+  amount?: number
+  invoiceId?: string
+  error: string
+}
 
 export interface QuickBooksInvoice {
   id: string
@@ -337,6 +382,8 @@ export interface QuickBooksInvoice {
   paidDate?: string
   dueDate: string
   createdAt: string
+  /** Set by the server for invoices QuickBooks made: the pay link it emailed. */
+  payLink?: string
 }
 
 export interface SmsNotification {
