@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { ArrowLeft, BadgeCheck, Check, Droplets, Minus, Plus, ShieldCheck, ShoppingCart, Truck, Wrench } from 'lucide-react'
 import { Status } from '../../components/ui'
-import { needsWels } from '../../lib/listingCheck'
 import { complianceFacts, productPath } from '../../lib/seo'
 import { ACL_GUARANTEE, STORE_POLICY } from '../../lib/storePolicy'
 import { STOCK_LABEL, type Product, type UserAccount } from '../../lib/types'
@@ -143,7 +142,6 @@ export function ProductView({
     onAdd(qty, install)
     setAdded(true)
   }
-  const plumbing = p.category === 'Tapware' || p.category === 'Toilets' || needsWels(p)
 
   return (
     <div className="pb-24 lg:pb-0">
@@ -227,7 +225,7 @@ export function ProductView({
             </div>
             {install && (
               <p className="mt-2 text-xs text-slate-600">
-                The product price is the same. Installation is priced separately: after you order, we'll review the job and send you a quote{STORE_POLICY.licensedPlumber && plumbing ? ' (plumbing by a licensed plumber)' : ''}. You only pay for installation if you accept it.
+                The product price is the same. Installation is priced separately: after you order, we'll review the job and send you a quote. Installs are done by licensed and insured trades, in metro Melbourne only. You only pay for installation if you accept it.
               </p>
             )}
           </fieldset>
@@ -258,9 +256,9 @@ export function ProductView({
           )}
 
           <ul className="mt-6 grid gap-2 text-sm text-slate-600">
-            <li className="flex gap-2"><Wrench size={17} className="shrink-0 text-slate-500" aria-hidden="true" /><span>Installation available across Melbourne, quoted after you order.</span></li>
-            <li className="flex gap-2"><Truck size={17} className="shrink-0 text-slate-500" aria-hidden="true" /><span>Pickup or Melbourne delivery. <a href="/store/delivery" className="underline underline-offset-2 hover:text-slate-900">Delivery details</a></span></li>
-            <li className="flex gap-2"><ShieldCheck size={17} className="shrink-0 text-slate-500" aria-hidden="true" /><span>Australian Consumer Law guarantees apply. <a href="/store/returns" className="underline underline-offset-2 hover:text-slate-900">Returns and warranty</a></span></li>
+            <li className="flex gap-2"><Wrench size={17} className="shrink-0 text-slate-500" aria-hidden="true" /><span>Installation in metro Melbourne by licensed and insured trades, quoted after you order.</span></li>
+            <li className="flex gap-2"><Truck size={17} className="shrink-0 text-slate-500" aria-hidden="true" /><span>Free pickup, Melbourne delivery in 1 to 3 business days, same-day in Melbourne, or Australia-wide. <a href="/store/delivery" className="underline underline-offset-2 hover:text-slate-900">Delivery details</a></span></li>
+            <li className="flex gap-2"><ShieldCheck size={17} className="shrink-0 text-slate-500" aria-hidden="true" /><span>{STORE_POLICY.changeOfMindDays}-day change-of-mind returns on unopened items. Australian Consumer Law guarantees apply. <a href="/store/returns" className="underline underline-offset-2 hover:text-slate-900">Returns and warranty</a></span></li>
           </ul>
         </div>
       </div>

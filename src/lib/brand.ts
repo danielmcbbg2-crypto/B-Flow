@@ -4,7 +4,7 @@ export const BRAND = {
   abn: '74 490 530 153',
   city: 'Melbourne, VIC',
   /** Public contact number — fill in to show it on the homepage. */
-  phone: '',
+  phone: '0452 461 281',
   email: 'admin@nextphasemaintenance.com.au',
   website: 'www.nextphasemaintenance.com.au',
   hours: [

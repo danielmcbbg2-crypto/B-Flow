@@ -631,7 +631,8 @@ export interface StoreOrder {
   name: string
   email: string
   phone: string
-  delivery: 'pickup' | 'delivery'
+  /** 'delivery' is Melbourne standard delivery; see DELIVERY_METHODS in storePolicy.ts. */
+  delivery: 'pickup' | 'delivery' | 'same_day' | 'australia'
   address: string
   notes: string
   /** Priced at trade. */

@@ -5,15 +5,28 @@ import { BRAND } from './brand'
 
 export const STORE_POLICY = {
   /** Change of mind: refunds only while the packaging is unopened and the item unused (none once it's opened). */
-  changeOfMindUnopenedOnly: true,
+  changeOfMindUnopenedOnly: true as const,
   /** Customers are asked to inspect goods and email about damage or missing items within this many hours of receiving them. */
   inspectWithinHours: 24,
-  /**
-   * True once confirmed that plumbing installs are done by a plumber licensed or registered with Victoria's Building and
-   * Plumbing Commission (the law requires it for plumbing work); product pages then say so.
-   */
-  licensedPlumber: false,
+  /** Change-of-mind returns are accepted within this many days of receiving the goods (unopened and unused only). */
+  changeOfMindDays: 30,
+  /** Installs are done by licensed and insured trades (confirmed by the business, Nov 2026); product pages say so. */
+  licensedInsuredTrades: true,
+  /** Installation is offered in metro Melbourne only. */
+  installMelbourneOnly: true,
 }
+
+/** How an order gets to the customer. 'delivery' is standard delivery in metro Melbourne. */
+export type DeliveryMethod = 'pickup' | 'delivery' | 'same_day' | 'australia'
+
+/** The delivery choices at checkout, in order. Every delivery cost is confirmed by us after the order, before dispatch. */
+export const DELIVERY_METHODS: { id: DeliveryMethod; name: string; short: string; detail: string }[] = [
+  { id: 'pickup', name: 'Pickup', short: 'Pickup', detail: "Free. We'll contact you to arrange a time." },
+  { id: 'delivery', name: 'Melbourne standard delivery', short: 'Melbourne delivery', detail: 'Metro Melbourne, 1 to 3 business days. Cost confirmed before dispatch.' },
+  { id: 'same_day', name: 'Melbourne same-day delivery', short: 'Same-day delivery', detail: 'Metro Melbourne only. We quote the cost and confirm same-day is possible.' },
+  { id: 'australia', name: 'Australia-wide delivery', short: 'Australia-wide delivery', detail: 'Outside Melbourne. We quote the cost to your address.' },
+]
+export const deliveryName = (d: string) => DELIVERY_METHODS.find((m) => m.id === d)?.name ?? d
 
 /** The wording the Australian Consumer Law prescribes for goods sold to consumers (Competition and Consumer Regulations 2010, reg 90). */
 export const ACL_GUARANTEE =
@@ -41,18 +54,35 @@ export function storeInfoSections(slug: StoreInfoSlug): StoreInfoSection[] {
   switch (slug) {
     case 'delivery':
       return [
-        { title: 'Pickup', paragraphs: ["Choose pickup at checkout and we'll contact you to arrange a time once your order is ready."] },
+        { title: 'Pickup', paragraphs: ["Pickup is free. Choose pickup at checkout and we'll contact you to arrange a time once your order is ready."] },
         {
-          title: 'Delivery in Melbourne',
+          title: 'Melbourne standard delivery',
+          paragraphs: ['We deliver across metro Melbourne in 1 to 3 business days. The cost depends on the size of the order and where it is going.'],
+        },
+        {
+          title: 'Same-day delivery in Melbourne',
+          paragraphs: ["Need it today? Choose same-day delivery and enter your address. It's available in metro Melbourne only. We'll confirm the cost, and that same-day delivery is possible for your order, before we dispatch."],
+        },
+        {
+          title: 'Delivery Australia-wide',
+          paragraphs: ["We ship anywhere in Australia. Choose Australia-wide delivery and enter your address, and we'll quote the delivery cost to that address."],
+        },
+        {
+          title: 'How delivery costs are confirmed',
           paragraphs: [
-            "We deliver across Melbourne. Delivery costs depend on the size of the order and where it's going, so we confirm the cost with you before you pay.",
+            "For every delivery option we work out the cost after you order and send it to you before anything is dispatched. If the delivery cost doesn't suit you, you can switch to pickup or cancel the order for a full refund.",
+          ],
+        },
+        {
+          title: 'Check your order when it arrives',
+          paragraphs: [
             `Please inspect your order within ${STORE_POLICY.inspectWithinHours} hours of receiving it, and email us at {email} within that time if anything is damaged, missing or not what you ordered, with your order number and photos. This lets us sort it out with the carrier quickly.`,
           ],
         },
         {
           title: 'Supply and install',
           paragraphs: [
-            "Most products can be supplied and installed by our team. Mention it in your order notes, or ask for an install quote from the product page, and we'll quote the job before any work starts.",
+            "Most products can be supplied and installed by our team in metro Melbourne. Choose \u201cSupply and install\u201d on the product page or tick \u201cInstall it for me\u201d in your cart, and we'll quote the installation before any work starts. Installs are done by licensed and insured trades. Installation isn't available outside Melbourne.",
           ],
         },
       ]
@@ -75,9 +105,9 @@ export function storeInfoSections(slug: StoreInfoSlug): StoreInfoSection[] {
         {
           title: 'Change of mind',
           paragraphs: [
-            STORE_POLICY.changeOfMindUnopenedOnly
-              ? "We accept change-of-mind returns only while the packaging is unopened and the item is unused. Once the packaging has been opened, we can't offer a refund for a change of mind. Email us at {email} before sending anything back. This doesn't affect your rights for faulty items above."
-              : "Changed your mind? Contact us before returning anything and we'll tell you what's possible for that item. This doesn't affect your rights for faulty items above.",
+            `Changed your mind? You can return an item within ${STORE_POLICY.changeOfMindDays} days of receiving it, as long as the packaging is unopened and the item is unused. Once the packaging has been opened, we can't offer a refund for a change of mind. Email us at {email} before sending anything back.`,
+            'For change-of-mind returns you pay the cost of sending the item back to us. Items that were picked up are returned to our pickup address by appointment: email or call us to book a time.',
+            "This doesn't affect your rights for faulty or damaged items above: for those, we cover the cost of the return.",
           ],
         },
         {

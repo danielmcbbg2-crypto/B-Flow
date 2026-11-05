@@ -24,6 +24,7 @@ import type {
 } from './types'
 import { BRAND, SITE_SERVICES } from './brand'
 import { blankCommercials } from './quote'
+import { deliveryName } from './storePolicy'
 import { createSeed, DATA_VERSION } from './seed'
 import { dispatchSms } from './sms'
 import { generateInviteCode, money, sha256, uid } from './utils'
@@ -1071,7 +1072,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (!o.name.trim()) throw new Error('Enter your name')
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(o.email.trim())) throw new Error('Enter a valid email address')
       if (o.phone.replace(/\D/g, '').length < 8) throw new Error('Enter a phone number we can reach you on')
-      if (o.delivery === 'delivery' && !o.address.trim()) throw new Error('Enter the delivery address')
+      if (o.delivery !== 'pickup' && !o.address.trim()) throw new Error('Enter the delivery address')
+      if (o.delivery === 'australia' && o.items.some((i) => i.install)) throw new Error('Installation is available in metro Melbourne only. Untick "Install it for me" to order with Australia-wide delivery.')
       if (o.items.length === 0) throw new Error('Your cart is empty')
       if (o.items.some((i) => i.install) && !o.address.trim()) throw new Error("Enter the address where it's to be installed")
       if (o.items.length > 30) throw new Error('Up to 30 different products per order. Please split it into two orders.')
@@ -1189,7 +1191,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             id: uid('n'),
             userId: a.id,
             title: `New store order #${number}`,
-            body: `${o.name.trim()}${trade ? ' (trade)' : ''} — ${items.reduce((s, i) => s + i.qty, 0)} item(s), ${money(total)}, ${o.delivery}${installQuote ? `. Installation requested: quote #${installQuote} is waiting to be priced in Quotes.` : ''}`,
+            body: `${o.name.trim()}${trade ? ' (trade)' : ''} — ${items.reduce((s, i) => s + i.qty, 0)} item(s), ${money(total)}, ${deliveryName(o.delivery).toLowerCase()}${installQuote ? `. Installation requested: quote #${installQuote} is waiting to be priced in Quotes.` : ''}`,
             createdAt: new Date().toISOString(),
             read: false,
             requiresAck: false,

@@ -7,7 +7,7 @@ export interface OrderRow {
   name: string
   email: string
   phone: string
-  delivery: 'pickup' | 'delivery'
+  delivery: 'pickup' | 'delivery' | 'same_day' | 'australia'
   address: string
   total: number | string
 }
@@ -33,7 +33,7 @@ export function customerBody(o: OrderRow) {
     DisplayName: displayName(o),
     PrimaryEmailAddr: { Address: o.email.trim() },
     ...(o.phone.trim() ? { PrimaryPhone: { FreeFormNumber: o.phone.trim() } } : {}),
-    ...(o.delivery === 'delivery' && o.address.trim() ? { BillAddr: { Line1: o.address.trim().slice(0, 500) }, ShipAddr: { Line1: o.address.trim().slice(0, 500) } } : {}),
+    ...(o.delivery !== 'pickup' && o.address.trim() ? { BillAddr: { Line1: o.address.trim().slice(0, 500) }, ShipAddr: { Line1: o.address.trim().slice(0, 500) } } : {}),
   }
 }
 
@@ -68,7 +68,7 @@ export function invoiceBody(o: OrderRow, items: ItemRow[], customerId: string, i
     AllowOnlineACHPayment: true,
     PrivateNote: `Online store order #${o.number} (${o.delivery})`,
     CustomerMemo: {
-      value: `Thanks for your order #${o.number}. ${o.delivery === 'delivery' ? `Delivery to ${o.address.trim()}.` : 'Pickup.'} We'll be in touch to confirm the details.`.slice(0, 1000),
+      value: `Thanks for your order #${o.number}. ${o.delivery === 'pickup' ? 'Pickup.' : `${({ delivery: 'Melbourne standard delivery', same_day: 'Melbourne same-day delivery', australia: 'Australia-wide delivery' } as Record<string, string>)[o.delivery] ?? 'Delivery'} to ${o.address.trim()}; we'll confirm the delivery cost before dispatch.`} We'll be in touch to confirm the details.`.slice(0, 1000),
     },
   }
 }

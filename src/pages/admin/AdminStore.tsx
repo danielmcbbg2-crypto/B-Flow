@@ -7,6 +7,7 @@ import { EMPTY_LISTING, ORDER_STATUS_LABEL, STOCK_LABEL, STORE_CATEGORIES, SUPPL
 import { cx, fmtDate, fmtDateTime, money, uid } from '../../lib/utils'
 import { ProductAssistant } from './ProductAssistant'
 import { openOnArrival, takeOpenOnArrival } from '../../lib/openOnArrival'
+import { DELIVERY_METHODS, deliveryName } from '../../lib/storePolicy'
 import { navigate } from '../../lib/router'
 import { quoteStage } from '../../lib/quote'
 import { CLOUD } from '../../lib/supabase'
@@ -276,7 +277,7 @@ function Orders() {
                 <tr key={o.id} className="hover:bg-slate-50">
                   <td className="td">
                     <p className="num font-semibold">#{o.number}</p>
-                    <p className="text-xs text-slate-500">{fmtDate(o.createdAt)} · {o.delivery === 'pickup' ? 'Pickup' : 'Delivery'}</p>
+                    <p className="text-xs text-slate-500">{fmtDate(o.createdAt)} · {DELIVERY_METHODS.find((m) => m.id === o.delivery)?.short ?? 'Delivery'}</p>
                   </td>
                   <td className="td">
                     <p className="font-semibold">{o.name}</p>
@@ -381,7 +382,7 @@ function OrderDetail({ order, onClose }: { order: StoreOrder; onClose: () => voi
           ['Placed', fmtDateTime(order.createdAt)],
           ['Email', <a className="underline-offset-2 hover:underline" href={`mailto:${order.email}`}>{order.email}</a>],
           ['Phone', <a className="num underline-offset-2 hover:underline" href={`tel:${order.phone.replace(/[\s()-]/g, '')}`}>{order.phone}</a>],
-          ['Delivery', order.delivery === 'pickup' ? (order.address ? `Pickup · install at ${order.address}` : 'Pickup') : `Delivery to ${order.address}`],
+          ['Delivery', order.delivery === 'pickup' ? (order.address ? `Pickup · install at ${order.address}` : 'Pickup') : `${deliveryName(order.delivery)} to ${order.address} (quote the delivery cost)`],
           ['Pricing', order.trade ? 'Trade prices' : 'Retail prices'],
         ].map(([k, v]) => (
           <div key={k as string}>
