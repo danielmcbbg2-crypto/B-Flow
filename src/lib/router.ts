@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react'
  * ("#/client/hub"), which are never indexed and which links already sent out (invites) use.
  * An old public hash address ("#/store") is moved to its real one.
  */
-const PUBLIC = /^\/?(store|services)(\/|$)/
+const PUBLIC = /^\/?(store|services|privacy|terms)(\/|$)/
 
 const isPublicPath = (path: string) => path === '/' || path === '' || PUBLIC.test(path)
 
