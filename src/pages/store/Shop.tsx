@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { track } from '../../lib/analytics'
-import { ArrowLeft, BadgeCheck, CheckCircle2, Minus, Plus, Receipt, Search, ShieldCheck, ShoppingCart, Trash2, Wrench } from 'lucide-react'
+import { ArrowLeft, BadgeCheck, CheckCircle2, Minus, Phone, Plus, Receipt, Search, ShieldCheck, ShoppingCart, Trash2, Truck, Wrench } from 'lucide-react'
 import { Empty, Field, PageHeader, Status, type Tone } from '../../components/ui'
 import { Logo } from '../../components/Logo'
+import { BRAND } from '../../lib/brand'
 import { SignInModal } from '../../components/SignInModal'
 import { useStore, type PlacedOrder } from '../../lib/store'
 import { lineKey, useCart } from '../../lib/cart'
@@ -12,7 +13,7 @@ import { productMeta, productPath, STORE_META } from '../../lib/seo'
 import { ORDER_STATUS_LABEL, STORE_CATEGORIES, type OrderInvoiceStatus, type OrderStatus, type Product, type UserAccount } from '../../lib/types'
 import { ProductCard, ProductView } from './ProductView'
 import { StoreFooter, StoreInfo } from './StoreInfo'
-import { DELIVERY_METHODS, isStoreInfo, type DeliveryMethod } from '../../lib/storePolicy'
+import { DELIVERY_METHODS, isStoreInfo, STORE_POLICY, type DeliveryMethod } from '../../lib/storePolicy'
 import { cheapestChoice, choicePhoto, choiceText, defaultChoice, ProductImage, unitPrice, useCatalog, type Choice } from './shopping'
 import { cx, fmtDate, money } from '../../lib/utils'
 import { PaymentSafety } from '../../components/PaymentSafety'
@@ -23,11 +24,27 @@ const ORDER_TONE: Record<OrderStatus, Tone> = { new: 'orange', confirmed: 'outli
  * The shop: browse, product details, cart and checkout. Used on the public store page and in the
  * client and service provider portals.
  */
-export function Shop({ portal, productId }: { portal?: boolean; productId?: string }) {
+export function Shop({
+  portal,
+  productId,
+  cart: shared,
+  view: sharedView,
+  onView,
+}: {
+  portal?: boolean
+  productId?: string
+  /** The public store page keeps the cart and the cart view itself, so its header can show them. */
+  cart?: ReturnType<typeof useCart>
+  view?: ShopView
+  onView?: (v: ShopView) => void
+}) {
   const { user, actingAs } = useStore()
   const { products, loading, error } = useCatalog()
-  const cart = useCart()
-  const [view, setView] = useState<'browse' | 'cart'>('browse')
+  const own = useCart()
+  const cart = shared ?? own
+  const [ownView, setOwnView] = useState<ShopView>('browse')
+  const view = sharedView ?? ownView
+  const setView = onView ?? setOwnView
   // The category is kept in the address (?category=Tapware) on the public shop, so it can be shared.
   const [category, setCategoryState] = useState(() => (portal ? 'All' : new URLSearchParams(window.location.search).get('category') ?? 'All'))
   const setCategory = (c: string) => {
@@ -81,7 +98,7 @@ export function Shop({ portal, productId }: { portal?: boolean; productId?: stri
 
   if (placed) return <OrderPlaced placed={placed} onDone={() => { setPlaced(null); setView('browse') }} />
 
-  const cartButton = (
+  const cartButton = routed ? null : (
     <button className={cx('ml-auto', cart.count ? 'btn-primary' : 'btn-ghost')} onClick={() => setView('cart')}>
       <ShoppingCart size={16} /> Cart{cart.count ? <span className="num">({cart.count})</span> : null}
     </button>
@@ -93,9 +110,12 @@ export function Shop({ portal, productId }: { portal?: boolean; productId?: stri
   if (view === 'cart') {
     return (
       <>
-        <div className="mb-5 flex flex-wrap items-center gap-2">
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+          <h1 className="font-display text-2xl font-bold sm:text-3xl">
+            Your cart{cart.count ? <span className="num ml-2 text-base font-normal text-slate-500">{cart.count} {cart.count === 1 ? 'item' : 'items'}</span> : null}
+          </h1>
           <button className="btn-ghost" onClick={() => setView('browse')}>
-            <ArrowLeft size={16} /> {open ? 'Back to the product' : 'Back to products'}
+            <ArrowLeft size={16} /> {open ? 'Back to the product' : 'Continue shopping'}
           </button>
         </div>
         <Checkout cart={cart} products={products} portal={portal} acting={!!actingAs} onPlaced={(r) => { track('purchase', { transaction_id: String(r.number), value: r.total, currency: 'AUD' }); cart.clear(); setPlaced(r) }} />
@@ -106,7 +126,7 @@ export function Shop({ portal, productId }: { portal?: boolean; productId?: stri
   if (open) {
     return (
       <>
-        <div className="mb-4 flex justify-end">{cartButton}</div>
+        {cartButton && <div className="mb-4 flex justify-end">{cartButton}</div>}
         <ProductView
           key={open.id}
           p={open}
@@ -164,6 +184,8 @@ export function Shop({ portal, productId }: { portal?: boolean; productId?: stri
   )
 }
 
+export type ShopView = 'browse' | 'cart'
+
 type Sort = 'featured' | 'price-low' | 'price-high' | 'name'
 const SORT_LABEL: Record<Sort, string> = { featured: 'Featured', 'price-low': 'Price: low to high', 'price-high': 'Price: high to low', name: 'Name' }
 function sortProducts(list: Product[], sort: Sort, user: UserAccount | null): Product[] {
@@ -182,18 +204,37 @@ function StoreIntro({ products, categories, onCategory }: { products: Product[];
     onCategory(c)
     document.getElementById('products')?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
   }
+  // One photo from each of up to three categories, for the banner.
+  const showcase = categories
+    .map((c) => products.find((p) => p.category === c && p.images.length))
+    .filter((p): p is Product => !!p)
+    .slice(0, 3)
   return (
     <div className="mb-10 space-y-8">
-      <section className="bg-slate-900 px-6 py-10 text-white sm:px-10 sm:py-14">
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-accent">Next Phase Maintenance shop</p>
-        <h1 className="mt-3 max-w-2xl font-display text-3xl font-bold leading-tight text-balance sm:text-5xl">Quality bathroom fixtures at honest prices</h1>
-        <p className="mt-4 max-w-xl text-base font-light text-white/80 sm:text-lg">
-          Vanities, shower screens, toilets and tapware for Melbourne homes and rentals. Buy on its own, or have our team supply and install it.
-        </p>
-        <div className="mt-7 flex flex-col gap-3 sm:flex-row">
-          <button className="btn-accent px-6 py-3 text-base" onClick={() => pick('All')}>Shop all products</button>
-          <a href="/store/delivery" className="btn border border-white px-6 py-3 text-base text-white hover:bg-white hover:text-slate-900">Delivery and installation</a>
+      <section className={cx('grid overflow-hidden bg-slate-900 text-white', showcase.length > 0 && 'lg:grid-cols-[1.1fr_1fr]')}>
+        <div className="px-6 py-9 sm:px-10 sm:py-14">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-accent">Next Phase Maintenance shop</p>
+          <h1 className="mt-3 max-w-2xl font-display text-3xl font-bold leading-tight text-balance sm:text-5xl">Quality bathroom fixtures at honest prices</h1>
+          <p className="mt-4 max-w-xl text-base font-light text-white/80 sm:text-lg">
+            Vanities, shower screens, toilets and tapware for Melbourne homes and rentals. Buy on its own, or have our team supply and install it.
+          </p>
+          <div className="mt-7 flex flex-col gap-3 sm:flex-row">
+            <button className="btn-accent px-6 py-3 text-base" onClick={() => pick('All')}>Shop all products</button>
+            <a href="/store/delivery" className="btn border border-white px-6 py-3 text-base text-white hover:bg-white hover:text-slate-900">Delivery and installation</a>
+          </div>
+          <dl className="mt-8 grid max-w-lg grid-cols-3 gap-4 border-t border-white/15 pt-5 text-sm">
+            <div><dt className="text-white/60">Delivery</dt><dd className="num mt-0.5 font-semibold">From ${STORE_POLICY.melbourneDeliveryFrom}</dd></div>
+            <div><dt className="text-white/60">Pickup</dt><dd className="mt-0.5 font-semibold">Free</dd></div>
+            <div><dt className="text-white/60">Returns</dt><dd className="num mt-0.5 font-semibold">{STORE_POLICY.changeOfMindDays} days</dd></div>
+          </dl>
         </div>
+        {showcase.length > 0 && (
+          <div className={cx('hidden gap-1 bg-slate-900 p-1 lg:grid', showcase.length > 1 && 'grid-cols-2 grid-rows-2')} aria-hidden="true">
+            {showcase.map((p, i) => (
+              <ProductImage key={p.id} p={p} src={p.images[0]} className={cx('h-full min-h-0 w-full', i === 0 && showcase.length > 1 && 'row-span-2', showcase.length === 2 && 'row-span-2')} />
+            ))}
+          </div>
+        )}
       </section>
       <ul className="grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
         {[
@@ -295,7 +336,7 @@ function Checkout({
 
   if (lines.length === 0) return <Empty title="Your cart is empty">Add products to get started.</Empty>
   return (
-    <div className="grid gap-6 lg:grid-cols-[3fr_2fr]">
+    <div className="grid items-start gap-6 lg:grid-cols-[3fr_2fr]">
       <section className="card divide-y divide-slate-100" aria-label="Cart">
         {lines.map((l) => (
           <div key={l.key} className="flex flex-wrap items-center gap-3 p-4 sm:flex-nowrap">
@@ -366,7 +407,7 @@ function Checkout({
         <PaymentSafety />
         {acting && <p className="text-sm text-red-600">Orders can't be placed from someone else's dashboard.</p>}
         {error && <p className="text-sm text-red-600">{error}</p>}
-        <button className="btn-primary w-full" disabled={busy || acting || missing.length > 0 || tooMany || installTooFar}>
+        <button className="btn-accent w-full py-3 text-base" disabled={busy || acting || missing.length > 0 || tooMany || installTooFar}>
           {busy ? 'Placing order…' : `Place order · ${money(total)}`}
         </button>
         {!portal && !user && <p className="text-xs text-slate-500">Already a client or trade? Sign in to see your orders and trade prices.</p>}
@@ -424,31 +465,74 @@ export function StorePage({ productId }: { productId?: string }) {
   const { user, can } = useStore()
   const manage = user?.role === 'admin' && can('canManageStore')
   const [signIn, setSignIn] = useState(false)
+  const cart = useCart()
+  const [view, setView] = useState<ShopView>('browse')
+  const info = isStoreInfo(productId)
+  const openCart = () => {
+    if (info) navigate('/store')
+    setView('cart')
+    window.scrollTo(0, 0)
+  }
+  const links = [
+    { href: '/store/delivery', label: 'Delivery' },
+    { href: '/store/returns', label: 'Returns' },
+    { href: '/store/contact', label: 'Contact' },
+  ]
+  const tel = BRAND.phone.replace(/\s/g, '')
   return (
     <div className="min-h-screen bg-slate-50">
-      <header className="sticky top-0 z-40 border-b border-slate-200 bg-white">
-        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6">
-          <Logo sub="Store" />
-          <nav aria-label="Shop" className="ml-auto mr-2 hidden items-center gap-5 text-sm md:flex">
-            <a href="/" className="text-slate-700 hover:text-slate-900">Maintenance services</a>
-            <a href="/store/delivery" className="text-slate-700 hover:text-slate-900">Delivery</a>
-            <a href="/store/returns" className="text-slate-700 hover:text-slate-900">Returns</a>
-            <a href="/store/contact" className="text-slate-700 hover:text-slate-900">Contact</a>
-          </nav>
-          {user ? (
-            <button
-              className="btn-accent text-[15px] font-normal"
-              onClick={() => navigate(manage ? '/admin/store' : user.role === 'admin' ? '/admin' : `/${user.role}/store`)}
-            >
-              {manage ? 'Manage store' : 'Your portal'}
-            </button>
-          ) : (
-            <button className="btn-accent text-[15px] font-normal" onClick={() => setSignIn(true)}>Sign in</button>
+      <div className="bg-slate-900 text-white">
+        <div className="mx-auto flex max-w-7xl items-center justify-center gap-x-5 gap-y-1 px-4 py-2 text-xs sm:justify-between sm:px-6">
+          <p className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-center">
+            <span className="inline-flex items-center gap-1.5"><Truck size={14} className="text-accent" aria-hidden="true" /><span>Melbourne delivery from <span className="num">${STORE_POLICY.melbourneDeliveryFrom}</span></span></span>
+            <span className="hidden sm:inline">Free pickup</span>
+            <span className="hidden md:inline"><span className="num">{STORE_POLICY.changeOfMindDays}</span>-day returns on unopened items</span>
+          </p>
+          {BRAND.phone && (
+            <a href={`tel:${tel}`} className="num hidden items-center gap-1.5 text-white/90 hover:text-white sm:inline-flex">
+              <Phone size={13} aria-hidden="true" /> {BRAND.phone}
+            </a>
           )}
         </div>
+      </div>
+      <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/85">
+        <div className="mx-auto flex h-16 max-w-7xl items-center gap-3 px-4 sm:gap-4 sm:px-6">
+          <div className="shrink-0"><Logo sub="Store" /></div>
+          <nav aria-label="Shop" className="ml-auto hidden items-center gap-6 text-sm md:flex">
+            <a href="/store" className="font-medium text-slate-900 hover:text-accent-ink">Shop</a>
+            {links.map((l) => <a key={l.href} href={l.href} className="text-slate-600 hover:text-slate-900">{l.label}</a>)}
+            <a href="/" className="text-slate-600 hover:text-slate-900">Maintenance services</a>
+          </nav>
+          <div className="ml-auto flex items-center gap-2 md:ml-4">
+            {user ? (
+              <button
+                className="btn-ghost hidden text-sm sm:inline-flex"
+                onClick={() => navigate(manage ? '/admin/store' : user.role === 'admin' ? '/admin' : `/${user.role}/store`)}
+              >
+                {manage ? 'Manage store' : 'Your portal'}
+              </button>
+            ) : (
+              <button className="btn-ghost text-sm" onClick={() => setSignIn(true)}>Sign in</button>
+            )}
+            <button className="btn-accent relative gap-2 px-3.5" onClick={openCart} aria-label={cart.count ? `Cart, ${cart.count} ${cart.count === 1 ? 'item' : 'items'}` : 'Cart, empty'}>
+              <ShoppingCart size={18} aria-hidden="true" />
+              <span className="hidden sm:inline">Cart</span>
+              {cart.count > 0 && (
+                <span className="num inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-white px-1.5 text-xs font-bold text-slate-900" aria-hidden="true">{cart.count}</span>
+              )}
+            </button>
+          </div>
+        </div>
+        <nav aria-label="Shop help" className="border-t border-slate-100 md:hidden">
+          <div className="mx-auto flex max-w-7xl gap-5 overflow-x-auto px-4 py-2 text-sm">
+            <a href="/store" className="font-medium text-slate-900">Shop</a>
+            {links.map((l) => <a key={l.href} href={l.href} className="shrink-0 text-slate-600">{l.label}</a>)}
+            {BRAND.phone && <a href={`tel:${tel}`} className="num ml-auto shrink-0 text-slate-600">{BRAND.phone}</a>}
+          </div>
+        </nav>
       </header>
       <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
-        {isStoreInfo(productId) ? <StoreInfo slug={productId} /> : <Shop productId={productId} />}
+        {info ? <StoreInfo slug={productId} /> : <Shop productId={productId} cart={cart} view={view} onView={setView} />}
       </main>
       <StoreFooter />
       <SignInModal open={signIn} onClose={() => setSignIn(false)} />
