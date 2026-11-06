@@ -480,8 +480,9 @@ async function run() {
   try {
     // Orders from before QuickBooks was connected aren't invoiced by it.
     if (conn.connected_at) await db.from('orders').update({ invoice_status: 'skipped' }).eq('invoice_status', 'pending').lt('created_at', conn.connected_at)
-    // Estimates first (a quote's estimate before its deposit invoice); not for quotes issued before QuickBooks was connected.
-    if (conn.connected_at) await db.from('projects').update({ estimate_status: 'skipped' }).eq('estimate_status', 'pending').is('qbo_estimate_id', null).lt('quote_issued_at', conn.connected_at)
+    // Estimates first (a quote's estimate before its deposit invoice); not for ones queued before QuickBooks was connected
+    // (a retry after connecting is queued afresh, so it goes ahead).
+    if (conn.connected_at) await db.from('projects').update({ estimate_status: 'skipped' }).eq('estimate_status', 'pending').is('qbo_estimate_id', null).lt('estimate_next_try', conn.connected_at)
     for (let round = 0; round < 10; round++) {
       const { data: claimed, error } = await db.rpc('claim_quote_estimates', { max_rows: 5 })
       if (error) throw new Error(error.message)
@@ -495,8 +496,8 @@ async function run() {
         }
       }
     }
-    // Deposits of quotes accepted before QuickBooks was connected aren't sent by it.
-    if (conn.connected_at) await db.from('projects').update({ deposit_status: 'skipped' }).eq('deposit_status', 'pending').lt('quote_decided_at', conn.connected_at)
+    // Deposits queued before QuickBooks was connected aren't sent by it (one sent again after connecting is).
+    if (conn.connected_at) await db.from('projects').update({ deposit_status: 'skipped' }).eq('deposit_status', 'pending').lt('deposit_next_try', conn.connected_at)
     for (let round = 0; round < 10; round++) {
       const { data: claimed, error } = await db.rpc('claim_deposit_invoices', { max_rows: 5 })
       if (error) throw new Error(error.message)
