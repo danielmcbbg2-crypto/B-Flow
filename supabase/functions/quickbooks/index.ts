@@ -541,14 +541,20 @@ async function run() {
   }
 }
 
-/** A signed-in store manager, or null. */
-async function manager(req: Request) {
+/**
+ * A signed-in store manager, or why not: the sign-in has expired (or was signed out elsewhere), the
+ * second sign-in step hasn't been done, or the login lacks the permission.
+ */
+async function manager(req: Request): Promise<{ id: string } | { why: string; status: number }> {
+  const expired = { why: 'Your sign-in has expired. Sign out, sign in again (with your two-step code), then try again.', status: 401 }
   const jwt = req.headers.get('Authorization')?.replace(/^Bearer /, '') ?? ''
-  if (!jwt) return null
+  if (!jwt) return expired
   const { data: auth } = await db.auth.getUser(jwt)
-  if (!auth.user) return null
+  if (!auth.user) return expired
   const { data: me } = await db.from('profiles').select('id, role, permissions').eq('auth_id', auth.user.id).eq('status', 'active').maybeSingle()
-  return me && me.role === 'admin' && secondStep(jwt) && (me.permissions.includes('canManageStore') || me.permissions.includes('canManageInvoices')) ? me : null
+  if (!me || me.role !== 'admin' || !(me.permissions.includes('canManageStore') || me.permissions.includes('canManageInvoices'))) return { why: 'You need the “Manage store & orders” permission', status: 403 }
+  if (!secondStep(jwt)) return { why: 'Finish signing in with your two-step code, then try again.', status: 403 }
+  return me
 }
 
 const back = (outcome: string) => Response.redirect(`${RETURN_URL}/#/admin/store?quickbooks=${encodeURIComponent(outcome)}`, 302)
@@ -624,7 +630,7 @@ Deno.serve(async (req) => {
   }
 
   const me = await manager(req)
-  if (!me) return json({ error: 'You need the “Manage store & orders” permission' }, 403)
+  if ('why' in me) return json({ error: me.why }, me.status)
 
   if (body.action === 'connect') {
     if (!CLIENT_ID || !CLIENT_SECRET) return json({ error: 'QuickBooks isn’t set up yet: add QBO_CLIENT_ID and QBO_CLIENT_SECRET to the Supabase secrets (see the README).', code: 'not_configured' }, 503)
