@@ -1,14 +1,14 @@
 import { useState } from 'react'
-import { ArrowLeft, BadgeCheck, Check, Droplets, Minus, Plus, ShieldCheck, ShoppingCart, Truck, Wrench } from 'lucide-react'
+import { ArrowLeft, BadgeCheck, Check, Droplets, Minus, Play, Plus, ShieldCheck, ShoppingCart, Truck, Wrench } from 'lucide-react'
 import { Status } from '../../components/ui'
 import { complianceFacts, productPath } from '../../lib/seo'
 import { ACL_GUARANTEE, STORE_POLICY } from '../../lib/storePolicy'
 import { STOCK_LABEL, type Product, type UserAccount } from '../../lib/types'
 import { cx, money } from '../../lib/utils'
-import { addOn, cheapestChoice, choicePhoto, choiceText, Price, ProductImage, STOCK_TONE, varies, type Choice } from './shopping'
+import { addOn, cheapestChoice, choicePhoto, choiceText, Price, ProductImage, ProductVideo, STOCK_TONE, useMostlyVisible, varies, type Choice } from './shopping'
 
-/** Photos made by the AI product assistant, rather than taken of the product. */
-const isRender = (src: string) => /\/photos\/ai\//.test(src)
+/** Photos and clips made by AI (stored under photos/ai/ or videos/ai/), rather than taken of the product. */
+const isRender = (src: string) => /\/(photos|videos)\/ai\//.test(src)
 
 /** WELS stars, WaterMark and safety glass, as short badges (on product cards and pages). */
 export function ComplianceBadges({ p, small }: { p: Product; small?: boolean }) {
@@ -34,10 +34,38 @@ export function ComplianceBadges({ p, small }: { p: Product; small?: boolean }) 
 /** A product card in the catalogue. */
 export function ProductCard({ p, user, onOpen, onAdd, routed }: { p: Product; user: UserAccount | null; onOpen: () => void; onAdd: () => void; routed: boolean }) {
   const hasOptions = (p.options ?? []).length > 0
+  const video = p.videos?.[0]
+  const second = p.images[1]
+  // Clips play while the pointer is over the card or, on touch screens (no hover), while it's mostly on screen.
+  const [hover, setHover] = useState(false)
+  const [mediaRef, visible] = useMostlyVisible<HTMLButtonElement>()
+  const canHover = typeof window !== 'undefined' && window.matchMedia?.('(hover: hover)').matches
+  const playing = !!video && (canHover ? hover : visible)
   return (
-    <article className="group card flex flex-col overflow-hidden transition-shadow hover:shadow-[0_8px_24px_rgba(0,0,0,0.08)]">
-      <button className="relative block overflow-hidden bg-white text-left" onClick={onOpen} aria-label={`View ${p.title}`} tabIndex={-1}>
-        <ProductImage p={p} className="aspect-square w-full transition-transform duration-300 group-hover:scale-[1.03] motion-reduce:transition-none motion-reduce:group-hover:scale-100" />
+    <article
+      className="group card flex flex-col overflow-hidden transition-shadow hover:shadow-[0_8px_24px_rgba(0,0,0,0.08)]"
+      onPointerEnter={() => setHover(true)}
+      onPointerLeave={() => setHover(false)}
+    >
+      <button ref={mediaRef} className="relative block overflow-hidden bg-white text-left" onClick={onOpen} aria-label={`View ${p.title}`} tabIndex={-1}>
+        <ProductImage p={p} className="aspect-square w-full transition-transform duration-500 group-hover:scale-[1.03] motion-reduce:transition-none motion-reduce:group-hover:scale-100" />
+        {/* On hover: the clip if there is one, else the second photo (usually the product in a room). */}
+        {video ? (
+          <ProductVideo
+            src={video}
+            poster={p.images[0]}
+            playing={playing}
+            label={`${p.title} in use`}
+            className={cx('absolute inset-0 h-full w-full transition-opacity duration-500 motion-reduce:transition-none', playing ? 'opacity-100' : 'opacity-0')}
+          />
+        ) : second ? (
+          <img src={second} alt="" aria-hidden="true" loading="lazy" decoding="async" className="absolute inset-0 h-full w-full object-cover opacity-0 transition-opacity duration-500 group-hover:opacity-100 motion-reduce:transition-none" />
+        ) : null}
+        {video && (
+          <span className="absolute bottom-2 left-2 inline-flex items-center gap-1 bg-white/90 px-2 py-1 text-[11px] font-semibold text-slate-900 shadow-sm">
+            <Play size={11} className="fill-current" aria-hidden="true" /> See it working
+          </span>
+        )}
       </button>
       <div className="flex flex-1 flex-col gap-2 p-4">
         <p className="text-[11px] font-semibold uppercase tracking-wider text-accent-ink">{[p.category, p.brand].filter(Boolean).join(' · ')}</p>
@@ -135,7 +163,11 @@ export function ProductView({
   const [qty, setQty] = useState(1)
   const [added, setAdded] = useState(false)
   const [install, setInstall] = useState(false)
-  const shown = choicePhoto(p, choice) && !photo ? choicePhoto(p, choice) : (photo ?? p.images[0])
+  const videos = p.videos ?? []
+  // A chosen finish's photo first, else what was picked, else the clip, else the first photo.
+  const shown = choicePhoto(p, choice) && !photo ? choicePhoto(p, choice) : (photo ?? videos[0] ?? p.images[0])
+  const showingVideo = !!shown && videos.includes(shown)
+  const media = [...videos, ...p.images]
   const canBuy = p.stock !== 'out_of_stock' && choiceText(p, choice) !== null
   const facts = complianceFacts(p)
   const add = () => {
@@ -158,26 +190,47 @@ export function ProductView({
       <div className="grid gap-8 lg:grid-cols-[7fr_5fr] lg:gap-12">
         <div className="min-w-0 space-y-3">
           <div className="border border-slate-200 bg-white">
-            <ProductImage p={p} src={shown} eager className="aspect-square w-full" />
+            {showingVideo ? (
+              <ProductVideo key={shown} src={shown!} poster={p.images[0]} playing controls label={`${p.title} in use`} className="aspect-square w-full" />
+            ) : (
+              <ProductImage p={p} src={shown} eager className="aspect-square w-full" />
+            )}
           </div>
-          {p.images.length > 1 && (
-            <div className="grid grid-cols-5 gap-2" role="group" aria-label="More photos">
-              {p.images.map((src, i) => (
-                <button
-                  key={src}
-                  onClick={() => setPhoto(src)}
-                  className={cx('border bg-white', shown === src ? 'border-slate-900' : 'border-slate-200 hover:border-slate-500')}
-                  aria-label={`Show photo ${i + 1}`}
-                  aria-pressed={shown === src}
-                >
-                  <img src={src} alt="" className="aspect-square w-full object-cover" loading="lazy" />
-                </button>
-              ))}
+          {media.length > 1 && (
+            <div className="grid grid-cols-5 gap-2" role="group" aria-label="Photos and videos">
+              {media.map((src) => {
+                const isVideo = videos.includes(src)
+                const n = isVideo ? videos.indexOf(src) + 1 : p.images.indexOf(src) + 1
+                return (
+                  <button
+                    key={src}
+                    onClick={() => setPhoto(src)}
+                    className={cx('relative border bg-white', shown === src ? 'border-slate-900' : 'border-slate-200 hover:border-slate-500')}
+                    aria-label={isVideo ? `Play video ${n}` : `Show photo ${n}`}
+                    aria-pressed={shown === src}
+                  >
+                    {isVideo && p.images[0] ? (
+                      <img src={p.images[0]} alt="" className="aspect-square w-full object-cover" loading="lazy" />
+                    ) : isVideo ? (
+                      <span className="block aspect-square w-full bg-slate-100" />
+                    ) : (
+                      <img src={src} alt="" className="aspect-square w-full object-cover" loading="lazy" />
+                    )}
+                    {isVideo && (
+                      <span className="absolute inset-0 flex items-center justify-center bg-slate-900/25" aria-hidden="true">
+                        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white/95 text-slate-900"><Play size={14} className="ml-0.5 fill-current" /></span>
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
             </div>
           )}
-          {/* Photos the AI made (stored under photos/ai/) are said to be renders; real photos aren't. */}
-          {p.images.some(isRender) && (
-            <p className="text-xs text-slate-500">Some images are digital renders of this product; colours and finishes may vary slightly from what's shown.</p>
+          {/* Photos and clips AI made (stored under photos/ai/ or videos/ai/) are said to be renders; real ones aren't. */}
+          {media.some(isRender) && (
+            <p className="text-xs text-slate-500">
+              Some images{videos.some(isRender) ? ' and videos' : ''} are digital renders of this product; colours, finishes and water flow may vary slightly from what's shown.
+            </p>
           )}
         </div>
 
