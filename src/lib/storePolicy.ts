@@ -30,7 +30,7 @@ export type DeliveryMethod = 'pickup' | 'delivery' | 'same_day' | 'australia'
 export const DELIVERY_METHODS: { id: DeliveryMethod; name: string; short: string; detail: string }[] = [
   { id: 'pickup', name: 'Pickup', short: 'Pickup', detail: "Free. We'll contact you to arrange a time." },
   { id: 'delivery', name: 'Melbourne standard delivery', short: 'Melbourne delivery', detail: `Metro Melbourne, ${STORE_POLICY.melbourneDeliveryDays} business days. From $${STORE_POLICY.melbourneDeliveryFrom}; exact cost confirmed before dispatch.` },
-  { id: 'same_day', name: 'Melbourne same-day delivery', short: 'Same-day delivery', detail: 'Metro Melbourne only, delivered the day your order is ready. We quote the cost first.' },
+  { id: 'same_day', name: 'Melbourne same-day delivery', short: 'Same-day delivery', detail: "Metro Melbourne only. Before you pay, we confirm same-day is possible and the cost, or offer the earliest date." },
   { id: 'australia', name: 'Australia-wide delivery', short: 'Australia-wide delivery', detail: 'Outside Melbourne. We quote the cost to your address.' },
 ]
 export const deliveryName = (d: string) => DELIVERY_METHODS.find((m) => m.id === d)?.name ?? d
@@ -71,7 +71,10 @@ export function storeInfoSections(slug: StoreInfoSlug): StoreInfoSection[] {
         },
         {
           title: 'Same-day delivery in Melbourne',
-          paragraphs: ["Need it fast? Choose same-day delivery and enter your address, and we'll deliver it the same day your order is ready, in metro Melbourne only. As most products are ordered in for you, we'll confirm when that will be, and the cost, before we dispatch."],
+          paragraphs: [
+            'Need it today? Choose same-day delivery and enter your address (metro Melbourne only).',
+            "Before you pay, we'll confirm whether same-day delivery is possible for your order, and its cost. If it isn't, we'll offer the earliest date we can deliver, and you decide whether to go ahead with that date, switch to pickup, or cancel for a full refund.",
+          ],
         },
         {
           title: 'Delivery Australia-wide',

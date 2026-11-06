@@ -310,7 +310,7 @@ export function ProductView({
 
           <ul className="mt-6 grid gap-2 text-sm text-slate-600">
             <li className="flex gap-2"><Wrench size={17} className="shrink-0 text-slate-500" aria-hidden="true" /><span>Installation in metro Melbourne by licensed and insured trades, quoted after you order.</span></li>
-            <li className="flex gap-2"><Truck size={17} className="shrink-0 text-slate-500" aria-hidden="true" /><span>Free pickup, Melbourne delivery in {STORE_POLICY.melbourneDeliveryDays} business days from ${STORE_POLICY.melbourneDeliveryFrom}, same-day in Melbourne once ready, or Australia-wide. <a href="/store/delivery" className="underline underline-offset-2 hover:text-slate-900">Delivery details</a></span></li>
+            <li className="flex gap-2"><Truck size={17} className="shrink-0 text-slate-500" aria-hidden="true" /><span>Free pickup, Melbourne delivery in {STORE_POLICY.melbourneDeliveryDays} business days from ${STORE_POLICY.melbourneDeliveryFrom}, same-day in Melbourne (confirmed before you pay), or Australia-wide. <a href="/store/delivery" className="underline underline-offset-2 hover:text-slate-900">Delivery details</a></span></li>
             <li className="flex gap-2"><ShieldCheck size={17} className="shrink-0 text-slate-500" aria-hidden="true" /><span>{STORE_POLICY.changeOfMindDays}-day change-of-mind returns on unopened items. Australian Consumer Law guarantees apply. <a href="/store/returns" className="underline underline-offset-2 hover:text-slate-900">Returns and warranty</a></span></li>
           </ul>
         </div>
