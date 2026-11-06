@@ -1,6 +1,6 @@
 // What the shop's pages share: who pays which price, the choices on a product, its photo and price
 // labels, and the published catalogue.
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type RefObject } from 'react'
 import { Package } from 'lucide-react'
 import type { Tone } from '../../components/ui'
 import { useStore } from '../../lib/store'
@@ -111,4 +111,68 @@ export function ProductImage({ p, className, src, eager }: { p: Product; classNa
       <Package size={40} strokeWidth={1.25} />
     </div>
   )
+}
+
+/** Whether moving pictures may play by themselves: not with reduced motion or data saver on. */
+export function motionAllowed(): boolean {
+  if (typeof window === 'undefined') return false
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return false
+  const conn = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection
+  return !conn?.saveData
+}
+
+/**
+ * A product clip: silent, looping, with the product's photo until it plays. It plays while
+ * `playing` is true and motion is allowed; otherwise it rests on its first frame (or the photo).
+ */
+export function ProductVideo({
+  src,
+  poster,
+  playing,
+  controls,
+  className,
+  label,
+}: {
+  src: string
+  poster?: string
+  playing: boolean
+  controls?: boolean
+  className?: string
+  label: string
+}) {
+  const ref = useRef<HTMLVideoElement>(null)
+  useEffect(() => {
+    const v = ref.current
+    if (!v) return
+    if (playing && motionAllowed()) v.play().catch(() => {})
+    else v.pause()
+  }, [playing])
+  return (
+    <video
+      ref={ref}
+      src={src}
+      poster={poster}
+      muted
+      loop
+      playsInline
+      preload={playing ? 'auto' : 'metadata'}
+      controls={controls}
+      aria-label={label}
+      className={cx('object-cover', className)}
+    />
+  )
+}
+
+/** True while the element is mostly on screen (for playing clips on phones, where there's no hover). */
+export function useMostlyVisible<T extends Element>(): [RefObject<T>, boolean] {
+  const ref = useRef<T>(null)
+  const [seen, setSeen] = useState(false)
+  useEffect(() => {
+    const el = ref.current
+    if (!el || typeof IntersectionObserver === 'undefined') return
+    const io = new IntersectionObserver(([e]) => setSeen(e.intersectionRatio >= 0.6), { threshold: [0, 0.6, 1] })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [])
+  return [ref, seen]
 }

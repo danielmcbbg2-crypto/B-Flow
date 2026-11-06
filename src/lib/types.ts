@@ -504,6 +504,8 @@ export interface Product {
   metaDescription: string
   /** A description of each photo, in the order of `images`. */
   imageAlt: string[]
+  /** Short silent clips of the product (MP4 or WebM links), e.g. a tap running; played on the card and product page. */
+  videos?: string[]
   /** Barcode (GTIN/EAN/UPC), if the maker gives one. */
   gtin: string
   compliance: ProductCompliance

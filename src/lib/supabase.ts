@@ -65,6 +65,16 @@ export async function uploadLeadPhoto(client: SupabaseClient, dataUrl: string): 
 }
 
 /** Uploads a data-URL image to the public "photos" bucket and returns its URL. */
+/** Uploads a product clip (MP4 or WebM, store managers only) to the public product-videos bucket; returns its public link. */
+export async function uploadVideo(client: SupabaseClient, file: File, aiMade = false): Promise<string> {
+  const ext = file.type === 'video/webm' ? 'webm' : 'mp4'
+  // Clips AI made go under videos/ai/, so the product page can say they're renders.
+  const path = `videos/${aiMade ? 'ai/' : ''}${crypto.randomUUID()}.${ext}`
+  const { error } = await client.storage.from('product-videos').upload(path, file, { contentType: file.type || 'video/mp4' })
+  if (error) throw new Error(`Video upload failed: ${error.message}`)
+  return client.storage.from('product-videos').getPublicUrl(path).data.publicUrl
+}
+
 export async function uploadPhoto(client: SupabaseClient, dataUrl: string): Promise<string> {
   const blob = await (await fetch(dataUrl)).blob()
   const path = `${crypto.randomUUID()}.jpg`

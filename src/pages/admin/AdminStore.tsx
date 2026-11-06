@@ -10,7 +10,7 @@ import { openOnArrival, takeOpenOnArrival } from '../../lib/openOnArrival'
 import { DELIVERY_METHODS, deliveryName } from '../../lib/storePolicy'
 import { navigate } from '../../lib/router'
 import { quoteStage } from '../../lib/quote'
-import { CLOUD } from '../../lib/supabase'
+import { CLOUD, supabase, uploadVideo } from '../../lib/supabase'
 import { autoOptions, autoPrices, manualOptions, marginOf, optionAddOn } from '../../lib/pricing'
 
 const ORDER_TONE: Record<OrderStatus, Tone> = { new: 'orange', confirmed: 'outline', paid: 'dark', fulfilled: 'green', cancelled: 'red' }
@@ -892,6 +892,7 @@ export function ProductEditor({ product, notice, onClose, onSaved }: { product: 
           <PhotoInput value={p.images} onChange={(images) => set({ images, imageAlt: images.map((u) => p.imageAlt?.[p.images.indexOf(u)] ?? '') })} max={8} />
           <p className="mt-1 text-xs text-slate-500">Use your own photos or ones the supplier lets you use.</p>
         </div>
+        <ProductVideos value={p.videos ?? []} onChange={(videos) => set({ videos })} />
         <ListingDetails p={p} price={price} set={set} />
         <fieldset className="grid gap-4 rounded-md border border-slate-200 p-4 sm:col-span-2 sm:grid-cols-2">
           <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Office only</legend>
@@ -998,5 +999,64 @@ export function ProductEditor({ product, notice, onClose, onSaved }: { product: 
         </div>
       </form>
     </Modal>
+  )
+}
+
+/**
+ * Short silent clips of the product (a tap running, a shower on): played on its card when hovered
+ * and first on its page. MP4 or WebM, up to 3, each up to 25 MB; a few seconds that loop cleanly
+ * work best.
+ */
+function ProductVideos({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+  const [ai, setAi] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const add = async (file: File | undefined) => {
+    if (!file) return
+    setError('')
+    if (!/^video\/(mp4|webm)$/.test(file.type)) return setError('Choose an MP4 or WebM video.')
+    if (file.size > 25 * 1024 * 1024) return setError('That video is over 25 MB. Trim it to a few seconds or export it smaller.')
+    setBusy(true)
+    try {
+      // Without the database (the demo), the clip only lasts until the page is reloaded.
+      const url = supabase ? await uploadVideo(supabase, file, ai) : URL.createObjectURL(file)
+      onChange([...value, url].slice(0, 3))
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="sm:col-span-2">
+      <span className="label">Videos (optional, up to 3)</span>
+      {value.length > 0 && (
+        <ul className="mb-2 grid grid-cols-3 gap-2">
+          {value.map((v) => (
+            <li key={v} className="relative border border-slate-200 bg-white">
+              <video src={v} muted loop playsInline autoPlay className="aspect-square w-full object-cover" />
+              <button type="button" className="absolute right-1 top-1 bg-white/90 p-1 text-slate-700 hover:text-red-600" aria-label="Remove this video" onClick={() => onChange(value.filter((x) => x !== v))}>
+                <Trash2 size={14} />
+              </button>
+              {/\/videos\/ai\//.test(v) && <span className="absolute bottom-1 left-1 bg-white/90 px-1.5 text-[10px] font-semibold">AI render</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+      {value.length < 3 && (
+        <div className="flex flex-wrap items-center gap-3">
+          <label className={cx('btn-ghost cursor-pointer', busy && 'pointer-events-none opacity-60')}>
+            <Plus size={15} /> {busy ? 'Uploading…' : 'Add a video'}
+            <input type="file" accept="video/mp4,video/webm" className="sr-only" disabled={busy} onChange={(e) => { void add(e.target.files?.[0]); e.target.value = '' }} />
+          </label>
+          <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+            <input type="checkbox" className="accent-slate-900" checked={ai} onChange={(e) => setAi(e.target.checked)} />
+            Made by AI (the page says it's a render)
+          </label>
+        </div>
+      )}
+      {error && <p className="mt-1 text-sm text-red-600">{error}</p>}
+      <p className="mt-1 text-xs text-slate-500">A few seconds of the product working, without sound, that loops smoothly. It must show this exact product.</p>
+    </div>
   )
 }
