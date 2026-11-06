@@ -16,6 +16,11 @@ export const STORE_POLICY = {
   installMelbourneOnly: true,
   /** Melbourne standard delivery starts from this price (inc. GST); the exact cost is confirmed before dispatch. */
   melbourneDeliveryFrom: 40,
+  /**
+   * Melbourne standard delivery time, in business days. Most products are ordered in from the supplier
+   * after the customer buys, so this allows for the supplier's turnaround as well as the delivery.
+   */
+  melbourneDeliveryDays: '1 to 7',
 }
 
 /** How an order gets to the customer. 'delivery' is standard delivery in metro Melbourne. */
@@ -24,8 +29,8 @@ export type DeliveryMethod = 'pickup' | 'delivery' | 'same_day' | 'australia'
 /** The delivery choices at checkout, in order. Every delivery cost is confirmed by us after the order, before dispatch. */
 export const DELIVERY_METHODS: { id: DeliveryMethod; name: string; short: string; detail: string }[] = [
   { id: 'pickup', name: 'Pickup', short: 'Pickup', detail: "Free. We'll contact you to arrange a time." },
-  { id: 'delivery', name: 'Melbourne standard delivery', short: 'Melbourne delivery', detail: `Metro Melbourne, 1 to 3 business days. From $${STORE_POLICY.melbourneDeliveryFrom}; exact cost confirmed before dispatch.` },
-  { id: 'same_day', name: 'Melbourne same-day delivery', short: 'Same-day delivery', detail: 'Metro Melbourne only. We quote the cost and confirm same-day is possible.' },
+  { id: 'delivery', name: 'Melbourne standard delivery', short: 'Melbourne delivery', detail: `Metro Melbourne, ${STORE_POLICY.melbourneDeliveryDays} business days. From $${STORE_POLICY.melbourneDeliveryFrom}; exact cost confirmed before dispatch.` },
+  { id: 'same_day', name: 'Melbourne same-day delivery', short: 'Same-day delivery', detail: 'Metro Melbourne only, delivered the day your order is ready. We quote the cost first.' },
   { id: 'australia', name: 'Australia-wide delivery', short: 'Australia-wide delivery', detail: 'Outside Melbourne. We quote the cost to your address.' },
 ]
 export const deliveryName = (d: string) => DELIVERY_METHODS.find((m) => m.id === d)?.name ?? d
@@ -59,11 +64,14 @@ export function storeInfoSections(slug: StoreInfoSlug): StoreInfoSection[] {
         { title: 'Pickup', paragraphs: ["Pickup is free. Choose pickup at checkout and we'll contact you to arrange a time once your order is ready."] },
         {
           title: 'Melbourne standard delivery',
-          paragraphs: [`We deliver across metro Melbourne in 1 to 3 business days. Delivery starts from $${STORE_POLICY.melbourneDeliveryFrom} (including GST); the exact cost depends on the size of the order and where it is going.`],
+          paragraphs: [
+            `We deliver across metro Melbourne in ${STORE_POLICY.melbourneDeliveryDays} business days. Delivery starts from $${STORE_POLICY.melbourneDeliveryFrom} (including GST); the exact cost depends on the size of the order and where it is going.`,
+            "Most products are ordered in from our suppliers for you once you've ordered, and that time is included. If something will take longer, we'll tell you before you pay.",
+          ],
         },
         {
           title: 'Same-day delivery in Melbourne',
-          paragraphs: ["Need it today? Choose same-day delivery and enter your address. It's available in metro Melbourne only. We'll confirm the cost, and that same-day delivery is possible for your order, before we dispatch."],
+          paragraphs: ["Need it fast? Choose same-day delivery and enter your address, and we'll deliver it the same day your order is ready, in metro Melbourne only. As most products are ordered in for you, we'll confirm when that will be, and the cost, before we dispatch."],
         },
         {
           title: 'Delivery Australia-wide',
