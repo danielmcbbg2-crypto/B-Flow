@@ -29,7 +29,7 @@ export type DeliveryMethod = 'pickup' | 'delivery' | 'same_day' | 'australia'
 /** The delivery choices at checkout, in order. Every delivery cost is confirmed by us after the order, before dispatch. */
 export const DELIVERY_METHODS: { id: DeliveryMethod; name: string; short: string; detail: string }[] = [
   { id: 'pickup', name: 'Pickup', short: 'Pickup', detail: "Free. We'll contact you to arrange a time." },
-  { id: 'delivery', name: 'Melbourne standard delivery', short: 'Melbourne delivery', detail: `Metro Melbourne, ${STORE_POLICY.melbourneDeliveryDays} business days. From $${STORE_POLICY.melbourneDeliveryFrom}; exact cost confirmed before dispatch.` },
+  { id: 'delivery', name: 'Melbourne standard delivery', short: 'Melbourne delivery', detail: `Metro Melbourne, ${STORE_POLICY.melbourneDeliveryDays} business days. From $${STORE_POLICY.melbourneDeliveryFrom}; exact cost confirmed before you pay.` },
   { id: 'same_day', name: 'Melbourne same-day delivery', short: 'Same-day delivery', detail: "Metro Melbourne only. Before you pay, we confirm same-day is possible and the cost, or offer the earliest date." },
   { id: 'australia', name: 'Australia-wide delivery', short: 'Australia-wide delivery', detail: 'Outside Melbourne. We quote the cost to your address.' },
 ]
@@ -83,7 +83,7 @@ export function storeInfoSections(slug: StoreInfoSlug): StoreInfoSection[] {
         {
           title: 'How delivery costs are confirmed',
           paragraphs: [
-            "For every delivery option we work out the cost after you order and send it to you before anything is dispatched. If the delivery cost doesn't suit you, you can switch to pickup or cancel the order for a full refund.",
+            "For every delivery option we work out the cost and the delivery date after you order, and email them with your invoice. You only pay once you've agreed them: if they don't suit, you can switch to pickup or cancel at no cost.",
           ],
         },
         {

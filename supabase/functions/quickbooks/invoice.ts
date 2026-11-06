@@ -10,6 +10,9 @@ export interface OrderRow {
   delivery: 'pickup' | 'delivery' | 'same_day' | 'australia'
   address: string
   total: number | string
+  /** Delivery orders: the delivery cost inc. GST and date the office confirmed before invoicing. */
+  delivery_fee?: number | string | null
+  delivery_note?: string
 }
 
 export interface ItemRow {
@@ -42,8 +45,20 @@ export function customerBody(o: OrderRow) {
  * store's prices are), so the invoice comes to the order's total; without one (not registered for
  * GST), the prices go in as they are.
  */
+const DELIVERY_NAME: Record<string, string> = { delivery: 'Melbourne standard delivery', same_day: 'Melbourne same-day delivery', australia: 'Australia-wide delivery' }
+
+/** The order's total as invoiced: its items plus any confirmed delivery cost. */
+export const invoiceTotal = (o: Pick<OrderRow, 'total' | 'delivery_fee'>) => round2(Number(o.total) + Number(o.delivery_fee ?? 0))
+
 export function invoiceBody(o: OrderRow, items: ItemRow[], customerId: string, itemId: string, taxCodeId: string) {
-  const lines = items.map((i) => {
+  const fee = round2(Number(o.delivery_fee ?? 0))
+  const note = (o.delivery_note ?? '').trim()
+  // A confirmed delivery cost is a line of its own (GST inclusive, as the items are).
+  const all: ItemRow[] =
+    o.delivery !== 'pickup' && fee > 0
+      ? [...items, { title: `Delivery: ${DELIVERY_NAME[o.delivery] ?? 'delivery'}`, sku: '', unit_price: fee, qty: 1, options: note }]
+      : items
+  const lines = all.map((i) => {
     const gross = round2(Number(i.unit_price) * i.qty)
     // GST inclusive: QuickBooks wants the line's amount before GST, and the inclusive amount beside it.
     const amount = taxCodeId ? round2(gross / 1.1) : gross
@@ -68,7 +83,11 @@ export function invoiceBody(o: OrderRow, items: ItemRow[], customerId: string, i
     AllowOnlineACHPayment: true,
     PrivateNote: `Online store order #${o.number} (${o.delivery})`,
     CustomerMemo: {
-      value: `Thanks for your order #${o.number}. ${o.delivery === 'pickup' ? 'Pickup.' : `${({ delivery: 'Melbourne standard delivery', same_day: 'Melbourne same-day delivery', australia: 'Australia-wide delivery' } as Record<string, string>)[o.delivery] ?? 'Delivery'} to ${o.address.trim()}; we'll confirm the delivery cost before dispatch.`} We'll be in touch to confirm the details.`.slice(0, 1000),
+      value: `Thanks for your order #${o.number}. ${
+        o.delivery === 'pickup'
+          ? "Pickup: we'll contact you to arrange a time."
+          : `${DELIVERY_NAME[o.delivery] ?? 'Delivery'} to ${o.address.trim()}${note ? `, ${note}` : ''}. Paying this invoice confirms the delivery cost and date.`
+      }`.slice(0, 1000),
     },
   }
 }

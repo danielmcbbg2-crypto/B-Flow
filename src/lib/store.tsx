@@ -182,6 +182,8 @@ export interface PlacedOrder {
   email: string
   /** The number of the quote request made for the items to install, if any. */
   installQuote?: number
+  /** How it's to be delivered: delivery orders are invoiced once the office confirms the delivery cost and date. */
+  delivery: StoreOrder['delivery']
 }
 
 export interface OrderInput {
@@ -340,6 +342,8 @@ interface StoreValue {
   disconnectQuickBooks: () => Promise<void>
   setQuickBooksLimits: (dailyLimit: number, maxTotal: number) => Promise<void>
   retryInvoice: (orderId: string) => Promise<void>
+  /** Confirms a delivery order's delivery cost (inc. GST) and date, and approves its invoice (which includes them). */
+  confirmDelivery: (orderId: string, fee: number, note: string) => Promise<void>
   /** A just-placed order's invoice (its number and pay link), for the confirmation screen. */
   orderInvoice: (orderId: string, email: string) => Promise<{ status: OrderInvoiceStatus; number: string; payLink: string } | null>
   /** Admins: create a project, with its client and property if they're new. Throws with a message if it can't be saved. */
@@ -1065,7 +1069,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (error) throw new Error(error.message)
         if (user) await refresh()
         const r = res as { id: string; number: number; total: number | string; install_quote?: number | null }
-        return { id: r.id, number: r.number, total: Number(r.total), email: o.email.trim(), installQuote: r.install_quote ?? undefined }
+        return { id: r.id, number: r.number, total: Number(r.total), email: o.email.trim(), installQuote: r.install_quote ?? undefined, delivery: o.delivery }
       }
       // Demo mode follows the same rules as the database.
       const d0 = dataRef.current
@@ -1199,7 +1203,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           })
         }
       })
-      return { id, number, total, email: o.email.trim(), installQuote }
+      return { id, number, total, email: o.email.trim(), installQuote, delivery: o.delivery }
     },
     [update, refresh, user],
   )
@@ -1534,6 +1538,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [refresh],
   )
 
+  const confirmDelivery = useCallback(
+    async (orderId: string, fee: number, note: string) => {
+      if (supabase) {
+        const { error } = await supabase.rpc('confirm_order_delivery', { p_id: orderId, p_fee: fee, p_note: note })
+        if (error) throw new Error(error.message)
+        await refresh()
+        return
+      }
+      // Demo: recorded on the order (there's no QuickBooks to invoice).
+      if (!(fee >= 0)) throw new Error('Enter the delivery cost (0 to 10,000)')
+      if (!note.trim()) throw new Error('Enter the delivery date, e.g. "Same day, Tue 12 Nov" or "Earliest: Thu 14 Nov"')
+      update((d) => {
+        const o = d.orders.find((x) => x.id === orderId)
+        if (o) Object.assign(o, { deliveryFee: Math.round(fee * 100) / 100, deliveryNote: note.trim() })
+      })
+    },
+    [refresh, update],
+  )
+
   const orderInvoice = useCallback(async (orderId: string, email: string) => {
     if (!supabase) return null
     const { data, error } = await supabase.rpc('order_invoice', { p_id: orderId, p_email: email })
@@ -1722,6 +1745,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     disconnectQuickBooks,
     setQuickBooksLimits,
     retryInvoice,
+    confirmDelivery,
     orderInvoice,
     assignRequest,
     pushInbox,

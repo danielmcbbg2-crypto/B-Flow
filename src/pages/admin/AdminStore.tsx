@@ -7,7 +7,7 @@ import { EMPTY_LISTING, ORDER_STATUS_LABEL, STOCK_LABEL, STORE_CATEGORIES, SUPPL
 import { cx, fmtDate, fmtDateTime, money, uid } from '../../lib/utils'
 import { ProductAssistant } from './ProductAssistant'
 import { openOnArrival, takeOpenOnArrival } from '../../lib/openOnArrival'
-import { DELIVERY_METHODS, deliveryName } from '../../lib/storePolicy'
+import { DELIVERY_METHODS, deliveryName, STORE_POLICY } from '../../lib/storePolicy'
 import { navigate } from '../../lib/router'
 import { quoteStage } from '../../lib/quote'
 import { CLOUD, supabase, uploadVideo } from '../../lib/supabase'
@@ -314,6 +314,67 @@ function Orders() {
   )
 }
 
+/**
+ * A delivery order's delivery cost and date. The customer is only invoiced once the office has
+ * confirmed them (same day if possible, else the earliest date), and the invoice includes them.
+ */
+function DeliveryConfirmPanel({ order }: { order: StoreOrder }) {
+  const { confirmDelivery } = useStore()
+  const inv = order.invoice?.status
+  const editable = order.status !== 'cancelled' && (!inv || ['pending', 'held', 'failed', 'skipped'].includes(inv))
+  const [fee, setFee] = useState(order.deliveryFee !== undefined ? String(order.deliveryFee) : String(STORE_POLICY.melbourneDeliveryFrom))
+  const [note, setNote] = useState(order.deliveryNote ?? (order.delivery === 'same_day' ? 'Same day, ' : ''))
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  if (order.delivery === 'pickup') return null
+  const confirmed = order.deliveryFee !== undefined
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    setError(null)
+    try {
+      await confirmDelivery(order.id, Number(fee), note)
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <section className="mt-4 rounded-md border border-slate-200 p-3 text-sm" aria-label="Delivery">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-semibold">{deliveryName(order.delivery)}</span>
+        <Status tone={confirmed ? 'green' : 'orange'}>{confirmed ? 'Confirmed' : 'To confirm'}</Status>
+        {confirmed && (
+          <span className="text-slate-700">
+            <span className="num">{money(order.deliveryFee!)}</span> · {order.deliveryNote}
+          </span>
+        )}
+      </div>
+      {editable && !confirmed && (
+        <>
+          <p className="mt-1 text-slate-600">
+            {order.delivery === 'same_day'
+              ? 'Check same-day delivery is possible. If it isn’t, enter the earliest date you can deliver.'
+              : 'Work out the delivery cost to this address and the date you can deliver.'}{' '}
+            The customer is emailed one invoice with the products and this delivery; paying it is their agreement.
+          </p>
+          <form className="mt-3 grid gap-3 sm:grid-cols-[9rem_1fr_auto] sm:items-end" onSubmit={submit}>
+            <Field label="Delivery cost (inc. GST)">
+              <input className="input num" type="number" min="0" max="10000" step="0.01" required value={fee} onChange={(e) => setFee(e.target.value)} />
+            </Field>
+            <Field label="Delivery date">
+              <input className="input" required maxLength={200} placeholder="Same day, Tue 12 Nov  or  Earliest: Thu 14 Nov" value={note} onChange={(e) => setNote(e.target.value)} />
+            </Field>
+            <button className="btn-primary" disabled={busy}>{busy ? 'Working…' : 'Approve and invoice'}</button>
+          </form>
+        </>
+      )}
+      {error && <p className="mt-1 text-red-600">{error}</p>}
+    </section>
+  )
+}
+
 /** The order's QuickBooks invoice: its number, status and pay link, why it failed, and Retry. */
 function OrderInvoicePanel({ order }: { order: StoreOrder }) {
   const { retryInvoice } = useStore()
@@ -343,7 +404,8 @@ function OrderInvoicePanel({ order }: { order: StoreOrder }) {
             Pay link
           </a>
         )}
-        {(inv.status === 'failed' || inv.status === 'skipped' || inv.status === 'held') && order.status !== 'cancelled' && (
+        {/* A delivery order is approved with its delivery cost and date (the Delivery panel above), not here. */}
+        {(inv.status === 'failed' || inv.status === 'skipped' || inv.status === 'held') && order.status !== 'cancelled' && (order.delivery === 'pickup' || order.deliveryFee !== undefined) && (
           <button type="button" className={cx('ml-auto px-3 py-1 text-xs', inv.status === 'held' ? 'btn-primary' : 'btn-ghost')} disabled={busy} onClick={() => void retry()}>
             {busy ? 'Working…' : inv.status === 'held' ? 'Approve and invoice' : inv.status === 'skipped' ? 'Invoice it now' : 'Retry'}
           </button>
@@ -382,7 +444,7 @@ function OrderDetail({ order, onClose }: { order: StoreOrder; onClose: () => voi
           ['Placed', fmtDateTime(order.createdAt)],
           ['Email', <a className="underline-offset-2 hover:underline" href={`mailto:${order.email}`}>{order.email}</a>],
           ['Phone', <a className="num underline-offset-2 hover:underline" href={`tel:${order.phone.replace(/[\s()-]/g, '')}`}>{order.phone}</a>],
-          ['Delivery', order.delivery === 'pickup' ? (order.address ? `Pickup · install at ${order.address}` : 'Pickup') : `${deliveryName(order.delivery)} to ${order.address} (quote the delivery cost)`],
+          ['Delivery', order.delivery === 'pickup' ? (order.address ? `Pickup · install at ${order.address}` : 'Pickup') : `${deliveryName(order.delivery)} to ${order.address}`],
           ['Pricing', order.trade ? 'Trade prices' : 'Retail prices'],
         ].map(([k, v]) => (
           <div key={k as string}>
@@ -431,6 +493,7 @@ function OrderDetail({ order, onClose }: { order: StoreOrder; onClose: () => voi
           </button>
         </div>
       )}
+      <DeliveryConfirmPanel order={order} />
       <OrderInvoicePanel order={order} />
       <form className="mt-5 grid gap-4 border-t border-slate-200 pt-4 sm:grid-cols-2" onSubmit={save}>
         <Field label="Status">

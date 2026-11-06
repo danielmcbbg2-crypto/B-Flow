@@ -918,6 +918,8 @@ const ordersFromRows = (orders: Row[], items: Row[], notes: Row[]): StoreOrder[]
     adminNotes: noteFor.get(r.id as string) ?? '',
     createdAt: r.created_at as string,
     items: (byOrder.get(r.id as string) ?? []).sort((a, b) => a.title.localeCompare(b.title)),
+    deliveryFee: r.delivery_fee == null ? undefined : num(r.delivery_fee),
+    deliveryNote: (r.delivery_note as string | undefined) || undefined,
     invoice: r.invoice_status
       ? {
           status: r.invoice_status as OrderInvoiceStatus,
