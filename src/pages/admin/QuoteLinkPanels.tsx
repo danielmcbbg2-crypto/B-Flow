@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Check, Copy, ExternalLink, Mail } from 'lucide-react'
+import { Check, Copy, ExternalLink, Mail, Trash2 } from 'lucide-react'
 import { Status, type Tone } from '../../components/ui'
 import { TextButton } from '../../components/TextMessage'
 import { useLookup, useStore } from '../../lib/store'
@@ -142,3 +142,64 @@ export function EstimateLine({ p }: { p: Project }) {
   )
 }
 
+
+/**
+ * Deletes a quote, after a confirmation that says what happens in QuickBooks: its estimate is
+ * deleted there and an unpaid deposit invoice voided. Not for jobs under way or finished, nor for
+ * anything with money paid against it (the server refuses those too).
+ */
+export function DeleteQuote({ p, onDeleted }: { p: Project; onDeleted: () => void }) {
+  const { data, can, deleteQuote } = useStore()
+  const [asking, setAsking] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  if (!can('canManageProjects') || p.status === 'in_progress' || p.status === 'completed') return null
+  const invoices = data.invoices.filter((i) => i.projectId === p.id)
+  const paid = invoices.some((i) => i.status === 'paid') || p.deposit?.status === 'paid'
+  const estimate = p.estimate?.status === 'synced' ? p.estimate.number : ''
+  const toVoid = invoices.filter((i) => i.status !== 'paid' && i.qbInvoiceNumber)
+  const go = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      await deleteQuote(p.id)
+      onDeleted()
+    } catch (err) {
+      setError((err as Error).message)
+      setBusy(false)
+    }
+  }
+  if (!asking) {
+    return (
+      <button type="button" className="btn-ghost order-first text-red-600 hover:bg-red-50" onClick={() => setAsking(true)}>
+        <Trash2 size={15} aria-hidden="true" /> Delete quote
+      </button>
+    )
+  }
+  return (
+    <div role="alertdialog" aria-labelledby={`del-${p.id}`} className="order-first basis-full rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-900">
+      <p id={`del-${p.id}`} className="font-semibold">Delete quote P-{p.number}?</p>
+      {paid ? (
+        <p className="mt-1">Money has been paid against this quote, so it can’t be deleted. Refund or credit it in QuickBooks first.</p>
+      ) : (
+        <ul className="mt-1 list-disc space-y-0.5 pl-5">
+          <li>The quote and everything in it (its lines, payment stages, notes and documents) is deleted from the portal. This can’t be undone.</li>
+          {estimate && <li>Its QuickBooks estimate <span className="num font-semibold">{estimate}</span> is deleted in QuickBooks.</li>}
+          {toVoid.map((i) => (
+            <li key={i.id}>Its deposit invoice <span className="num font-semibold">{i.qbInvoiceNumber}</span> is voided in QuickBooks (it stays on record as void). If the client already got it, let them know.</li>
+          ))}
+          {p.status === 'quoted' && <li>Its quote link stops working for the client.</li>}
+        </ul>
+      )}
+      {error && <p className="mt-2 font-semibold">{error}</p>}
+      <div className="mt-3 flex flex-wrap gap-2">
+        {!paid && (
+          <button type="button" className="btn bg-red-600 text-white hover:bg-red-700" disabled={busy} onClick={() => void go()}>
+            {busy ? 'Deleting…' : 'Yes, delete it'}
+          </button>
+        )}
+        <button type="button" className="btn-ghost" disabled={busy} onClick={() => { setAsking(false); setError(null) }}>Cancel</button>
+      </div>
+    </div>
+  )
+}

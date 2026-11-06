@@ -11,7 +11,8 @@
 //   POST { action: 'disconnect' }  (store managers) revokes the connection.
 // It also keeps issued quotes as QuickBooks estimates (created or updated when a quote is issued,
 // marked Accepted or Rejected when it's answered), and sends the deposit invoices of accepted quotes (queued by the database when a quote is
-// accepted), records them in invoices, and marks them paid.
+// accepted), records them in invoices, and marks them paid. When a quote is deleted, its estimate is
+// deleted in QuickBooks and an unpaid deposit invoice voided (queued in qbo_cleanup).
 //
 // Secrets: QBO_CLIENT_ID and QBO_CLIENT_SECRET (from the app made at developer.intuit.com), and
 // QBO_ENVIRONMENT=sandbox while testing with a sandbox company. The connection's tokens are kept in
@@ -421,6 +422,61 @@ async function voidCancelled(conn: Conn) {
   }
 }
 
+type CleanupRow = { id: number; kind: 'estimate' | 'invoice'; qbo_id: string; realm_id: string; label: string; attempts: number }
+
+/**
+ * What deleted quotes left in QuickBooks: estimates are deleted; invoices are voided (a sent tax
+ * invoice stays on record as void), unless something has been paid on them, which is left for the
+ * office to refund. Only ever in the company the quote was made in.
+ */
+async function cleanUp(conn: Conn) {
+  for (let round = 0; round < 5; round++) {
+    const { data: claimed, error } = await db.rpc('claim_qbo_cleanup', { max_rows: 10 })
+    if (error) throw new Error(error.message)
+    if (!claimed?.length) return
+    for (const c of claimed as CleanupRow[]) {
+      const done = (status: 'done' | 'kept', note = '') => db.from('qbo_cleanup').update({ status, error: note.slice(0, 400) }).eq('id', c.id)
+      try {
+        if (c.realm_id !== conn.realm_id) {
+          await done('kept', 'Made in a different QuickBooks company from the one connected now, so it was left alone.')
+          continue
+        }
+        const kind = c.kind === 'estimate' ? 'Estimate' : 'Invoice'
+        let found: { Id: string; SyncToken: string; Balance?: number; TotalAmt?: number }
+        try {
+          found = ((await qbo(conn, 'GET', `${c.kind}/${c.qbo_id}`)) as Record<string, typeof found>)[kind]
+        } catch (e) {
+          // Already deleted in QuickBooks: nothing to do.
+          if (e instanceof QboError && e.code === '610') {
+            await done('done', 'It was already gone from QuickBooks.')
+            continue
+          }
+          throw e
+        }
+        if (c.kind === 'estimate') {
+          await qbo(conn, 'POST', 'estimate', { Id: found.Id, SyncToken: found.SyncToken }, { operation: 'delete' })
+          await done('done')
+        } else if ((found.Balance ?? 0) < (found.TotalAmt ?? 0)) {
+          await done('kept', 'Something has been paid on it, so it was left for you to refund.')
+          await adminsNote(`Refund needed: ${c.label}`, `${c.label} was deleted, but its QuickBooks invoice has payments on it ($${((found.TotalAmt ?? 0) - (found.Balance ?? 0)).toFixed(2)}). Refund the client, then void it in QuickBooks.`)
+        } else {
+          if ((found.TotalAmt ?? 0) > 0) await qbo(conn, 'POST', 'invoice', { Id: found.Id, SyncToken: found.SyncToken }, { operation: 'void' })
+          await done('done')
+        }
+      } catch (e) {
+        const attempts = c.attempts + 1
+        const message = (e as Error).message
+        await db
+          .from('qbo_cleanup')
+          .update({ status: 'failed', error: message.slice(0, 400), attempts, next_try: new Date(Date.now() + attempts * 15 * 60_000).toISOString() })
+          .eq('id', c.id)
+        if (attempts === 6) await adminsNote(`QuickBooks clean-up failed: ${c.label}`, `The ${c.kind} (QuickBooks ID ${c.qbo_id}) of a deleted quote couldn't be ${c.kind === 'estimate' ? 'deleted' : 'voided'} in QuickBooks: ${message}\n\nPlease ${c.kind === 'estimate' ? 'delete' : 'void'} it in QuickBooks yourself.`)
+        if (!conn.refresh_token) return
+      }
+    }
+  }
+}
+
 /** Marks orders paid once their invoice is paid in QuickBooks (at most every 25 minutes). */
 async function checkPaid(conn: Conn, force = false) {
   if (!force && conn.last_paid_check && Date.now() - new Date(conn.last_paid_check).getTime() < 25 * 60_000) return
@@ -530,6 +586,7 @@ async function run() {
       }
     }
     await voidCancelled(conn)
+    await cleanUp(conn)
     await checkPaid(conn)
     await saveConn({ last_error: '' })
     return { invoiced, failed }

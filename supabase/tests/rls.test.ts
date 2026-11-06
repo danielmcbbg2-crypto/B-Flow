@@ -1973,3 +1973,60 @@ describe('quotes as QuickBooks estimates', () => {
     assert.equal((await est()).estimate_status, 'pending')
   })
 })
+
+describe('deleting quotes', () => {
+  const quote = async (title: string, status = 'quoted') => {
+    const id = (await asUser<{ id: string }>(uid.admin, `insert into projects (client_id, property_id, title, quote_amount) values ('u-client-1', 'p-1', $1, 3300) returning id`, [title])).rows[0].id
+    if (status !== 'quote_requested') await pool.query(`update projects set status = $2 where id = $1`, [id, status])
+    return id
+  }
+  const exists = async (id: string) => (await pool.query(`select 1 from projects where id = $1`, [id])).rowCount === 1
+
+  test('only managers delete; its QuickBooks estimate and unpaid invoices are queued against our company', async () => {
+    await pool.query(`insert into qbo_connection (id, realm_id, pinned_realm_id) values (1, '4242', '4242') on conflict (id) do update set realm_id = '4242', pinned_realm_id = '4242'`)
+    const id = await quote('Del deck')
+    await pool.query(`update projects set qbo_estimate_id = '501', estimate_status = 'synced' where id = $1`, [id])
+    const inv = (await pool.query(`insert into invoices (project_id, client_id, qb_invoice_number, amount, status, due_date, qbo_invoice_id) values ($1, 'u-client-1', 'DEP-P9', 330, 'sent', current_date, '502') returning id`, [id])).rows[0].id
+    await pool.query(`insert into project_documents (project_id, name, path, size_bytes, content_type) values ($1, 'plan.pdf', 'docs/plan.pdf', 10, 'application/pdf')`, [id])
+    await assert.rejects(asUser(uid.sarah, `select delete_quote($1)`, [id]), /Manage projects/)
+    await assert.rejects(asUser(uid.dan, `select delete_quote($1)`, [id]), /Manage projects/)
+    const out = (await asUser<{ r: { estimates: number; invoices: number; documents: string[] } }>(uid.admin, `select delete_quote($1) as r`, [id])).rows[0].r
+    assert.deepEqual(out.estimates, 1)
+    assert.deepEqual(out.invoices, 1)
+    assert.deepEqual(out.documents, ['docs/plan.pdf'])
+    assert.equal(await exists(id), false)
+    assert.equal((await pool.query(`select 1 from invoices where id = $1`, [inv])).rowCount, 0)
+    const queued = (await pool.query(`select kind, qbo_id, realm_id, status from qbo_cleanup where label like '%Del deck%' order by kind`)).rows
+    assert.deepEqual(queued, [
+      { kind: 'estimate', qbo_id: '501', realm_id: '4242', status: 'pending' },
+      { kind: 'invoice', qbo_id: '502', realm_id: '4242', status: 'pending' },
+    ])
+    await assert.rejects(asUser(uid.admin, `select * from qbo_cleanup`), /permission denied/)
+    await assert.rejects(asUser(uid.admin, `select * from claim_qbo_cleanup(5)`), /permission denied/)
+  })
+
+  test('never a job under way, anything with money paid, or one QuickBooks is busy with', async () => {
+    const job = await quote('Del job', 'in_progress')
+    await assert.rejects(asUser(uid.admin, `select delete_quote($1)`, [job]), /under way or finished/)
+    const paid = await quote('Del paid', 'approved')
+    await pool.query(`insert into invoices (project_id, client_id, qb_invoice_number, amount, status, due_date) values ($1, 'u-client-1', 'DEP-P8', 330, 'paid', current_date)`, [paid])
+    await assert.rejects(asUser(uid.admin, `select delete_quote($1)`, [paid]), /Money has been paid/)
+    const busy = await quote('Del busy')
+    await pool.query(`update projects set estimate_status = 'working' where id = $1`, [busy])
+    await assert.rejects(asUser(uid.admin, `select delete_quote($1)`, [busy]), /right now/)
+    for (const x of [job, paid, busy]) assert.equal(await exists(x), true)
+    // A request not yet priced, never in QuickBooks: just goes.
+    const plain = await quote('Del plain', 'quote_requested')
+    const r = (await asUser<{ r: { estimates: number; invoices: number } }>(uid.admin, `select delete_quote($1) as r`, [plain])).rows[0].r
+    assert.deepEqual([r.estimates, r.invoices], [0, 0])
+    assert.equal(await exists(plain), false)
+  })
+
+  test('in QuickBooks but QuickBooks not connected or locked: refused, so nothing is left behind there', async () => {
+    await pool.query(`update qbo_connection set realm_id = null, pinned_realm_id = null where id = 1`)
+    const id = await quote('Del orphan')
+    await pool.query(`update projects set qbo_estimate_id = '601', estimate_status = 'synced' where id = $1`, [id])
+    await assert.rejects(asUser(uid.admin, `select delete_quote($1)`, [id]), /isn't connected/)
+    assert.equal(await exists(id), true)
+  })
+})
