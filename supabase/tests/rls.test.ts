@@ -1774,6 +1774,39 @@ describe('quickbooks invoices', () => {
     const third = await order('third@example.com')
     assert.ok((await pool.query(`select id from claim_order_invoices(50)`)).rows.some((r) => r.id === third), 'under the limit again')
   })
+
+  test('delivery orders wait for the office to confirm the delivery cost and date before they are invoiced', async () => {
+    await asUser(uid.admin, `select qbo_set_limits(1000, 100000)`)
+    const deliver = (email: string, d: string) =>
+      asAnon<{ r: { id: string } }>(`select place_order('[{"product_id":"po-1","qty":1,"options":{"o-size":"v-600","o-col":"v-white"}}]'::jsonb, 'Dee Livery', '${email}', '0400 111 222', '${d}', '9 High St, Kew') as r`).then((x) => x.rows[0].r.id)
+    const id = await deliver('dee@example.com', 'same_day')
+    // The customer can't set a delivery cost themselves, nor can the app.
+    await asUser(uid.admin, `update orders set delivery_fee = 1, delivery_note = 'x' where id = '${id}'`)
+    assert.deepEqual((await pool.query(`select delivery_fee, delivery_note from orders where id = $1`, [id])).rows[0], { delivery_fee: null, delivery_note: '' })
+    // Held, not invoiced, and the store managers told.
+    assert.ok(!(await pool.query(`select id from claim_order_invoices(50)`)).rows.some((r) => r.id === id))
+    const held = (await pool.query(`select invoice_status, invoice_error, number from orders where id = $1`, [id])).rows[0]
+    assert.equal(held.invoice_status, 'held')
+    assert.match(held.invoice_error, /Confirm the delivery cost and date/)
+    assert.equal(Number((await pool.query(`select count(*) from inbox where title = $1`, [`Order #${held.number}: confirm its delivery`])).rows[0].count) > 0, true)
+    // Approving its invoice the usual way doesn't skip the delivery: it's held again.
+    await asUser(uid.admin, `select retry_order_invoice('${id}')`)
+    assert.ok(!(await pool.query(`select id from claim_order_invoices(50)`)).rows.some((r) => r.id === id))
+    assert.equal((await pool.query(`select invoice_status from orders where id = $1`, [id])).rows[0].invoice_status, 'held')
+    // Only store managers confirm it, with a cost and a date.
+    await assert.rejects(asUser(uid.sarah, `select confirm_order_delivery('${id}', 40, 'Same day, Tue 12 Nov')`), /Manage store/)
+    await assert.rejects(asUser(uid.admin, `select confirm_order_delivery('${id}', -1, 'Same day')`), /delivery cost/)
+    await assert.rejects(asUser(uid.admin, `select confirm_order_delivery('${id}', 40, '  ')`), /delivery date/)
+    await asUser(uid.admin, `select confirm_order_delivery('${id}', 45.5, 'Earliest: Thu 14 Nov')`)
+    assert.deepEqual((await pool.query(`select delivery_fee::text as fee, delivery_note, invoice_status, invoice_approved from orders where id = $1`, [id])).rows[0], { fee: '45.50', delivery_note: 'Earliest: Thu 14 Nov', invoice_status: 'pending', invoice_approved: true })
+    assert.ok((await pool.query(`select id from claim_order_invoices(50)`)).rows.some((r) => r.id === id), 'invoiced once confirmed')
+    // Once its invoice is being made, the delivery can't be changed here.
+    await assert.rejects(asUser(uid.admin, `select confirm_order_delivery('${id}', 50, 'Same day')`), /already been made/)
+    // Pickup orders have no delivery to confirm and are invoiced straight away.
+    const pickup = await order('pip@example.com')
+    await assert.rejects(asUser(uid.admin, `select confirm_order_delivery('${pickup}', 10, 'x')`), /pickup/)
+    assert.ok((await pool.query(`select id from claim_order_invoices(50)`)).rows.some((r) => r.id === pickup))
+  })
 })
 
 describe('two-step sign-in for admins', () => {

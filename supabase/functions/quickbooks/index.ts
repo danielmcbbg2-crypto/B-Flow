@@ -23,7 +23,7 @@
 // company (and its pay links).
 import { createClient } from 'npm:@supabase/supabase-js@2.49.4'
 import { seal, tokenKey, unseal } from './seal.ts'
-import { customerBody, depositBody, displayName, estimateBody, invoiceBody, qboError, qboErrorCode, quoted, type ItemRow, type OrderRow } from './invoice.ts'
+import { customerBody, depositBody, displayName, estimateBody, invoiceBody, invoiceTotal, qboError, qboErrorCode, quoted, type ItemRow, type OrderRow } from './invoice.ts'
 
 /** Whether the login has done its second sign-in step (its token, already checked by getUser, says "aal2"). Admin powers need it. */
 function secondStep(jwt: string): boolean {
@@ -377,7 +377,8 @@ async function invoiceOrder(conn: Conn, o: OrderRow & { qbo_invoice_id: string |
   const inv = ((await qbo(conn, 'GET', `invoice/${invoiceId}`, undefined, { include: 'invoiceLink' })) as { Invoice: { Id: string; SyncToken: string; DocNumber?: string; InvoiceLink?: string; TotalAmt?: number } }).Invoice
   const docNumber = await numbered(conn, 'invoice', inv, `WEB-${o.number}`)
   await qbo(conn, 'POST', `invoice/${invoiceId}/send`, null, { sendTo: o.email.trim() })
-  const total = Number(o.total)
+  // Items plus any confirmed delivery cost (on the invoice as a line of its own).
+  const total = invoiceTotal(o)
   const differs = inv.TotalAmt !== undefined && Math.abs(inv.TotalAmt - total) > 0.02
   await db
     .from('orders')

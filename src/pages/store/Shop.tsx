@@ -400,7 +400,10 @@ function Checkout({
           <textarea className="input min-h-[70px]" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Colour, sizes, install needed, best time to call…" />
         </Field>
         <p className="text-xs text-slate-500">
-          No payment now. We'll email your invoice with ways to pay, and confirm availability{form.delivery !== 'pickup' ? " and the delivery cost before dispatch. If the delivery cost doesn't suit, you can switch to pickup or cancel for a full refund" : ''}.
+          No payment now.{' '}
+          {form.delivery !== 'pickup'
+            ? "We'll confirm the delivery cost and date first, then email your invoice: you only pay once you've agreed them."
+            : "We'll email your invoice with ways to pay, and confirm availability."}
           {installing && " Installation is quoted separately after you order: we'll send you the price, and you only pay for it if you accept."}
           {user?.role === 'provider' && user.status === 'active' && ' Trade prices apply to your account.'}
         </p>
@@ -548,7 +551,8 @@ function OrderPlaced({ placed, onDone }: { placed: PlacedOrder; onDone: () => vo
   const { orderInvoice, cloud } = useStore()
   const [invoice, setInvoice] = useState<{ status: OrderInvoiceStatus; number: string; payLink: string } | null>(null)
   useEffect(() => {
-    if (!cloud) return
+    // Delivery orders are invoiced once the delivery cost and date are confirmed, not straight away.
+    if (!cloud || placed.delivery !== 'pickup') return
     let live = true
     let timer = 0
     const started = Date.now()
@@ -563,7 +567,7 @@ function OrderPlaced({ placed, onDone }: { placed: PlacedOrder; onDone: () => vo
       live = false
       window.clearTimeout(timer)
     }
-  }, [cloud, orderInvoice, placed.id, placed.email])
+  }, [cloud, orderInvoice, placed.id, placed.email, placed.delivery])
   return (
     <div className="card mx-auto max-w-lg px-6 py-10 text-center">
       <CheckCircle2 size={36} className="mx-auto text-emerald-600" />
@@ -581,6 +585,14 @@ function OrderPlaced({ placed, onDone }: { placed: PlacedOrder; onDone: () => vo
             </a>
           )}
         </>
+      ) : placed.delivery !== 'pickup' ? (
+        <p className="mt-2 text-sm text-slate-600">
+          Products total <span className="num font-semibold text-slate-900">{money(placed.total)}</span> inc. GST. Nothing has been charged.
+          {placed.delivery === 'same_day'
+            ? " We'll confirm whether same-day delivery is possible (or offer the earliest date) and the delivery cost,"
+            : " We'll confirm the delivery cost and date,"}{' '}
+          then email your invoice to {placed.email}. You only pay once you've agreed them.
+        </p>
       ) : (
         <p className="mt-2 text-sm text-slate-600">
           Total <span className="num font-semibold text-slate-900">{money(placed.total)}</span> inc. GST. Nothing has been charged: we'll check

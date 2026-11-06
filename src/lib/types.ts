@@ -645,6 +645,9 @@ export interface StoreOrder {
   adminNotes: string
   createdAt: string
   items: OrderItem[]
+  /** Delivery orders: the delivery cost (inc. GST) and date the office confirmed, set only through confirmDelivery. */
+  deliveryFee?: number
+  deliveryNote?: string
   /** Its QuickBooks invoice (recorded by the server only). */
   invoice?: OrderInvoice
 }
