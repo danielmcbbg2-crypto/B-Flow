@@ -9,6 +9,8 @@ import { AcceptLinkScreen, SetPasswordScreen } from './components/SignInModal'
 import { LogoMark } from './components/Logo'
 import { StorePage } from './pages/store/Shop'
 import { ServicePage } from './pages/ServicePage'
+import { LegalPage } from './pages/LegalPage'
+import { isLegalPage } from './lib/legal'
 import { LeadReply } from './pages/LeadReply'
 import { QuoteLink } from './pages/QuoteLink'
 import { useNoIndex } from './lib/head'
@@ -59,6 +61,8 @@ export function App() {
   // The shop is open to everyone, signed in or not.
   if (area === 'store') return <StorePage productId={route[1]} />
   if (area === 'services') return <ServicePage slug={route[1] ?? ''} />
+  // Privacy Policy and Terms of Use: public, indexed pages.
+  if (isLegalPage(area)) return <LegalPage slug={area} />
   // An admin who has only entered their password: the second step, before anything else of theirs.
   if (phase === 'two-step') return <TwoStepScreen />
   if (isPortal && phase === 'loading') {

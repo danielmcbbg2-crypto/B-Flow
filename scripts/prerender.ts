@@ -12,6 +12,7 @@ import { BRAND } from '../src/lib/brand'
 import { complianceFacts, DEFAULT_SITE_URL, HOME_META, pageTitle, productMeta, productPath, STORE_META, breadcrumbJsonLd, businessJsonLd, type PageMeta, type ProductForSeo } from '../src/lib/seo'
 import { SERVICE_PAGES, servicePath } from '../src/lib/services'
 import { STORE_INFO_PAGES, storeInfoSections } from '../src/lib/storePolicy'
+import { LEGAL_LINKS, LEGAL_PAGES, legalSections } from '../src/lib/legal'
 
 const DIST = 'dist'
 const SITE = (process.env.VITE_SITE_URL || DEFAULT_SITE_URL).replace(/\/+$/, '')
@@ -127,6 +128,31 @@ for (const info of STORE_INFO_PAGES) {
       `<main><h1>${esc(info.title)}</h1>${storeInfoSections(info.slug)
         .map((sec) => `<h2>${esc(sec.title)}</h2>${sec.paragraphs.map((t) => `<p>${esc(t).replaceAll('{email}', link(`mailto:${BRAND.email}`, BRAND.email)).replaceAll('{phone}', esc(BRAND.phone))}</p>`).join('')}`)
         .join('')}${link('/store', 'Back to the shop')}${nav}</main>`,
+    ),
+  )
+  pages.push({ path })
+}
+
+// Legal pages (Privacy Policy, Terms of Use). {tokens} in the wording become links.
+const legalText = (t: string) =>
+  t
+    .split(/(\{[a-z]+\})/)
+    .map((part) => {
+      const l = /^\{[a-z]+\}$/.test(part) && LEGAL_LINKS[part.slice(1, -1)]
+      if (!l) return esc(part)
+      const ext = /^https?:\/\//.test(l.href)
+      return `<a href="${esc(l.href)}"${ext ? ' target="_blank" rel="noopener noreferrer"' : ''}>${esc(l.label)}</a>`
+    })
+    .join('')
+for (const lp of LEGAL_PAGES) {
+  const path = `/${lp.slug}`
+  write(
+    path,
+    render(
+      { title: lp.title, description: lp.description, path, jsonLd: [breadcrumbJsonLd(SITE, [{ name: 'Home', path: '/' }, { name: lp.name, path }])] },
+      `<main><h1>${esc(lp.title)}</h1>${legalSections(lp.slug)
+        .map((sec) => `<h2>${esc(sec.title)}</h2>${sec.paragraphs.map((t) => `<p>${legalText(t)}</p>`).join('')}`)
+        .join('')}${nav}</main>`,
     ),
   )
   pages.push({ path })

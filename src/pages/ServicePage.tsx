@@ -174,6 +174,10 @@ export function ServicePage({ slug }: { slug: string }) {
           <div className="mt-10 flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
             <Logo inverted />
             <div className="text-sm text-white/70 sm:text-right">
+              <nav aria-label="Legal" className="mb-2 flex gap-4 sm:justify-end">
+                <a href="/privacy" className="hover:text-white hover:underline">Privacy Policy</a>
+                <a href="/terms" className="hover:text-white hover:underline">Terms of Use</a>
+              </nav>
               <p>© {new Date().getFullYear()} {BRAND.name} · {BRAND.city}</p>
               <p className="mt-1">ABN <span className="text-white">{BRAND.abn}</span></p>
             </div>

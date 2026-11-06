@@ -330,6 +330,10 @@ export function PublicHome() {
         <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-12 sm:flex-row sm:items-end sm:justify-between sm:px-6">
           <Logo inverted />
           <div className="text-sm text-white/70 sm:text-right">
+            <nav aria-label="Legal" className="mb-2 flex gap-4 sm:justify-end">
+              <a href="/privacy" className="hover:text-white hover:underline">Privacy Policy</a>
+              <a href="/terms" className="hover:text-white hover:underline">Terms of Use</a>
+            </nav>
             <p>
               © {new Date().getFullYear()} {BRAND.name} · {BRAND.city}
             </p>

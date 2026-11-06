@@ -84,6 +84,11 @@ export function StoreFooter() {
           <p>{BRAND.city}</p>
           <p className="mt-1">ABN <span className="num text-white">{BRAND.abn}</span></p>
           <p className="mt-1">Prices include GST.</p>
+          <p className="mt-2">
+            <a href="/privacy" className="text-white/85 hover:text-white hover:underline">Privacy Policy</a>
+            <span className="mx-2 text-white/40">·</span>
+            <a href="/terms" className="text-white/85 hover:text-white hover:underline">Terms of Use</a>
+          </p>
         </div>
       </div>
     </footer>
