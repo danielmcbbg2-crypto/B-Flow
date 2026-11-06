@@ -149,6 +149,17 @@ async function qbo(conn: Conn, method: 'GET' | 'POST', path: string, body?: unkn
 }
 const query = async (conn: Conn, sql: string) => ((await qbo(conn, 'GET', 'query', undefined, { query: sql })) as { QueryResponse?: Record<string, Record<string, unknown>[]> }).QueryResponse ?? {}
 
+/**
+ * A transaction's number. A company that types its own numbers ("Custom transaction numbers" on in
+ * QuickBooks) gets none from QuickBooks, so the portal gives it one of its own (WEB-5002, DEP-P203,
+ * Q-P203) before the client sees it; otherwise QuickBooks' own number is kept.
+ */
+async function numbered(conn: Conn, kind: 'invoice' | 'estimate', obj: { Id: string; SyncToken: string; DocNumber?: string }, ours: string): Promise<string> {
+  if (obj.DocNumber) return obj.DocNumber
+  const out = (await qbo(conn, 'POST', kind, { Id: obj.Id, SyncToken: obj.SyncToken, sparse: true, DocNumber: ours.slice(0, 21) })) as Record<string, { DocNumber?: string }>
+  return out[kind === 'invoice' ? 'Invoice' : 'Estimate']?.DocNumber || ours
+}
+
 /** The item store sales go against and the GST tax code: found (or the item made) once, then remembered. */
 async function setup(conn: Conn) {
   if (!conn.item_id) {
@@ -234,7 +245,8 @@ async function syncEstimate(conn: Conn, q: EstimateRow) {
     const patch = q.status === 'quoted' ? { ...body, ...answer, Id: now.Id, SyncToken: now.SyncToken } : { ...answer, Id: now.Id, SyncToken: now.SyncToken, sparse: true }
     est = ((await qbo(conn, 'POST', 'estimate', patch)) as { Estimate: typeof est }).Estimate
   }
-  await db.from('projects').update({ qbo_estimate_id: est.Id, estimate_number: est.DocNumber ?? '', estimate_status: 'synced', estimate_error: '' }).eq('id', q.id)
+  const number = await numbered(conn, 'estimate', est, `Q-P${q.number}`)
+  await db.from('projects').update({ qbo_estimate_id: est.Id, estimate_number: number, estimate_status: 'synced', estimate_error: '' }).eq('id', q.id)
 }
 
 async function failEstimate(q: EstimateRow, message: string) {
@@ -260,14 +272,15 @@ async function depositInvoice(conn: Conn, q: DepositRow) {
   const amount = Number(q.deposit_amount)
   const made = (await qbo(conn, 'POST', 'invoice', depositBody(q, amount, client.email, customerId, itemId, conn.tax_code_id ?? '', melbourneToday()), { requestid: `deposit-${q.id}` })) as { Invoice: { Id: string } }
   const invoiceId = made.Invoice.Id
-  const inv = ((await qbo(conn, 'GET', `invoice/${invoiceId}`, undefined, { include: 'invoiceLink' })) as { Invoice: { DocNumber?: string; InvoiceLink?: string; DueDate?: string } }).Invoice
+  const inv = ((await qbo(conn, 'GET', `invoice/${invoiceId}`, undefined, { include: 'invoiceLink' })) as { Invoice: { Id: string; SyncToken: string; DocNumber?: string; InvoiceLink?: string; DueDate?: string } }).Invoice
+  const docNumber = await numbered(conn, 'invoice', inv, `DEP-P${q.number}`)
   await qbo(conn, 'POST', `invoice/${invoiceId}/send`, null, { sendTo: client.email.trim() })
   // Recorded with the project's invoices (once, even if this runs again), and against the first payment stage.
   let { data: rec } = await db.from('invoices').select('id').eq('qbo_invoice_id', invoiceId).maybeSingle()
   if (!rec) {
     const { data, error } = await db
       .from('invoices')
-      .insert({ project_id: q.id, client_id: q.client_id, qb_invoice_number: inv.DocNumber ?? invoiceId, amount, status: 'sent', due_date: inv.DueDate ?? melbourneToday(), qbo_invoice_id: invoiceId, pay_link: inv.InvoiceLink ?? '' })
+      .insert({ project_id: q.id, client_id: q.client_id, qb_invoice_number: docNumber, amount, status: 'sent', due_date: inv.DueDate ?? melbourneToday(), qbo_invoice_id: invoiceId, pay_link: inv.InvoiceLink ?? '' })
       .select('id')
       .single()
     if (error) throw new Error(`The deposit invoice was sent but couldn't be recorded (${error.message}).`)
@@ -347,7 +360,8 @@ async function invoiceOrder(conn: Conn, o: OrderRow & { qbo_invoice_id: string |
     invoiceId = made.Invoice.Id
     await db.from('orders').update({ qbo_invoice_id: invoiceId }).eq('id', o.id)
   }
-  const inv = ((await qbo(conn, 'GET', `invoice/${invoiceId}`, undefined, { include: 'invoiceLink' })) as { Invoice: { DocNumber?: string; InvoiceLink?: string; TotalAmt?: number } }).Invoice
+  const inv = ((await qbo(conn, 'GET', `invoice/${invoiceId}`, undefined, { include: 'invoiceLink' })) as { Invoice: { Id: string; SyncToken: string; DocNumber?: string; InvoiceLink?: string; TotalAmt?: number } }).Invoice
+  const docNumber = await numbered(conn, 'invoice', inv, `WEB-${o.number}`)
   await qbo(conn, 'POST', `invoice/${invoiceId}/send`, null, { sendTo: o.email.trim() })
   const total = Number(o.total)
   const differs = inv.TotalAmt !== undefined && Math.abs(inv.TotalAmt - total) > 0.02
@@ -355,7 +369,7 @@ async function invoiceOrder(conn: Conn, o: OrderRow & { qbo_invoice_id: string |
     .from('orders')
     .update({
       invoice_status: 'sent',
-      invoice_number: inv.DocNumber ?? '',
+      invoice_number: docNumber,
       pay_link: inv.InvoiceLink ?? '',
       invoice_error: differs ? `The QuickBooks invoice comes to $${inv.TotalAmt!.toFixed(2)} but the order to $${total.toFixed(2)}: check its GST.` : '',
       invoiced_at: new Date().toISOString(),
