@@ -215,6 +215,20 @@ async function estimateItem(conn: Conn): Promise<string> {
   return id
 }
 
+/**
+ * A quote's client for QuickBooks. A quote made from a store order whose client has no email (the
+ * customer checked out signed out with an email that's already a portal login, which is never copied
+ * to another account) uses the email typed on that order, the one its store invoice went to.
+ */
+async function quoteClient(projectId: string, clientId: string): Promise<{ name: string; email: string | null; phone: string | null } | null> {
+  const { data: client } = await db.from('profiles').select('name, email, phone').eq('id', clientId).maybeSingle()
+  if (!client || client.email?.trim()) return client
+  const { data: p } = await db.from('projects').select('order_id').eq('id', projectId).maybeSingle()
+  if (!p?.order_id) return client
+  const { data: o } = await db.from('orders').select('email').eq('id', p.order_id).maybeSingle()
+  return o?.email?.trim() ? { ...client, email: o.email } : client
+}
+
 type EstimateRow = {
   id: string; number: number; title: string; status: string; client_id: string; qbo_estimate_id: string | null; estimate_attempts: number
   quote_amount: number | string | null; quote_valid_until: string | null; quote_inclusions: string; quote_exclusions: string
@@ -223,7 +237,7 @@ type EstimateRow = {
 
 /** Creates or updates a quote's estimate, and marks it Accepted or Rejected once answered. */
 async function syncEstimate(conn: Conn, q: EstimateRow) {
-  const { data: client } = await db.from('profiles').select('name, email, phone').eq('id', q.client_id).maybeSingle()
+  const client = await quoteClient(q.id, q.client_id)
   if (!client?.email?.trim()) throw new Error('The client has no email address, which QuickBooks needs to find or add them. Add it to their account, then try again.')
   const customerId = await customerFor(conn, { id: q.id, number: q.number, name: client.name, email: client.email, phone: client.phone ?? '', delivery: 'pickup', address: '', total: 0 })
   const { data: items } = await db.from('project_quote_items').select('section, description, qty, unit, rate').eq('project_id', q.id).order('position')
@@ -263,7 +277,7 @@ const melbourneToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Austr
 
 /** An accepted quote's deposit invoice: made in QuickBooks, emailed with its pay link, and recorded. */
 async function depositInvoice(conn: Conn, q: DepositRow) {
-  const { data: client } = await db.from('profiles').select('name, email, phone').eq('id', q.client_id).maybeSingle()
+  const client = await quoteClient(q.id, q.client_id)
   if (!client?.email?.trim()) throw new Error('The client has no email address for the deposit invoice. Add it to their account, then send the deposit invoice.')
   const { data: place } = q.property_id ? await db.from('properties').select('address, suburb, postcode').eq('id', q.property_id).maybeSingle() : { data: null }
   const address = place ? [place.address, place.suburb, place.postcode].filter(Boolean).join(', ') : ''
