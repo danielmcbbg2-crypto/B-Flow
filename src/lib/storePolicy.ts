@@ -14,6 +14,8 @@ export const STORE_POLICY = {
   licensedInsuredTrades: true,
   /** Installation is offered in metro Melbourne only. */
   installMelbourneOnly: true,
+  /** Melbourne standard delivery starts from this price (inc. GST); the exact cost is confirmed before dispatch. */
+  melbourneDeliveryFrom: 40,
 }
 
 /** How an order gets to the customer. 'delivery' is standard delivery in metro Melbourne. */
@@ -22,7 +24,7 @@ export type DeliveryMethod = 'pickup' | 'delivery' | 'same_day' | 'australia'
 /** The delivery choices at checkout, in order. Every delivery cost is confirmed by us after the order, before dispatch. */
 export const DELIVERY_METHODS: { id: DeliveryMethod; name: string; short: string; detail: string }[] = [
   { id: 'pickup', name: 'Pickup', short: 'Pickup', detail: "Free. We'll contact you to arrange a time." },
-  { id: 'delivery', name: 'Melbourne standard delivery', short: 'Melbourne delivery', detail: 'Metro Melbourne, 1 to 3 business days. Cost confirmed before dispatch.' },
+  { id: 'delivery', name: 'Melbourne standard delivery', short: 'Melbourne delivery', detail: `Metro Melbourne, 1 to 3 business days. From $${STORE_POLICY.melbourneDeliveryFrom}; exact cost confirmed before dispatch.` },
   { id: 'same_day', name: 'Melbourne same-day delivery', short: 'Same-day delivery', detail: 'Metro Melbourne only. We quote the cost and confirm same-day is possible.' },
   { id: 'australia', name: 'Australia-wide delivery', short: 'Australia-wide delivery', detail: 'Outside Melbourne. We quote the cost to your address.' },
 ]
@@ -57,7 +59,7 @@ export function storeInfoSections(slug: StoreInfoSlug): StoreInfoSection[] {
         { title: 'Pickup', paragraphs: ["Pickup is free. Choose pickup at checkout and we'll contact you to arrange a time once your order is ready."] },
         {
           title: 'Melbourne standard delivery',
-          paragraphs: ['We deliver across metro Melbourne in 1 to 3 business days. The cost depends on the size of the order and where it is going.'],
+          paragraphs: [`We deliver across metro Melbourne in 1 to 3 business days. Delivery starts from $${STORE_POLICY.melbourneDeliveryFrom} (including GST); the exact cost depends on the size of the order and where it is going.`],
         },
         {
           title: 'Same-day delivery in Melbourne',
