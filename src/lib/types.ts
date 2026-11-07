@@ -42,6 +42,8 @@ export interface UserAccount {
   inviteCode?: string
   /** Live mode: whether a login exists yet (it's created by the first invite). */
   hasLogin?: boolean
+  /** Clients: the QuickBooks customer they're linked to (set by the server). */
+  qboCustomer?: { id: string; name: string }
 }
 
 export interface PaintColors {
@@ -386,6 +388,8 @@ export interface QuickBooksInvoice {
   createdAt: string
   /** Set by the server for invoices QuickBooks made: the pay link it emailed. */
   payLink?: string
+  /** Copied from QuickBooks for a linked client (kept up to date by the server; change it in QuickBooks). */
+  fromQuickBooks?: boolean
 }
 
 export interface SmsNotification {
@@ -673,6 +677,15 @@ export interface OrderInvoice {
 }
 
 /** Whether QuickBooks is connected (office only). */
+/** A QuickBooks customer, as found when linking a client to one. */
+export interface QuickBooksCustomer {
+  id: string
+  name: string
+  company: string
+  email: string
+  balance: number
+}
+
 export interface QuickBooksStatus {
   connected: boolean
   company?: string

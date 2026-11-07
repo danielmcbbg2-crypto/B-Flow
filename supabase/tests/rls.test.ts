@@ -2030,3 +2030,24 @@ describe('deleting quotes', () => {
     assert.equal(await exists(id), true)
   })
 })
+
+describe('linking clients to QuickBooks customers', () => {
+  test('only the server sets the link; a client can’t point their account at another customer', async () => {
+    const me = (await pool.query(`select id from profiles where auth_id = $1`, [uid.sarah])).rows[0].id
+    await asUser(uid.sarah, `update profiles set qbo_customer_id = '999', qbo_customer_name = 'Someone else', qbo_customer_realm = '4242' where id = $1`, [me])
+    await asUser(uid.admin, `update profiles set qbo_customer_id = '998', qbo_customer_realm = '4242' where id = $1`, [me])
+    assert.deepEqual((await pool.query(`select qbo_customer_id, qbo_customer_name from profiles where id = $1`, [me])).rows[0], { qbo_customer_id: null, qbo_customer_name: '' })
+    await pool.query(`update profiles set qbo_customer_id = '55', qbo_customer_name = 'Sarah W', qbo_customer_realm = '4242' where id = $1`, [me])
+    await asUser(uid.admin, `update profiles set name = name where id = $1`, [me])
+    assert.equal((await pool.query(`select qbo_customer_id from profiles where id = $1`, [me])).rows[0].qbo_customer_id, '55', 'kept through app saves')
+  })
+
+  test('invoices copied from QuickBooks are marked by the server only; each QuickBooks invoice once', async () => {
+    const inv = (await asUser<{ id: string; source: string }>(uid.admin, `insert into invoices (client_id, qb_invoice_number, amount, status, due_date, source) values ('u-client-1', 'X-1', 10, 'sent', current_date, 'quickbooks') returning id, source`)).rows[0]
+    assert.equal(inv.source, 'portal')
+    await pool.query(`update invoices set source = 'quickbooks', qbo_invoice_id = 'q-1' where id = $1`, [inv.id])
+    await asUser(uid.admin, `update invoices set source = 'portal' where id = $1`, [inv.id])
+    assert.equal((await pool.query(`select source from invoices where id = $1`, [inv.id])).rows[0].source, 'quickbooks')
+    await assert.rejects(pool.query(`insert into invoices (client_id, qb_invoice_number, amount, status, due_date, qbo_invoice_id) values ('u-client-1', 'X-2', 10, 'sent', current_date, 'q-1')`), /duplicate key/)
+  })
+})

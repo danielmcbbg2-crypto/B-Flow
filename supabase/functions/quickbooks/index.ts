@@ -240,7 +240,7 @@ type EstimateRow = {
 async function syncEstimate(conn: Conn, q: EstimateRow) {
   const client = await quoteClient(q.id, q.client_id)
   if (!client?.email?.trim()) throw new Error('The client has no email address, which QuickBooks needs to find or add them. Add it to their account, then try again.')
-  const customerId = await customerFor(conn, { id: q.id, number: q.number, name: client.name, email: client.email, phone: client.phone ?? '', delivery: 'pickup', address: '', total: 0 })
+  const customerId = await customerFor(conn, { id: q.id, number: q.number, name: client.name, email: client.email, phone: client.phone ?? '', delivery: 'pickup', address: '', total: 0 }, q.client_id)
   const { data: items } = await db.from('project_quote_items').select('section, description, qty, unit, rate').eq('project_id', q.id).order('position')
   const itemId = await estimateItem(conn)
   const today = (q.quote_issued_at ? new Date(q.quote_issued_at) : new Date()).toLocaleDateString('en-CA', { timeZone: 'Australia/Melbourne' })
@@ -283,7 +283,7 @@ async function depositInvoice(conn: Conn, q: DepositRow) {
   const { data: place } = q.property_id ? await db.from('properties').select('address, suburb, postcode').eq('id', q.property_id).maybeSingle() : { data: null }
   const address = place ? [place.address, place.suburb, place.postcode].filter(Boolean).join(', ') : ''
   const itemId = await depositItem(conn)
-  const customerId = await customerFor(conn, { id: q.id, number: q.number, name: client.name, email: client.email, phone: client.phone ?? '', delivery: address ? 'delivery' : 'pickup', address, total: q.deposit_amount })
+  const customerId = await customerFor(conn, { id: q.id, number: q.number, name: client.name, email: client.email, phone: client.phone ?? '', delivery: address ? 'delivery' : 'pickup', address, total: q.deposit_amount }, q.client_id)
   const amount = Number(q.deposit_amount)
   const made = (await qbo(conn, 'POST', 'invoice', depositBody(q, amount, client.email, customerId, itemId, conn.tax_code_id ?? '', melbourneToday()), { requestid: `deposit-${q.id}` })) as { Invoice: { Id: string } }
   const invoiceId = made.Invoice.Id
@@ -318,7 +318,17 @@ async function failDeposit(q: DepositRow, message: string) {
   }
 }
 
-async function customerFor(conn: Conn, o: OrderRow): Promise<string> {
+/** The QuickBooks customer a portal client is linked to in the connected company, if any. */
+async function linkedCustomer(conn: Conn, profileId: string | null | undefined): Promise<string | null> {
+  if (!profileId) return null
+  const { data } = await db.from('profiles').select('qbo_customer_id, qbo_customer_realm').eq('id', profileId).maybeSingle()
+  return data?.qbo_customer_id && data.qbo_customer_realm === conn.realm_id ? (data.qbo_customer_id as string) : null
+}
+
+/** The customer to bill: the client's linked QuickBooks customer, else one found by email, else a new one. */
+async function customerFor(conn: Conn, o: OrderRow, profileId?: string | null): Promise<string> {
+  const linked = await linkedCustomer(conn, profileId)
+  if (linked) return linked
   const byEmail = (await query(conn, `select * from Customer where PrimaryEmailAddr = ${quoted(o.email.trim())}`)).Customer?.[0] as { Id: string } | undefined
   if (byEmail) return byEmail.Id
   try {
@@ -363,13 +373,13 @@ const personName = async (id: string | null) =>
   id ? (((await db.from('profiles').select('name').eq('id', id).maybeSingle()).data?.name as string | undefined) ?? 'an admin') : 'an admin'
 
 /** Creates the order's invoice in QuickBooks and has QuickBooks email it. */
-async function invoiceOrder(conn: Conn, o: OrderRow & { qbo_invoice_id: string | null; invoice_attempts: number }) {
+async function invoiceOrder(conn: Conn, o: OrderRow & { qbo_invoice_id: string | null; invoice_attempts: number; customer_id?: string | null }) {
   const { data: items, error } = await db.from('order_items').select('title, sku, unit_price, qty, options').eq('order_id', o.id).order('seq')
   if (error) throw new Error(error.message)
   await setup(conn)
   let invoiceId = o.qbo_invoice_id
   if (!invoiceId) {
-    const customerId = await customerFor(conn, o)
+    const customerId = await customerFor(conn, o, o.customer_id)
     // requestid makes creating it safe to repeat: QuickBooks returns the same invoice for the same id.
     const made = (await qbo(conn, 'POST', 'invoice', invoiceBody(o, (items ?? []) as ItemRow[], customerId, conn.item_id!, conn.tax_code_id ?? ''), { requestid: `order-${o.id}` })) as { Invoice: { Id: string } }
     invoiceId = made.Invoice.Id
@@ -477,6 +487,59 @@ async function cleanUp(conn: Conn) {
   }
 }
 
+type QboInvoice = { Id: string; DocNumber?: string; TxnDate?: string; DueDate?: string; TotalAmt?: number; Balance?: number }
+
+/**
+ * Copies a linked client's QuickBooks invoices into invoices (newest 100): new ones are added with
+ * their pay link, paid ones marked paid, voided or deleted ones removed. Invoices the portal made
+ * itself (deposits) are left to the paid check. Each linked client at most every 30 minutes, unless
+ * asked for now (just linked).
+ */
+async function syncLinked(conn: Conn, onlyProfile?: string) {
+  let q = db.from('profiles').select('id, qbo_customer_id').eq('qbo_customer_realm', conn.realm_id!).not('qbo_customer_id', 'is', null)
+  q = onlyProfile ? q.eq('id', onlyProfile) : q.or(`qbo_synced_at.is.null,qbo_synced_at.lt.${new Date(Date.now() - 30 * 60_000).toISOString()}`).limit(20)
+  const { data: linked, error } = await q
+  if (error) throw new Error(error.message)
+  for (const p of linked ?? []) {
+    const found = ((await query(conn, `select Id, DocNumber, TxnDate, DueDate, TotalAmt, Balance from Invoice where CustomerRef = ${quoted(p.qbo_customer_id as string)} ORDERBY TxnDate DESC MAXRESULTS 100`)).Invoice ?? []) as QboInvoice[]
+    const { data: have } = await db.from('invoices').select('id, qbo_invoice_id, status, source, pay_link, client_id').in('qbo_invoice_id', found.length ? found.map((i) => i.Id) : ['-'])
+    const byId = new Map((have ?? []).map((r) => [r.qbo_invoice_id as string, r]))
+    for (const inv of found) {
+      const row = byId.get(inv.Id)
+      const total = Number(inv.TotalAmt ?? 0)
+      const voided = !(total > 0)
+      const paid = !voided && Number(inv.Balance ?? 0) === 0
+      if (row && row.source !== 'quickbooks') continue
+      if (voided) {
+        if (row) await db.from('invoices').delete().eq('id', row.id)
+        continue
+      }
+      const status = paid ? 'paid' : 'sent'
+      if (!row) {
+        let payLink = ''
+        if (!paid) payLink = ((await qbo(conn, 'GET', `invoice/${inv.Id}`, undefined, { include: 'invoiceLink' })) as { Invoice: { InvoiceLink?: string } }).Invoice.InvoiceLink ?? ''
+        await db.from('invoices').insert({
+          client_id: p.id, source: 'quickbooks', qbo_invoice_id: inv.Id, qb_invoice_number: inv.DocNumber || inv.Id, amount: total, status,
+          due_date: inv.DueDate ?? inv.TxnDate ?? melbourneToday(), pay_link: payLink, ...(paid ? { paid_date: melbourneToday() } : {}),
+        })
+      } else {
+        await db
+          .from('invoices')
+          .update({ client_id: p.id, qb_invoice_number: inv.DocNumber || inv.Id, amount: total, status, due_date: inv.DueDate ?? inv.TxnDate ?? melbourneToday(), ...(paid && row.status !== 'paid' ? { paid_date: melbourneToday() } : {}), ...(paid ? { pay_link: '' } : {}) })
+          .eq('id', row.id)
+      }
+    }
+    // Gone from QuickBooks (deleted): removed here too. Only when the whole list came back.
+    if (found.length < 100) {
+      const keep = found.map((i) => i.Id)
+      let gone = db.from('invoices').delete().eq('client_id', p.id).eq('source', 'quickbooks')
+      if (keep.length) gone = gone.not('qbo_invoice_id', 'in', `(${keep.map((x) => `"${x}"`).join(',')})`)
+      await gone
+    }
+    await db.from('profiles').update({ qbo_synced_at: new Date().toISOString() }).eq('id', p.id)
+  }
+}
+
 /** Marks orders paid once their invoice is paid in QuickBooks (at most every 25 minutes). */
 async function checkPaid(conn: Conn, force = false) {
   if (!force && conn.last_paid_check && Date.now() - new Date(conn.last_paid_check).getTime() < 25 * 60_000) return
@@ -501,7 +564,7 @@ async function checkPaid(conn: Conn, force = false) {
     }
   }
   // Deposit invoices (and any others QuickBooks made for projects).
-  const { data: sent } = await db.from('invoices').select('id, project_id, qb_invoice_number, qbo_invoice_id').eq('status', 'sent').not('qbo_invoice_id', 'is', null).limit(300)
+  const { data: sent } = await db.from('invoices').select('id, project_id, qb_invoice_number, qbo_invoice_id').eq('status', 'sent').eq('source', 'portal').not('qbo_invoice_id', 'is', null).limit(300)
   const list = sent ?? []
   for (let i = 0; i < list.length; i += 30) {
     const batch = list.slice(i, i + 30)
@@ -588,6 +651,7 @@ async function run() {
     await voidCancelled(conn)
     await cleanUp(conn)
     await checkPaid(conn)
+    await syncLinked(conn)
     await saveConn({ last_error: '' })
     return { invoiced, failed }
   } catch (e) {
@@ -696,6 +760,50 @@ Deno.serve(async (req) => {
     const u = new URL(AUTH_URL)
     u.search = new URLSearchParams({ client_id: CLIENT_ID, response_type: 'code', scope: 'com.intuit.quickbooks.accounting', redirect_uri: REDIRECT_URI, state }).toString()
     return json({ url: u.toString() })
+  }
+
+  if (body.action === 'search_customers' || body.action === 'link_customer' || body.action === 'unlink_customer') {
+    const conn = await loadConn()
+    if (!conn?.refresh_token || !conn.realm_id) return json({ error: 'Connect QuickBooks first.' }, 409)
+    try {
+      if (body.action === 'search_customers') {
+        const term = String(body.q ?? '').trim().slice(0, 80)
+        if (term.length < 2) return json({ customers: [] })
+        const like = quoted(`%${term.replace(/[%_]/g, '')}%`)
+        const found = new Map<string, Record<string, unknown>>()
+        const add = (rows?: Record<string, unknown>[]) => rows?.forEach((c) => found.set(c.Id as string, c))
+        add((await query(conn, `select Id, DisplayName, CompanyName, PrimaryEmailAddr, Balance from Customer where DisplayName like ${like} MAXRESULTS 20`)).Customer)
+        if (term.includes('@')) add((await query(conn, `select Id, DisplayName, CompanyName, PrimaryEmailAddr, Balance from Customer where PrimaryEmailAddr = ${quoted(term)}`)).Customer)
+        const customers = [...found.values()].slice(0, 20).map((c) => ({
+          id: c.Id as string,
+          name: (c.DisplayName as string) ?? '',
+          company: (c.CompanyName as string) ?? '',
+          email: ((c.PrimaryEmailAddr as { Address?: string } | undefined)?.Address) ?? '',
+          balance: Number(c.Balance ?? 0),
+        }))
+        return json({ customers })
+      }
+      const profileId = String(body.profileId ?? '')
+      const { data: client } = await db.from('profiles').select('id, role, name').eq('id', profileId).maybeSingle()
+      if (!client || client.role !== 'client') return json({ error: 'Only client accounts can be linked to a QuickBooks customer.' }, 400)
+      if (body.action === 'unlink_customer') {
+        await db.from('profiles').update({ qbo_customer_id: null, qbo_customer_name: '', qbo_customer_realm: null, qbo_synced_at: null }).eq('id', profileId)
+        await db.from('invoices').delete().eq('client_id', profileId).eq('source', 'quickbooks')
+        return json({ unlinked: true })
+      }
+      const customerId = String(body.customerId ?? '')
+      if (!/^\d{1,20}$/.test(customerId)) return json({ error: 'Choose a QuickBooks customer.' }, 400)
+      const customer = ((await qbo(conn, 'GET', `customer/${customerId}`)) as { Customer?: { Id: string; DisplayName?: string; Active?: boolean } }).Customer
+      if (!customer || customer.Active === false) return json({ error: 'That QuickBooks customer wasn\u2019t found, or is inactive.' }, 400)
+      const { data: taken } = await db.from('profiles').select('name').eq('qbo_customer_id', customer.Id).eq('qbo_customer_realm', conn.realm_id).neq('id', profileId).maybeSingle()
+      if (taken) return json({ error: `That QuickBooks customer is already linked to ${taken.name}.` }, 409)
+      await db.from('invoices').delete().eq('client_id', profileId).eq('source', 'quickbooks')
+      await db.from('profiles').update({ qbo_customer_id: customer.Id, qbo_customer_name: customer.DisplayName ?? '', qbo_customer_realm: conn.realm_id, qbo_synced_at: null }).eq('id', profileId)
+      await syncLinked(conn, profileId)
+      return json({ linked: true, name: customer.DisplayName ?? '' })
+    } catch (e) {
+      return json({ error: (e as Error).message }, 502)
+    }
   }
 
   if (body.action === 'disconnect') {

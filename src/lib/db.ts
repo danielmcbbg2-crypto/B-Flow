@@ -569,6 +569,7 @@ export const userFromRow = (r: Row): UserAccount => ({
   status: r.status as UserAccount['status'],
   passwordHash: '',
   hasLogin: r.has_login as boolean,
+  qboCustomer: r.qbo_customer_id ? { id: r.qbo_customer_id as string, name: (r.qbo_customer_name as string) ?? '' } : undefined,
 })
 
 const propertyFromRow = (r: Row): Property => ({
@@ -789,6 +790,7 @@ const invoiceFromRow = (r: Row): QuickBooksInvoice => ({
   paidDate: opt(r.paid_date as string | null),
   dueDate: r.due_date as string,
   createdAt: r.created_at as string,
+  fromQuickBooks: r.source === 'quickbooks' || undefined,
 })
 
 const inboxFromRow = (r: Row): InboxMessage => ({

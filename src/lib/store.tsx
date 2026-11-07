@@ -3,6 +3,7 @@ import type { RealtimeChannel, Session } from '@supabase/supabase-js'
 import type {
   OrderInvoiceStatus,
   QuickBooksStatus,
+  QuickBooksCustomer,
   OrderItem,
   AppData,
   DraftListing,
@@ -315,6 +316,10 @@ interface StoreValue {
   answerQuoteByToken: (token: string, accept: boolean, name: string) => Promise<QuoteLinkView>
   /** The office sends a failed (or skipped) quote estimate to QuickBooks again. */
   retryQuoteEstimate: (projectId: string) => Promise<void>
+  /** QuickBooks customers matching a name or email, to link a client to (office). */
+  searchQuickBooksCustomers: (q: string) => Promise<QuickBooksCustomer[]>
+  /** Links a client to a QuickBooks customer (their billing goes there, and their QuickBooks invoices show in the portal), or unlinks them. */
+  linkQuickBooksCustomer: (profileId: string, customerId: string | null) => Promise<void>
   /** The office sends (again) an accepted quote's deposit invoice. */
   sendQuoteDeposit: (projectId: string) => Promise<void>
   /**
@@ -1530,6 +1535,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return json
   }, [])
 
+  const searchQuickBooksCustomers = useCallback(
+    async (q: string): Promise<QuickBooksCustomer[]> => {
+      if (!supabase) throw new Error('Linking to QuickBooks works in live mode.')
+      return ((await quickBooksFn({ action: 'search_customers', q })) as { customers: QuickBooksCustomer[] }).customers
+    },
+    [quickBooksFn],
+  )
+
+  const linkQuickBooksCustomer = useCallback(
+    async (profileId: string, customerId: string | null) => {
+      if (!supabase) throw new Error('Linking to QuickBooks works in live mode.')
+      await quickBooksFn(customerId ? { action: 'link_customer', profileId, customerId } : { action: 'unlink_customer', profileId })
+      await refresh()
+    },
+    [quickBooksFn, refresh],
+  )
+
   const quickBooksStatus = useCallback(async (): Promise<QuickBooksStatus> => {
     if (!supabase) return { connected: false, dailyLimit: 20, maxTotal: 5000 }
     const { data, error } = await supabase.rpc('qbo_status')
@@ -1769,6 +1791,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     quoteByToken,
     answerQuoteByToken,
     sendQuoteDeposit,
+    searchQuickBooksCustomers,
+    linkQuickBooksCustomer,
     deleteQuote,
     retryQuoteEstimate,
     recreatePhotos,

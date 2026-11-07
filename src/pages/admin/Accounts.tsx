@@ -7,6 +7,7 @@ import { navigate } from '../../lib/router'
 import { ALL_PERMISSIONS, DEFAULT_PERMISSIONS, TRADES, type Permission, type Role, type UserAccount } from '../../lib/types'
 import { fmtDate, generateInviteCode, uid } from '../../lib/utils'
 import { CLOUD } from '../../lib/supabase'
+import { QuickBooksCustomerLink } from './QuickBooksCustomerLink'
 
 const ROLE_LABEL: Record<Role, string> = { admin: 'Admin', client: 'Client', provider: 'Service provider' }
 const MASTER_ID = 'u-admin'
@@ -402,6 +403,7 @@ function AccountEditor({
           <PermissionBoxes value={a.permissions} onChange={(permissions) => set({ permissions })} disabled={locked} />
           {locked && <p className="mt-2 text-xs text-slate-500">You can't change your own role, permissions or status.</p>}
         </div>
+        <QuickBooksCustomerLink account={saved} />
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-4 sm:col-span-2">
           <div className="flex flex-wrap gap-2">
             {/* Not for a pending invite in live mode: reactivating would make them active before they've set a password. */}

@@ -13,6 +13,7 @@ import { SiteHeader, SiteView } from '../../components/ProjectSite'
 import { PortalStore } from '../store/Shop'
 import { TRADES, type Property, type Trade } from '../../lib/types'
 import { fmtDate, money, uid } from '../../lib/utils'
+import { ClientInvoices } from '../admin/QuickBooksCustomerLink'
 
 const NAV: NavItem[] = [
   { key: 'home', label: 'Overview', icon: Home },
@@ -494,6 +495,7 @@ function ProjectList() {
           })}
         </div>
       )}
+      <ClientInvoices invoices={mine.invoices.filter((i) => i.status !== 'draft')} />
       <Modal open={quoteOpen} onClose={() => setQuoteOpen(false)} title="Request a renovation quote">
         <form onSubmit={submitQuote} className="space-y-4">
           <Field label="Property">
