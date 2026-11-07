@@ -317,6 +317,11 @@ interface StoreValue {
   retryQuoteEstimate: (projectId: string) => Promise<void>
   /** The office sends (again) an accepted quote's deposit invoice. */
   sendQuoteDeposit: (projectId: string) => Promise<void>
+  /**
+   * Deletes a quote (not a job under way, and never one with money paid against it). Its QuickBooks
+   * estimate is deleted and any unpaid deposit invoice voided there, by the server shortly after.
+   */
+  deleteQuote: (projectId: string) => Promise<{ estimates: number; invoices: number }>
   /** The AI quote drafter: an itemised draft for the quote, from its request, site notes and photos. */
   draftQuote: (p: Pick<Project, 'id' | 'title' | 'description' | 'scopeOfWorks'>, notes: string, onProgress?: (text: string) => void, signal?: AbortSignal) => Promise<QuoteDraft>
   /** New photos of the product on a supplier page, made by AI from the supplier's photos (store managers). */
@@ -1404,6 +1409,34 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [refresh],
   )
 
+  const deleteQuote = useCallback(
+    async (projectId: string) => {
+      if (!supabase) {
+        const p = dataRef.current.projects.find((x) => x.id === projectId)
+        if (!p) throw new Error('That quote wasn’t found')
+        if (p.status === 'in_progress' || p.status === 'completed') throw new Error(`P-${p.number} is a job that’s under way or finished, not a quote, so it can’t be deleted here.`)
+        if (dataRef.current.invoices.some((i) => i.projectId === projectId && i.status === 'paid')) throw new Error(`Money has been paid against P-${p.number}, so it can’t be deleted.`)
+        update((d) => {
+          d.projects = d.projects.filter((x) => x.id !== projectId)
+          d.invoices = d.invoices.filter((i) => i.projectId !== projectId)
+        })
+        return { estimates: 0, invoices: 0 }
+      }
+      const { data: out, error } = await supabase.rpc('delete_quote', { p_id: projectId })
+      if (error) throw new Error(error.message)
+      const r = (out ?? {}) as { estimates?: number; invoices?: number; documents?: string[] }
+      const files = (r.documents ?? []).filter((x) => !x.startsWith('data:'))
+      if (files.length) void supabase.storage.from('project-docs').remove(files)
+      // Already gone on the server: removed here without saving.
+      mergeLocal((d) => {
+        d.projects = d.projects.filter((x) => x.id !== projectId)
+        d.invoices = d.invoices.filter((i) => i.projectId !== projectId)
+      })
+      return { estimates: r.estimates ?? 0, invoices: r.invoices ?? 0 }
+    },
+    [update, mergeLocal],
+  )
+
   const draftQuote = useCallback(
     async (p: Pick<Project, 'id' | 'title' | 'description' | 'scopeOfWorks'>, notes: string, onProgress?: (text: string) => void, signal?: AbortSignal): Promise<QuoteDraft> => {
       if (supabase) {
@@ -1736,6 +1769,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     quoteByToken,
     answerQuoteByToken,
     sendQuoteDeposit,
+    deleteQuote,
     retryQuoteEstimate,
     recreatePhotos,
     colourPhoto,
